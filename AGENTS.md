@@ -325,9 +325,9 @@ still checks live policy. Schema visibility is never the security boundary.
 
 | Surface | Advertised operations under current eligibility |
 | --- | --- |
-| Core — `chat-on-steroids-core` | `read`, `view_image`, `find` when command execution is off, `apply_patch`, `exec_command`/`write_stdin`, `download_artifact`, recorded `session`, `update_plan`, `agents`, `session_finish`, code-mode `exec`. |
-| Desktop — `chat-on-steroids-desktop` | Windows: 13 Window2 operations, separately permissioned `read_clipboard`/`write_clipboard`, and `exec` with `sky`. macOS: `observe`, `computer`, `exec`. Relevant live capabilities are required. |
-| Plugins — `chat-on-steroids-plugins` | Enabled external tools with their upstream names and schemas, plus code-mode `exec` when that composition name is available. |
+| Core — base `chat-on-steroids-core` | `read`, `view_image`, `find` when command execution is off, `apply_patch`, `exec_command`/`write_stdin`, `download_artifact`, recorded `session`, `update_plan`, `agents`, `session_finish`, code-mode `exec`. |
+| Desktop — base `chat-on-steroids-desktop` | Windows: 13 Window2 operations, separately permissioned `read_clipboard`/`write_clipboard`, and `exec` with `sky`. macOS: `observe`, `computer`, `exec`. Relevant live capabilities are required. |
+| Plugins — base `chat-on-steroids-plugins` | Enabled external tools with their upstream names and schemas, plus code-mode `exec` when that composition name is available. |
 
 `read` needs read/browse/metadata as appropriate; images need read; patch checks each hunk's
 create/edit/move/delete permission; command controls both terminal tools; downloads need
@@ -337,11 +337,16 @@ screen access, nine input/launch methods under control, and clipboard methods un
 permissions. Multiline `type_text` additionally requires clipboard write. macOS `computer`
 registration can exist for control or clipboard access; each action rechecks its own permission.
 
-ChatGPT may cache one surface's complete tool list. Core/Desktop exposure is monotonic for an
-endpoint lifetime: a previously exposed schema can remain while a revoked handler returns
-`TOOL_DISABLED`. The `find` vs terminal choice freezes at discovery. Reconnect establishes a
-new clean shape; current config still governs every call. Each registrar refuses foreign names;
-there is no merged hidden dispatch. Plugin exposure follows its separate dynamic manager.
+ChatGPT may cache one surface's complete tool list. In OpenAI tunnel mode, every surface's MCP
+`serverInfo.name` is the base surface name plus the non-secret Core tunnel UUID, frozen for that
+endpoint lifetime. Different computers therefore cannot reuse one another's cached metadata even
+when they run the same app version; all surfaces on one computer share that instance scope while
+retaining distinct surface names. Manual/cloudflared endpoints keep the base names. Core/Desktop
+exposure is monotonic for an endpoint lifetime: a previously exposed schema can remain while a
+revoked handler returns `TOOL_DISABLED`. The `find` vs terminal choice freezes at discovery.
+Reconnect establishes a new clean shape; current config still governs every call. Each registrar
+refuses foreign names; there is no merged hidden dispatch. Plugin exposure follows its separate
+dynamic manager.
 Disabled-tool guidance names Read-only when it masks a write, otherwise the actual permission
 label. A permission change takes effect at the live guard without requiring a new chat.
 

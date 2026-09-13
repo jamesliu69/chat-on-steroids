@@ -255,15 +255,18 @@ async function connectImpl(): Promise<void> {
 
   try {
     setStatus({ state: 'starting-server', detail: 'Starting the local server…', publicUrl: null });
-    const startedEndpoint = await startMcpServer(() => {
-      const live = getConfig();
-      return {
-        roots: live.roots,
-        caps: effectiveCapabilities(live),
-        readOnly: live.readOnly,
-        privacyScreenshots: live.ui.privacyScreenshots
-      };
-    });
+    const startedEndpoint = await startMcpServer(
+      () => {
+        const live = getConfig();
+        return {
+          roots: live.roots,
+          caps: effectiveCapabilities(live),
+          readOnly: live.readOnly,
+          privacyScreenshots: live.ui.privacyScreenshots
+        };
+      },
+      config.tunnel.kind === 'openai' ? { serverNameScope: config.tunnel.tunnelId } : {}
+    );
     if (shutdownRequested || generation !== connectionGeneration) {
       await startedEndpoint.stop({ forceAfterMs: 30_000 }).catch(() => {});
       return;

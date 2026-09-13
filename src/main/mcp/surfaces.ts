@@ -39,7 +39,7 @@ export const CONNECTOR_BRAND = 'Chat On Steroids';
 
 export interface SurfaceDefinition {
   id: SurfaceId;
-  /** MCP server name. Stable; ChatGPT keys its cached metadata off it. */
+  /** Base MCP server name. ChatGPT keys cached metadata off the final, instance-scoped name. */
   serverName: string;
   /**
    * Exactly what the user should type as the connector name in ChatGPT.
@@ -153,6 +153,19 @@ export const SURFACE_LIST: readonly SurfaceDefinition[] = [CORE, DESKTOP, PLUGIN
 
 export function surfaceDefinition(id: SurfaceId): SurfaceDefinition {
   return SURFACES[id];
+}
+
+/**
+ * Gives one computer a stable MCP identity without letting another Chat On Steroids
+ * installation reuse the same ChatGPT metadata cache entry. OpenAI Core tunnel ids are
+ * already unique per connector and are explicitly non-secret, so they are the instance
+ * identity without adding another persisted machine id.
+ */
+export function scopedServerName(id: SurfaceId, scope?: string): string {
+  const base = surfaceDefinition(id).serverName;
+  if (!scope) return base;
+  const match = /^tunnel_([0-9a-f]{32})$/i.exec(scope);
+  return match ? `${base}-${match[1]!.toLowerCase()}` : base;
 }
 
 /** Platform/capability projection used by setup; each registrar enforces the same split. */

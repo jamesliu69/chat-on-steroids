@@ -880,6 +880,25 @@ describe('surface boundaries', () => {
       expect(reply.body.result.instructions, surface.id).toBeTruthy();
     }
   });
+
+  it('scopes every surface server identity to the machine Core tunnel when one is supplied', async () => {
+    everything();
+    await endpoint.stop();
+    endpoint = await startMcpServer(() => ctx, {
+      serverNameScope: 'tunnel_22222222222222222222222222222222'
+    });
+
+    for (const surface of SURFACE_LIST) {
+      const reply = await call(surface.id, 'initialize', {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'test-client', version: '1.0.0' }
+      });
+      expect(reply.body.result.serverInfo.name, surface.id).toBe(
+        `${surface.serverName}-22222222222222222222222222222222`
+      );
+    }
+  });
 });
 
 describe('2025-era clients', () => {

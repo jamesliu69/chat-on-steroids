@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => {
     publication: vi.fn((surface: string, observe: (name: string, version: string, instructions: string, tools: unknown[]) => void) => observe(`Chat On Steroids ${surface}`, '1', 'instructions', [])),
     endpointStartGate: null as Promise<void> | null,
     endpointStartReached: vi.fn(),
+    endpointStartOptions: undefined as undefined | { serverNameScope?: string },
     tunnelStartGate: null as Promise<void> | null,
     tunnelStartReached: vi.fn(),
     tunnelStop: vi.fn(async () => undefined),
@@ -55,7 +56,8 @@ vi.mock('../src/main/logger.js', () => ({ logError: vi.fn(), logInfo: vi.fn(), l
 vi.mock('../src/main/mcp/server.js', () => ({
   lastRequestAt: () => null,
   tunnelProbeHeaders: () => ({}),
-  startMcpServer: vi.fn(async () => {
+  startMcpServer: vi.fn(async (_getContext: unknown, options?: { serverNameScope?: string }) => {
+    mocks.endpointStartOptions = options;
     mocks.endpointStartReached();
     if (mocks.endpointStartGate) await mocks.endpointStartGate;
     return {
@@ -103,6 +105,7 @@ describe('connection surface state', () => {
     mocks.endpointStop.mockClear();
     mocks.publication.mockClear();
     mocks.endpointStartReached.mockClear();
+    mocks.endpointStartOptions = undefined;
     mocks.endpointStartGate = null;
     mocks.tunnelStartReached.mockClear();
     mocks.tunnelStartGate = null;
@@ -131,6 +134,19 @@ describe('connection surface state', () => {
     mocks.config.tunnel.pluginsTunnelId = '';
     mocks.config.tunnel.binaryPath = '';
     vi.resetModules();
+  });
+
+  it('scopes the MCP server identity to the Core OpenAI tunnel so different computers cannot share cached metadata', async () => {
+    mocks.config.tunnel.kind = 'openai';
+    mocks.config.tunnel.tunnelId = 'tunnel_11111111111111111111111111111111';
+    const connection = await import('../src/main/connection.js');
+
+    await connection.connect();
+
+    expect(mocks.endpointStartOptions).toEqual({
+      serverNameScope: 'tunnel_11111111111111111111111111111111'
+    });
+    await connection.disconnect();
   });
 
   it('ignores retired Plugins tunnel reports after changing only its tunnel', async () => {

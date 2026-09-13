@@ -25,7 +25,7 @@ import { localhostHostValidation, localhostOriginValidation, toNodeHandler } fro
 import { getConfig } from '../config.js';
 import { logError, logInfo, logWarn } from '../logger.js';
 import { buildServer, resetToolClock, type ToolContext } from './tools.js';
-import { SURFACE_IDS, surfaceDefinition, type SurfaceId } from './surfaces.js';
+import { SURFACE_IDS, scopedServerName, surfaceDefinition, type SurfaceId } from './surfaces.js';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -258,7 +258,15 @@ export function forgetExposedSurface(): void {
   surfaceExposure.clear();
 }
 
-export async function startMcpServer(getContext: () => ToolContext): Promise<McpEndpoint> {
+export interface McpServerOptions {
+  /** Stable instance identity frozen for this endpoint lifetime. */
+  serverNameScope?: string;
+}
+
+export async function startMcpServer(
+  getContext: () => ToolContext,
+  options: McpServerOptions = {}
+): Promise<McpEndpoint> {
   // A per-session token in the path is what authorises callers. It is regenerated on
   // every app start, so a URL that leaks stops working when the app restarts.
   requestSeenAt = null;
@@ -318,12 +326,23 @@ export async function startMcpServer(getContext: () => ToolContext): Promise<Mcp
   // advertised: the Core handler has no `computer` registered at all, so a call for it
   // fails as an unknown tool inside the protocol layer, with nothing here to "helpfully"
   // forward it to the other surface.
+  const serverNames = Object.fromEntries(
+    SURFACE_IDS.map((id) => [id, scopedServerName(id, options.serverNameScope)])
+  ) as Record<SurfaceId, string>;
   const routes = surfacePaths.map((surface) => ({
     ...surface,
     prmPath: `${PRM_PREFIX}${surface.basePath}`,
     url: '',
     handler: toNodeHandler(
-      createMcpHandler(() => buildServer(stableContext(surface.id), surface.id, undefined, () => stableContext(surface.id))),
+      createMcpHandler(() =>
+        buildServer(
+          stableContext(surface.id),
+          surface.id,
+          undefined,
+          () => stableContext(surface.id),
+          serverNames[surface.id]
+        )
+      ),
       { onerror: (error) => logError(`MCP handler error (${surface.id}): ${error.message}`) }
     )
   }));
@@ -456,7 +475,15 @@ export async function startMcpServer(getContext: () => ToolContext): Promise<Mcp
     port: address.port,
     url: urls.core,
     urls,
-    publication: (surface, observe) => { void buildServer(stableContext(surface), surface, observe).close(); },
+    publication: (surface, observe) => {
+      void buildServer(
+        stableContext(surface),
+        surface,
+        observe,
+        () => stableContext(surface),
+        serverNames[surface]
+      ).close();
+    },
     stop: (options = {}) =>
       new Promise<void>((resolve) => {
         // Stop accepting new work, but let requests already accepted by the MCP adapter
