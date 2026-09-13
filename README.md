@@ -35,6 +35,8 @@
 3. **Load the companion extension.** Click **Open extension folder**, then **Load unpacked** in Chrome’s extension settings. Pairing is automatic.
 4. **Choose a model, write your task and send.**
 
+Running a Raspberry Pi or another always-on Linux ARM64 host? CoS also has a **headless Core server** that runs under plain Node.js and systemd without Electron, X11 or Wayland. [Headless server setup →](docs/setup.md#headless-linux-arm64-server)
+
 <details>
 <summary>Requirements &amp; installation notes</summary>
 

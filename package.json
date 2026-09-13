@@ -10,6 +10,10 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "server": "node out/main/server.js",
+    "server:init": "node out/main/server.js init",
+    "server:check": "node out/main/server.js check",
+    "server:install-service": "node scripts/install-server-service.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",

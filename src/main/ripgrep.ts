@@ -34,11 +34,18 @@ function pathCandidate(): string | null {
   return null;
 }
 
-/** Locate the bundled ripgrep first, then an existing user installation as a dev fallback. */
+/** Locate the bundled ripgrep first, then source-tree and user installations. */
 export function locateRipgrep(): string | null {
   const fileName = ripgrepExecutableName();
   const packaged = process.resourcesPath ? path.join(process.resourcesPath, 'rg', fileName) : null;
   if (packaged && isExecutableFile(packaged)) return packaged;
+
+  // Headless production builds may place shared Rollup chunks below out/main/chunks, so
+  // __dirname is not a stable route back to the repository. systemd deliberately starts the
+  // server in the CoS project directory; prefer that explicit runtime root before the legacy
+  // source/dev layout fallback used by Electron development.
+  const workingTree = path.join(process.cwd(), 'resources', 'rg', fileName);
+  if (isExecutableFile(workingTree)) return workingTree;
 
   const dev = path.resolve(__dirname, '..', '..', 'resources', 'rg', fileName);
   if (isExecutableFile(dev)) return dev;
