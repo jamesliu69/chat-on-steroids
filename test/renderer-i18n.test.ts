@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import zhCN from '../src/renderer/locales/zh-CN.json';
 import zhTW from '../src/renderer/locales/zh-TW.json';
 
 let dom: JSDOM;
@@ -13,11 +14,19 @@ beforeEach(() => {
 afterEach(() => dom.window.close());
 
 describe('Chinese app interface', () => {
-  it('migrates the previous Simplified Chinese preference to Traditional Chinese', async () => {
-    window.localStorage.setItem('cos.ui.language', 'zh-CN');
+  it('defaults to Traditional Chinese without a saved preference', async () => {
     const { currentLanguage } = await import('../src/renderer/i18n.js');
     expect(currentLanguage()).toBe('zh-TW');
-    expect(window.localStorage.getItem('cos.ui.language')).toBe('zh-TW');
+  });
+
+  it('preserves the original Simplified Chinese preference and catalog', async () => {
+    window.localStorage.setItem('cos.ui.language', 'zh-CN');
+    const { currentLanguage, initLanguage, t } = await import('../src/renderer/i18n.js');
+    initLanguage();
+    expect(currentLanguage()).toBe('zh-CN');
+    expect(window.localStorage.getItem('cos.ui.language')).toBe('zh-CN');
+    expect((document.getElementById('uiLanguage') as HTMLSelectElement).value).toBe('zh-CN');
+    expect(t('Settings')).toBe(zhCN.Settings);
   });
 
   it('exposes flagged setup choices and keeps them synchronized with settings and reloads', async () => {

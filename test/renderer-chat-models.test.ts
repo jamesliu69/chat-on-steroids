@@ -5,9 +5,11 @@ import { readFile } from 'node:fs/promises';
 
 let dom: JSDOM;
 afterEach(() => { dom?.window.close(); vi.unstubAllGlobals(); vi.resetModules(); });
+const preferEnglish = () => dom.window.localStorage.setItem('cos.ui.language', 'en');
 
 it.each([true, false])('a model-rejection refresh waits beyond cached availability (still available=%s)', async available => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let receive!: (catalog: any) => void;
   const models = [{ id: 'gpt-6', label: 'GPT-6', efforts: ['high'] }];
@@ -26,7 +28,8 @@ it.each([true, false])('a model-rejection refresh waits beyond cached availabili
 });
 
 it('a send requests missing models once and waits for the pushed catalog before selecting', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const requestChatModels = vi.fn(async () => ({ ok: true, data: { state: 'pending', requestedAt: 1, observedAt: null, models: [] } }));
   const models = [{ id: 'gpt-6', label: 'GPT-6', efforts: ['high'] }];
@@ -43,7 +46,8 @@ it('a send requests missing models once and waits for the pushed catalog before 
 });
 
 it('a failed discovery keeps sending unconfirmed and settles its wait', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   Object.assign(dom.window, { api: { requestChatModels: async () => ({ ok: true, data: { state: 'unavailable', requestedAt: 1, observedAt: 2, models: [] } }) } });
   const { initChatModels, ensureComposerModel } = await import('../src/renderer/chat-models.js');
@@ -51,7 +55,8 @@ it('a failed discovery keeps sending unconfirmed and settles its wait', async ()
 });
 
 it('opening an empty or pending picker requests models immediately without a separate refresh', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const pending = { state: 'pending', requestedAt: 1, observedAt: null, models: [] };
   const requestChatModels = vi.fn(async () => ({ ok: true, data: pending }));
@@ -71,7 +76,8 @@ it('opening an empty or pending picker requests models immediately without a sep
 });
 
 it('excludes GPT-5.5 from the composer slider without excluding future observed models or settings choices', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [
     { id: 'old', label: 'GPT-5.5', efforts: ['medium', 'high', 'pro'] },
@@ -90,7 +96,8 @@ it('excludes GPT-5.5 from the composer slider without excluding future observed 
 });
 
 it('binds composer selection to the selected session across delayed catalog, user edits and A-B-A navigation', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [{ id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', efforts: ['high', 'xhigh'] }];
   let resolve!: (value: unknown) => void;
@@ -117,7 +124,8 @@ it('binds composer selection to the selected session across delayed catalog, use
 });
 
 it('renders the two observed Pro generations separately and sends their exact selection identities', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [
     { id: 'gpt-6-pro', label: 'GPT-6 Pro', efforts: ['pro'] },
@@ -146,7 +154,8 @@ it('renders the two observed Pro generations separately and sends their exact se
 
 it('replaces loading with the backend failure reason and an enabled retry control', async () => {
   dom = new JSDOM('<span id="composerModelLabel"></span><p id="composerModelStatus"></p><button id="refreshComposerModels"></button>' +
-    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''));
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''), { url: 'https://local.test/' });
+  preferEnglish();
   const pending = { state: 'pending', requestedAt: 1, observedAt: null, models: [] };
   const failed = { ...pending, state: 'unavailable', error: 'Model discovery timed out. Retry.' };
   const getChatModels = vi.fn(async () => ({ ok: true, data: pending }));
@@ -167,7 +176,8 @@ it('replaces loading with the backend failure reason and an enabled retry contro
 
 it('uses observed account choices, preserves unverified defaults, and clears incompatible effort on model change', async () => {
   dom = new JSDOM('<span id="composerModelLabel"></span><p id="chatModelStatus"></p>' +
-    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''));
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''), { url: 'https://local.test/' });
+  preferEnglish();
   const observed = { state: 'ready', requestedAt: 1, observedAt: Date.now(), models: [
     { id: 'first', label: 'GPT-5.6 Sol', efforts: ['high'] }, { id: 'second', label: 'GPT-6', efforts: ['medium'] }
   ] };
@@ -192,7 +202,8 @@ it('uses observed account choices, preserves unverified defaults, and clears inc
 });
 
 it('offers only observed models, prefers supported GPT-6 High, and replaces a removed account selection', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let models = [
     { id: 'other', label: 'GPT-5.6 Sol', efforts: ['medium'] },
@@ -241,7 +252,8 @@ it('offers only observed models, prefers supported GPT-6 High, and replaces a re
 });
 
 it('keeps observed composer choices in provider order except the user-excluded GPT-5.5 section', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [
     { id: 'astra', label: 'GPT-6 Astra', efforts: ['high'] },
@@ -273,7 +285,8 @@ it('keeps observed composer choices in provider order except the user-excluded G
 });
 
 it('offers GPT-5.6 Pro and GPT-6 Pro as distinct observed slider choices', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [
     { id: '5.6', label: 'GPT-5.6 Sol', efforts: ['none', 'medium', 'high', 'xhigh', 'pro'] },
@@ -293,7 +306,8 @@ it('offers GPT-5.6 Pro and GPT-6 Pro as distinct observed slider choices', async
 });
 
 it('keeps the trigger consistent with send admission during reload and a removed effort', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let catalog = { state: 'ready', requestedAt: 1, observedAt: 2, models: [{ id: 'sol', label: 'GPT-5.6 Sol', efforts: ['high', 'xhigh'] }] };
   Object.assign(dom.window, { api: {
@@ -324,7 +338,8 @@ it('keeps the trigger consistent with send admission during reload and a removed
   expect(label.title).toBe(label.textContent);
 });
 it('paints catalog pushes immediately and refuses late startup reads without refetching on unrelated state', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let receive!: (catalog: any) => void, resolve!: (result: any) => void;
   const getChatModels = vi.fn(() => new Promise<any>(done => { resolve = done; }));
@@ -340,7 +355,8 @@ it('paints catalog pushes immediately and refuses late startup reads without ref
   expect(getChatModels).toHaveBeenCalledTimes(1);
 });
 it('maps saved execution slugs to the observed family while preserving Pro reasoning', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2,
     models: [{ id: '5.6', label: 'GPT-5.6 Sol', efforts: ['high', 'pro'], aliases: ['gpt-5-6-thinking', 'gpt-5-6-pro'] }] } }) } });
@@ -351,7 +367,8 @@ it('maps saved execution slugs to the observed family while preserving Pro reaso
   expect((dom.window.document.getElementById('workerReasoning') as HTMLSelectElement).value).toBe('pro');
 });
 it.each(['5.6', 'gpt-5.6-sol', 'GPT-5.6 Sol', 'gpt-5-6-thinking'])('keeps saved Sol High selected across reordered catalogs: %s', async saved => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let receive!: (catalog: any) => void;
   const models = [

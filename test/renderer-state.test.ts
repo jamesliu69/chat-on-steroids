@@ -15,6 +15,7 @@ it('does not overwrite a focused dirty settings field on an unsolicited state pu
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, {
     window: w,
     document: w.document,
@@ -171,6 +172,7 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, {
     window: w,
     document: w.document,
@@ -319,6 +321,7 @@ async function mountChat(
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, { Event: w.Event });
   Object.assign(globalThis, {
     window: w,

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { initPlugins, refreshPlugins, applyPluginsState } from '../src/renderer/plugins.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 import type { PluginSnapshot } from '../src/shared/plugins.js';
 import type { AppState } from '../src/shared/types.js';
 
@@ -12,6 +13,7 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 beforeEach(() => {
   dom = new JSDOM(readFileSync('src/renderer/index.html', 'utf8'), { url: 'http://localhost' });
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  setLanguage('en');
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };
   state = { schemaRevision: 1, catalog: [{ id: 'memory', icon: 'memory', color: '#aaa', name: 'Memory', description: 'Knowledge graph', source: { kind: 'npm', package: 'memory' }, homepage: 'https://example.org', license: 'MIT', instructions: ['Install Node.js.'], fields: [{ key: 'TOKEN', label: 'API token', secret: true, required: true }] }], plugins: [{ id: 'one', name: '<img src=x onerror=alert(1)>', source: { kind: 'command', command: 'node' }, config: {}, credentialKeys: ['TOKEN'], version: '1', license: 'MIT', enabled: true, status: 'ready', installedAt: 1, tools: [] }] };

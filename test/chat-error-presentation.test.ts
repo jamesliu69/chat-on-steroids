@@ -1,5 +1,8 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { SessionEvent } from '../src/shared/session.js';
+vi.mock('../src/renderer/i18n.js', () => ({
+  t: (source: string, args: readonly unknown[] = []) => source.replace(/\{(\d+)\}/g, (match, index: string) => Number(index) < args.length ? String(args[Number(index)]) : match)
+}));
 import { chatErrorPresentation } from '../src/renderer/chat-error.js';
 
 const error = (text: string, extra = {}): Extract<SessionEvent, { kind: 'chat_error' }> => ({

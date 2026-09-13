@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderAgentPlan } from '../src/renderer/agent-plan.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 import type { AgentPlan } from '../src/shared/agent-plan.js';
 
 let dom: JSDOM, host: HTMLElement;
@@ -12,6 +13,7 @@ const plan: AgentPlan = { updatedAt: 1, explanation: 'Verify the change', plan: 
 ] };
 beforeEach(() => {
   dom = new JSDOM('<section id="plan"></section>'); vi.stubGlobal('document', dom.window.document); host = document.getElementById('plan')!;
+  setLanguage('en');
   dom.window.HTMLElement.prototype.animate = vi.fn(() => ({ finished: new Promise<void>(resolve => { finishAnimation = resolve; }) } as unknown as Animation));
 });
 afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });
