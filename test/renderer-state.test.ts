@@ -547,7 +547,7 @@ it('preserves native Desktop permissions when saving unrelated settings on Linux
   });
 });
 
-it('uses native menu-bar/Dock wording on macOS instead of Windows tray copy', async () => {
+it('exposes an explicit complete-quit option in UI settings', async () => {
   const mounted = await mountChat({
     platform: { family: 'macos', name: 'macOS', desktopAutomation: true }
   });
@@ -555,7 +555,19 @@ it('uses native menu-bar/Dock wording on macOS instead of Windows tray copy', as
 
   expect(doc.getElementById('backgroundRunningCopy')!.textContent).toContain('menu bar and Dock');
   expect(doc.getElementById('backgroundRunningCopy')!.textContent).not.toContain('tray');
-  expect(doc.getElementById('minimizeToTrayCopy')!.textContent).toBe('Hide the window to the menu bar when closed');
+  expect(doc.getElementById('minimizeToTray')!.closest('[data-view="settings"]')).not.toBeNull();
+  expect(doc.getElementById('minimizeToTrayCopy')!.textContent).toBe(
+    'Keep running after closing the window. Turn off to quit the app completely.'
+  );
+
+  const closeBehavior = doc.getElementById('minimizeToTray') as HTMLInputElement;
+  closeBehavior.checked = false;
+  closeBehavior.dispatchEvent(new mounted.window.Event('change', { bubbles: true }));
+  await settle();
+  expect(mounted.calls.at(-1)?.ui.minimizeToTray).toBe(false);
+  expect(doc.getElementById('backgroundRunningCopy')!.textContent).toBe(
+    'The app quits completely when you close the window.'
+  );
 });
 
 it('surfaces the existing root rename API in the folder row', async () => {

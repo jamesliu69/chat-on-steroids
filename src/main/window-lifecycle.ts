@@ -55,16 +55,12 @@ export function createWindowActivationGate(showWindow: () => void): {
 }
 
 /**
- * Closing the last ordinary window is not an application quit on macOS. The app stays in the
- * Dock/menu bar until the user explicitly quits (Cmd+Q / application menu / tray menu), and a
- * later `activate` recreates the window. Windows/Linux retain the existing preference semantics:
- * when close-to-tray is off, closing the last window exits the app.
+ * Closing the last ordinary window follows the explicit close-to-tray preference on every
+ * supported platform. When it is off, the window close is an application quit; when it is on,
+ * the window's close handler has already hidden it and this event must leave the process alive.
  */
-export function shouldQuitOnWindowAllClosed(
-  platform: NodeJS.Platform,
-  minimizeToTray: boolean
-): boolean {
-  return platform !== 'darwin' && !minimizeToTray;
+export function shouldQuitOnWindowAllClosed(minimizeToTray: boolean): boolean {
+  return !minimizeToTray;
 }
 
 /**

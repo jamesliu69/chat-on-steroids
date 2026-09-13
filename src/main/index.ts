@@ -477,10 +477,9 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   if (!ownsAppRuntime(hasSingleInstanceLock)) return;
-  // macOS convention: closing the last window is not quitting the application. The Dock/menu
-  // bar stay alive and `activate` recreates it. Windows/Linux retain the explicit close-to-tray
-  // preference; Cmd+Q / app.quit bypasses this event and still enters the shutdown sequence.
-  if (shouldQuitOnWindowAllClosed(process.platform, getConfig().ui.minimizeToTray)) app.quit();
+  // The explicit close-to-tray preference applies on every supported platform. An explicit
+  // quit (Cmd+Q / application menu / tray menu) bypasses this event and still enters shutdown.
+  if (shouldQuitOnWindowAllClosed(getConfig().ui.minimizeToTray)) app.quit();
 });
 
 app.on('will-quit', (event) => {

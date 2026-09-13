@@ -2836,6 +2836,7 @@ const CHAT_INPUTS = [
   'goalIncludeToolCalls',
   'planBackend',
   'finishTool', 'finishAction', 'finishLeadMinutes', 'workerModel', 'workerReasoning', 'backgroundChats', 'browserOnly', 'autoRefreshPlugins',
+  'minimizeToTray',
   'goalBackend',
   'loopBackend',
   'helperModel', 'helperReasoning',
