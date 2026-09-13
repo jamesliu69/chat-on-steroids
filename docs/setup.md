@@ -52,6 +52,27 @@ npm run server:check
 npm run server -- start
 ```
 
+If you want to keep the server in a detachable tmux session so leaving SSH does not stop it:
+
+```sh
+npm run server:tmux
+tmux attach -t chat-on-steroids
+```
+
+To force a clean restart in the background later:
+
+```sh
+npm run server:tmux:restart
+```
+
+To start that detached session at boot, add this to the same user's crontab (`crontab -e`), using the absolute Node path from `command -v node`:
+
+```cron
+@reboot cd /home/pi/github/chat-on-steroids && /usr/bin/node scripts/run-server-tmux.mjs --restart
+```
+
+The launcher is idempotent: if `chat-on-steroids` already exists, it does not start a second server. Use `tmux attach -t chat-on-steroids` whenever you want to inspect its output. The existing systemd setup below remains the better choice when automatic restart and service supervision are more important than tmux access.
+
 The MCP listener always binds to `127.0.0.1` and uses a new random secret path on each process start. Manual and Cloudflare modes write the current connector endpoint to `~/.config/chat-on-steroids-server/endpoint.json` with mode `0600`; the URL is deliberately not printed into long-lived service logs. Treat that file like a credential.
 
 For a Cloudflare quick tunnel, initialize with `--tunnel cloudflared`. The bundled, checksum-verified `cloudflared` is prepared by `npm run tunnel`; after the server connects, read `endpoint.json` for the current public URL.

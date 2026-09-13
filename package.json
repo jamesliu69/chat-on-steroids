@@ -13,6 +13,8 @@
     "server": "node out/main/server.js",
     "server:init": "node out/main/server.js init",
     "server:check": "node out/main/server.js check",
+    "server:tmux": "node scripts/run-server-tmux.mjs",
+    "server:tmux:restart": "node scripts/run-server-tmux.mjs --restart",
     "server:install-service": "node scripts/install-server-service.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
