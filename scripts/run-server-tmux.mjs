@@ -42,6 +42,14 @@ export function startTmuxServer(options, runner = run) {
   return true;
 }
 
+export function restartTmuxServer(options, runner = run) {
+  if (tmuxSessionExists(options.session, runner)) {
+    runner('tmux', ['kill-session', '-t', options.session], { stdio: 'ignore' });
+  }
+  runner('tmux', buildTmuxArgs(options), { stdio: 'ignore' });
+  return true;
+}
+
 function requiredValue(argv, index, option) {
   const value = argv[index + 1];
   if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
@@ -58,9 +66,12 @@ function validateSession(session) {
 export function parseTmuxArgs(argv) {
   let dataDir = defaultDataDir;
   let session = DEFAULT_TMUX_SESSION;
+  let restart = false;
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
-    if (option === '--data-dir') {
+    if (option === '--restart') {
+      restart = true;
+    } else if (option === '--data-dir') {
       dataDir = requiredValue(argv, index, option);
       index += 1;
     } else if (option === '--session') {
@@ -73,6 +84,7 @@ export function parseTmuxArgs(argv) {
   return {
     dataDir: path.resolve(dataDir),
     session,
+    restart,
     nodePath: process.execPath,
     entryPath: path.join(root, 'out', 'main', 'server.js')
   };
@@ -81,7 +93,7 @@ export function parseTmuxArgs(argv) {
 function main(argv) {
   const options = parseTmuxArgs(argv);
   if (!existsSync(options.entryPath)) throw new Error(`Missing ${options.entryPath}. Run npm run build first.`);
-  const started = startTmuxServer(options);
+  const started = options.restart ? restartTmuxServer(options) : startTmuxServer(options);
   process.stdout.write(`${started ? 'Started' : 'Already running'} tmux session ${options.session}.\n`);
   if (started) process.stdout.write(`Attach with: tmux attach -t ${options.session}\n`);
 }

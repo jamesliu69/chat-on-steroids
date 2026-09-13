@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTmuxArgs,
   parseTmuxArgs,
+  restartTmuxServer,
   startTmuxServer
 } from '../scripts/run-server-tmux.mjs';
 
@@ -41,6 +42,24 @@ describe('headless server tmux launcher', () => {
     expect(startTmuxServer(options, run)).toBe(true);
     expect(calls).toEqual([
       ['tmux', 'has-session', '-t', 'chat-on-steroids'],
+      ['tmux', ...buildTmuxArgs(options)]
+    ]);
+  });
+
+  it('closes the existing session before starting its replacement', () => {
+    const calls: string[][] = [];
+    let present = true;
+    const run = (file: string, args: readonly string[]) => {
+      calls.push([file, ...args]);
+      if (args[0] === 'has-session' && !present) throw Object.assign(new Error('missing session'), { status: 1 });
+      if (args[0] === 'kill-session') present = false;
+      if (args[0] === 'new-session') present = true;
+    };
+
+    expect(restartTmuxServer(options, run)).toBe(true);
+    expect(calls).toEqual([
+      ['tmux', 'has-session', '-t', 'chat-on-steroids'],
+      ['tmux', 'kill-session', '-t', 'chat-on-steroids'],
       ['tmux', ...buildTmuxArgs(options)]
     ]);
   });

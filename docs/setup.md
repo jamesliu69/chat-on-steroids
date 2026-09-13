@@ -59,10 +59,16 @@ npm run server:tmux
 tmux attach -t chat-on-steroids
 ```
 
+To force a clean restart in the background later:
+
+```sh
+npm run server:tmux:restart
+```
+
 To start that detached session at boot, add this to the same user's crontab (`crontab -e`), using the absolute Node path from `command -v node`:
 
 ```cron
-@reboot cd /home/pi/github/chat-on-steroids && /usr/bin/node scripts/run-server-tmux.mjs
+@reboot cd /home/pi/github/chat-on-steroids && /usr/bin/node scripts/run-server-tmux.mjs --restart
 ```
 
 The launcher is idempotent: if `chat-on-steroids` already exists, it does not start a second server. Use `tmux attach -t chat-on-steroids` whenever you want to inspect its output. The existing systemd setup below remains the better choice when automatic restart and service supervision are more important than tmux access.
