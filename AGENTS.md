@@ -13,6 +13,21 @@ or mirrored authority. This permits a focused subsystem rewrite, not an unrelate
 overwrite somebody else's work. Read the current diff of every file you will edit. Re-read
 changed lines before applying an older patch. Document the work and its actual validation.
 
+**FORK SAFETY — ABSOLUTE RULE.** This repository is the user's fork. The original author's
+repository/upstream is permanently **read-only** for every agent and automation acting on this
+workspace. Never perform any operation that mutates, publishes to, or otherwise changes the
+original author's repository, branches, tags, releases, issues, discussions, pull requests,
+settings, workflows, packages, pages, or other remote state. In particular: never push or
+force-push to upstream; never create/delete/update upstream branches or tags; never publish an
+upstream release/package; never merge/close/comment on upstream pull requests; never create or
+modify upstream issues/discussions; and never change upstream repository settings or secrets.
+Upstream may be used only for **read/fetch/compare** operations. To incorporate upstream work,
+fetch it read-only, merge/rebase/cherry-pick locally into the user's fork, and push only to a
+remote that has been positively verified as the user's fork. If remote ownership is ambiguous,
+fail closed and do not write. Ordinary instructions such as “commit”, “push”, “sync”, “release”,
+or “publish” always mean the user's fork/local repository unless the user explicitly changes
+this standing rule in a future request.
+
 **Reading order:** §§1–3 product/identities/evidence; §4 owners; §§5–18 feature contracts;
 §19 debugging/tests; §§20–22 shipping, known gaps and completion.
 
