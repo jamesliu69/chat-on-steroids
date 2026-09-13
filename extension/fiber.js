@@ -1477,7 +1477,7 @@
 
   const listener = (event) => {
     // Only this window, only our own request shape. Anything else is not ours to answer.
-    if (event.source !== window) return;
+    if (event.source !== window || event.origin !== location.origin) return;
     const data = event.data;
     if (!data || typeof data !== 'object' || ![ASK, 'clf-picker-ask', 'clf-plugin-ask'].includes(data.source)) return;
     const nonce = typeof data.nonce === 'string' ? data.nonce.slice(0, 64) : '';

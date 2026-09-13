@@ -1286,7 +1286,9 @@ async function ackCommand(id, status, error, conversationId, agent, client, sour
   const queued = {
     ...payload,
     provisional: payload.conversationId ? null : tabKey(source),
-    ...(status === 'failed' && !payload.conversationId && ownsDocument(source) ? { source: { tab: source.tab, documentId: source.documentId, navigationEpoch: source.navigationEpoch } } : {}),
+    ...(status === 'failed' && !payload.conversationId && source && ownsDocument(source)
+      ? { source: { tab: source.tab, documentId: source.documentId, navigationEpoch: source.navigationEpoch } }
+      : {}),
     queuedAt: Date.now()
   };
   // One command has one terminal page result. Replace an earlier replay copy rather than

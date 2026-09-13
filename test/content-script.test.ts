@@ -146,7 +146,7 @@ interface Hook {
   streamTurnGroups(
     entries: Array<{ seq: number; time: number; kind: string; turnId?: string | null }>
   ): Array<{ id: string; entries: Array<{ seq: number; kind: string; turnId?: string | null }> }>;
-  visibleStream(entries: Array<Record<string, any>>, groupId?: string | null): Array<Record<string, any>>;
+  visibleStream(entries: Array<Record<string, any>>): Array<Record<string, any>>;
   /** How long the stop button must stay gone before content.js calls a turn finished. */
   TURN_SETTLE_MS: number;
   /** Test seam for the no-visible-progress fallback. */
@@ -2786,6 +2786,48 @@ describe('recording authored message text', () => {
 });
 
 describe('canonical Fiber transcript ingestion in 1.8', () => {
+  it('ignores a cross-origin Fiber reply and accepts the same-origin reply for the same scan', async () => {
+    live = await harness();
+    const window = live.window as any;
+    const instant = window.setTimeout;
+    window.setTimeout = (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms);
+    const answered = new Promise<void>((resolve) => {
+      const onAsk = (event: any) => {
+        if (event.data?.source !== 'clf-fiber-ask') return;
+        window.removeEventListener('message', onAsk);
+        const payload = {
+          source: 'clf-fiber-reply',
+          nonce: event.data.nonce,
+          scanToken: event.data.nonce,
+          v: 10,
+          rows: [],
+          turns: []
+        };
+        window.dispatchEvent(new window.MessageEvent('message', {
+          source: window,
+          origin: 'https://attacker.example',
+          data: { ...payload, scanOk: false }
+        }));
+        globalThis.setTimeout(() => {
+          window.dispatchEvent(new window.MessageEvent('message', {
+            source: window,
+            origin: window.location.origin,
+            data: { ...payload, scanOk: true }
+          }));
+          resolve();
+        }, 5);
+      };
+      window.addEventListener('message', onAsk);
+    });
+    try {
+      const result = await (live.hook.refreshFiber() as unknown as Promise<boolean>);
+      await answered;
+      expect(result).toBe(true);
+    } finally {
+      window.setTimeout = instant;
+    }
+  });
+
   it('records a raw-provider-ID-only revision without changing canonical message identity', async () => {
     live = await harness();
     const section = assistantTurn(live.document, 'provider-id-revision-turn', []);

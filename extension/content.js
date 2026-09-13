@@ -3186,7 +3186,10 @@
         resolve(rows);
       };
       const onMessage = (event) => {
-        if (event.source !== window) return;
+        if (
+          event.source !== window ||
+          (event.origin !== location.origin && !(TEST_MODE && event.origin === ''))
+        ) return;
         const data = event.data;
         if (!data || typeof data !== 'object') return;
         if (data.source !== FIBER_REPLY || data.nonce !== nonce || data.v !== FIBER_VERSION) return;
@@ -5525,7 +5528,7 @@
         : streamEntries.filter(
             (entry) => localId !== null && entry.turnId === localId
           );
-      const rendered = visibleStream(raw, group ? group.id : localId || turn.id);
+      const rendered = visibleStream(raw);
       // The reconstruction this section is about to show, named by what it reconstructs
       // rather than by the section showing it. Deliberately not `turn.id`: a section with no
       // id of its own still reconstructs a specific response, and that is the thing that

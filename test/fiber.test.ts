@@ -335,7 +335,11 @@ async function scan(
   // Dispatched rather than posted: jsdom's own postMessage does not set `source`, and the
   // helper refuses any message that did not come from this window.
   window.dispatchEvent(
-    new window.MessageEvent('message', { data: { source: 'clf-fiber-ask', nonce }, source: window })
+    new window.MessageEvent('message', {
+      data: { source: 'clf-fiber-ask', nonce },
+      source: window,
+      origin: window.location.origin
+    })
   );
 
   const data = await reply;
@@ -362,6 +366,31 @@ const rowInTurn = (messages: Message[], turnMessages: Message[], collapsed = 0) 
 // --------------------------------------------------------------------- tests
 
 describe('reading a row out of the page', () => {
+  it('ignores page-context requests whose message origin is not this page', async () => {
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+      url: `https://chatgpt.com/c/${THREAD}`,
+      runScripts: 'outside-only'
+    });
+    const window = dom.window as unknown as Window & typeof globalThis & Record<string, any>;
+    window.eval(source);
+    let replies = 0;
+    window.addEventListener('message', (event: any) => {
+      if (event.data?.source === 'clf-fiber-reply' && event.data?.nonce === 'wrong-origin') replies++;
+    });
+
+    window.dispatchEvent(
+      new window.MessageEvent('message', {
+        data: { source: 'clf-fiber-ask', nonce: 'wrong-origin' },
+        source: window,
+        origin: 'https://attacker.example'
+      })
+    );
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 10));
+
+    expect(replies).toBe(0);
+    dom.window.close();
+  });
+
   /**
    * The regression the whole batch exists for. The group node is exactly `MAX_CLIMB`
    * levels up, which the old `up < MAX_CLIMB` stopped one short of, so this row — and

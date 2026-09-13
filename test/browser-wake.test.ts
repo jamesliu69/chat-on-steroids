@@ -39,9 +39,11 @@ describe('authenticated wake-only browser transport', () => {
   it('rejects wrong credentials and non-protocol frames', async () => {
     const h = await setup(); const bad = h.client(); await once(bad, 'open');
     const denied = once(bad, 'close'); bad.send('wrong'); await denied;
+    expect(bad.readyState).toBe(WebSocket.CLOSED);
     const good = h.client(); await once(good, 'open');
     const ready = once(good, 'message'); good.send('paired'); await ready;
     const closed = once(good, 'close'); good.send('send this user message'); await closed;
+    expect(good.readyState).toBe(WebSocket.CLOSED);
   });
   it('does not authorize a connection whose credential check finished after revocation', async () => {
     let resolve!: (ok: boolean) => void;
