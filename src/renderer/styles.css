@@ -254,7 +254,7 @@ body {
 
 /* CJK uses natural character wrapping and full-height glyphs. Keep native controls
    flexible at narrow window widths and when the renderer is zoomed. */
-html:lang(zh-CN) body { letter-spacing: 0; line-break: strict; }
+html:lang(zh-TW) body { letter-spacing: 0; line-break: strict; }
 .language-select { min-width: 8em; max-width: 100%; }
 .setup-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 20px; }
 .setup-heading .settings-heading { margin-bottom: 0; padding: 0; }

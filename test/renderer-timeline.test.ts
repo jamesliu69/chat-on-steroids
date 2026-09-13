@@ -285,7 +285,7 @@ it.each(['compaction', 'blocked', 'worker'])('retires %s control status when lea
   expect(w.document.getElementById('cancelCompaction')!.hidden).toBe(true);
   release({ ok: true, data: controls }); await settle();
   const { setLanguage } = await import('../src/renderer/i18n.js');
-  setLanguage('zh-CN');
+  setLanguage('zh-TW');
   expect(status.textContent).toBe('');
   setLanguage('en');
   // Returning to A is a new selection epoch; only its new read may restore status.
