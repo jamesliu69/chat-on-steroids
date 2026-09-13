@@ -20,6 +20,10 @@ describe('headless server runtime', () => {
     expect(() => parseServerArgs(['init', '--root', 'relative'])).toThrow(/absolute/i);
   });
 
+  it('preserves POSIX data directories when tests run on a non-POSIX host', () => {
+    expect(parseServerArgs(['start', '--data-dir', '/srv/cos-data'], {}).dataDir).toBe('/srv/cos-data');
+  });
+
   it('uses COS_TUNNEL_ID from the environment and keeps explicit CLI values authoritative', () => {
     const env = { COS_TUNNEL_ID: 'tunnel_6aa5ebd7427c8191922894997adf9fdf' };
     expect(parseServerArgs(['init', '--root', '/home/pi/github'], env)).toMatchObject({

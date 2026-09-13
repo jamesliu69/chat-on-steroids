@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultDataDir = path.join(os.homedir(), '.config', 'chat-on-steroids-server');
 
+function resolveServerPath(value) {
+  return path.posix.isAbsolute(value) ? path.posix.normalize(value) : path.resolve(value);
+}
+
 export const DEFAULT_TMUX_SESSION = 'chat-on-steroids';
 
 /** Keep tmux invocation argument-based so paths and credentials never pass through a shell. */
@@ -82,7 +86,7 @@ export function parseTmuxArgs(argv) {
     }
   }
   return {
-    dataDir: path.resolve(dataDir),
+    dataDir: resolveServerPath(dataDir),
     session,
     restart,
     nodePath: process.execPath,

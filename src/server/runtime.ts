@@ -25,6 +25,14 @@ export interface ServerInitOptions {
 const ROOT_NAME = /^[a-z0-9][a-z0-9._-]*$/;
 const DEFAULT_ENV_FILE = path.resolve(__dirname, '..', '..', '.env');
 
+function resolveServerPath(value: string): string {
+  return path.posix.isAbsolute(value) ? path.posix.normalize(value) : path.resolve(value);
+}
+
+function normalizeServerPath(value: string): string {
+  return path.posix.isAbsolute(value) ? path.posix.normalize(value) : path.normalize(value);
+}
+
 /** Load repository-local server settings without requiring a dotenv dependency. */
 export function loadServerEnvFile(file = DEFAULT_ENV_FILE): void {
   try {
@@ -36,7 +44,7 @@ export function loadServerEnvFile(file = DEFAULT_ENV_FILE): void {
 
 export function defaultServerDataDir(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env.COS_SERVER_DATA_DIR?.trim();
-  return path.resolve(configured || path.join(os.homedir(), '.config', 'chat-on-steroids-server'));
+  return resolveServerPath(configured || path.join(os.homedir(), '.config', 'chat-on-steroids-server'));
 }
 
 function requireValue(argv: readonly string[], index: number, option: string): string {
@@ -46,8 +54,8 @@ function requireValue(argv: readonly string[], index: number, option: string): s
 }
 
 function validateRoot(root: string): string {
-  if (!path.isAbsolute(root)) throw new Error('Approved root must be an absolute path');
-  return path.normalize(root);
+  if (!path.posix.isAbsolute(root) && !path.isAbsolute(root)) throw new Error('Approved root must be an absolute path');
+  return normalizeServerPath(root);
 }
 
 function validateRootName(name: string): string {
@@ -81,7 +89,7 @@ export function parseServerArgs(argv: readonly string[], env: NodeJS.ProcessEnv 
     const option = argv[index]!;
     switch (option) {
       case '--data-dir':
-        dataDir = path.resolve(requireValue(argv, index, option));
+        dataDir = resolveServerPath(requireValue(argv, index, option));
         index += 1;
         break;
       case '--root':
