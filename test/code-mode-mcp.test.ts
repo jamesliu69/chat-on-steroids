@@ -17,7 +17,7 @@ import * as desktopBackend from '../src/main/computer/index.js';
 import sharp from 'sharp';
 import { randomBytes } from 'node:crypto';
 import { unifiedExecManager } from '../src/main/codex/manager.js';
-import { noteExecOwner, forgetExecOwner } from '../src/main/codex/ownership.js';
+import { execOwner, noteExecOwner, forgetExecOwner } from '../src/main/codex/ownership.js';
 import * as ownership from '../src/main/codex/ownership.js';
 import type { ExecCommandToolOutput } from '../src/main/codex/unified-exec.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
@@ -300,6 +300,97 @@ it('allows unattributed file edits through code mode while preserving permission
     expect(text(spawn)).toContain('UNIDENTIFIED_CALLER');
   } finally {
     await saveConfig(config);
+  }
+});
+
+it('does not wait for page identity before allowed unattributed code mode with a request id', async () => {
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  const started = performance.now();
+  const response = await call(requestId, 'text("FAST_UNATTRIBUTED_CODE_MODE")');
+  const elapsedMs = performance.now() - started;
+
+  expect(response.result.isError, text(response)).not.toBe(true);
+  expect(text(response)).toBe('FAST_UNATTRIBUTED_CODE_MODE');
+  expect(elapsedMs).toBeLessThan(1_000);
+});
+
+it('does not reintroduce the identity wait inside allowed unattributed exec_command', async () => {
+  vi.spyOn(unifiedExecManager, 'execCommand').mockResolvedValue({
+    chunkId: 'fast-unattributed', wallTimeMs: 2, rawOutput: Buffer.from('FAST_CHILD'),
+    truncationPolicy: { kind: 'tokens', tokens: 1000 }, maxOutputTokens: undefined,
+    processId: null, exitCode: 0, originalTokenCount: 1, outputOmittedBytes: null
+  });
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  const started = performance.now();
+  const response = await call(requestId,
+    'const child=await tools.exec_command({cmd:"echo fixture",workdir:"/workspace"});text(child.structuredContent);');
+  const elapsedMs = performance.now() - started;
+
+  expect(response.result.isError, text(response)).not.toBe(true);
+  expect(text(response)).toContain('FAST_CHILD');
+  expect(elapsedMs).toBeLessThan(1_000);
+});
+
+it('finalizes a late exact process owner before publishing a new exec session id', async () => {
+  const conversationId = randomUUID();
+  const session = await createSession({ conversationId, title: 'Late exec owner' });
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  const processId = 739101;
+  const command = vi.spyOn(unifiedExecManager, 'execCommand').mockImplementation(async () => {
+    expect(observeRequestCorrelation({ requestId, conversationId, sessionId: session.id,
+      messageId: randomUUID(), tool: 'exec_command', observedAt: Date.now() })).toBe('stored');
+    return {
+      chunkId: 'late-exec-owner', wallTimeMs: 25, rawOutput: Buffer.from('running'),
+      truncationPolicy: { kind: 'tokens', tokens: 1000 }, maxOutputTokens: undefined,
+      processId, exitCode: null, originalTokenCount: 1, outputOmittedBytes: null
+    };
+  });
+  try {
+    const response = await rpc('tools/call', {
+      name: 'exec_command',
+      arguments: { cmd: 'echo fixture', workdir: '/workspace', yield_time_ms: 25 }
+    }, requestId);
+    expect(response.result.isError, text(response)).not.toBe(true);
+    expect(execOwner(processId)).toBe(session.id);
+  } finally {
+    forgetExecOwner(processId);
+    command.mockRestore();
+  }
+});
+
+it('refuses a superseded late caller before code mode can enter a mutating child', async () => {
+  const conversationId = randomUUID();
+  const replacement = randomUUID();
+  const session = await createSession({ conversationId, title: 'Superseded late caller' });
+  expect(await rebindSession(session.id, conversationId, replacement)).toBe(true);
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  let evidenceLanded = false;
+  let enteredBeforeEvidence = false;
+  const command = vi.spyOn(unifiedExecManager, 'execCommand').mockImplementation(async () => {
+    enteredBeforeEvidence = !evidenceLanded;
+    return {
+      chunkId: 'must-not-run', wallTimeMs: 1, rawOutput: Buffer.from('MUTATION_RAN'),
+      truncationPolicy: { kind: 'tokens', tokens: 1000 }, maxOutputTokens: undefined,
+      processId: null, exitCode: 0, originalTokenCount: 1, outputOmittedBytes: null
+    };
+  });
+  const evidence = new Promise<void>((resolve) => setTimeout(() => {
+    evidenceLanded = true;
+    observeRequestCorrelation({ requestId, conversationId, sessionId: session.id,
+      messageId: randomUUID(), tool: 'exec', observedAt: Date.now() });
+    resolve();
+  }, 40));
+  try {
+    const [response] = await Promise.all([
+      call(requestId, 'text(await tools.exec_command({cmd:"echo must-not-run",workdir:"/workspace"}));'),
+      evidence
+    ]);
+    expect(enteredBeforeEvidence).toBe(false);
+    expect(command).not.toHaveBeenCalled();
+    expect(response.result.isError).toBe(true);
+    expect(text(response)).toContain('CONVERSATION_SUPERSEDED');
+  } finally {
+    command.mockRestore();
   }
 });
 

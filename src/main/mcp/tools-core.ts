@@ -124,6 +124,7 @@ import { repairPrimeFromResumeShadow } from '../session/continuation.js';
 import {
   currentCall,
   currentCaller,
+  freezeCurrentCallerUnattributed,
   noteChange,
   noteChanges,
   noteCount,
@@ -233,16 +234,27 @@ function execChildEnvironment(): NodeJS.ProcessEnv {
 }
 
 /** Resolve the stable local session once so exec admission and later ownership cannot disagree. */
-async function execSession(tool: 'exec_command' | 'write_stdin'): Promise<string | null> {
-  let conversationId = provenConversation(currentCaller().requestId, currentCaller().conversationId);
+async function execSession(tool: 'exec_command' | 'write_stdin', finalizeAnonymous = false): Promise<string | null> {
   const call = currentCall();
-  if (!conversationId && call?.caller.requestId) {
+  if (call?.caller.unattributedFrozen) return null;
+  let conversationId = provenConversation(currentCaller().requestId, currentCaller().conversationId);
+  // Once the user explicitly permits unattributed calls, an unproven command belongs to the
+  // anonymous process bucket only when that principal is finalized. Before a new command's
+  // initial yield we leave the principal open so exact request evidence that lands while the
+  // process is starting can still own the process before its session id is published.
+  if (!conversationId && call?.caller.requestId && !getConfig().multiAgent.allowUnattributedCalls) {
     conversationId = await awaitFreshCallOrigin(tool, call.startedAt, IDENTITY_EVIDENCE_MS, {
       requestId: call.caller.requestId
     });
     if (conversationId) call.caller.conversationId = conversationId;
   }
-  const sessionId = provenSession(currentCaller().requestId, currentCaller().sessionId ?? null);
+  if (!conversationId && finalizeAnonymous) {
+    freezeCurrentCallerUnattributed();
+    return null;
+  }
+  const sessionId = conversationId
+    ? provenSession(currentCaller().requestId, currentCaller().sessionId ?? null)
+    : null;
   if (call) call.caller.sessionId = sessionId;
   return sessionId;
 }
@@ -804,8 +816,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               }
             }
 
-            const owner = await execSession('exec_command');
-            const unread = backgroundExecObligations(owner).exitedUnread;
+            const initialOwner = await execSession('exec_command');
+            const unread = backgroundExecObligations(initialOwner).exitedUnread;
             if (unread.length >= MAX_UNREAD_EXEC_RESULTS_PER_CONVERSATION) {
               const sessionIds = unread.map((session) => session.processId).join(', ');
               return fail(
@@ -834,6 +846,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               env: execChildEnvironment(),
               tty: input.tty ?? DEFAULT_TTY
             });
+            const owner = await execSession('exec_command', true);
             // Which durable local session may later write to this process id. The frontend
             // conversation is replaceable during Compact & Resume; the local session is not.
             if (output.processId === null) {
@@ -913,7 +926,9 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               // becoming an invented shell failure. With incomplete framing, abstain.
               ...(isBatch
                 ? nonZeroSections.flatMap((section) =>
-                    execRecoveryHints(rawCommands[section.index - 1] ?? '', section.text, shell.shellType)
+                    execRecoveryHints(rawCommands[section.index - 1] ?? '', section.text, shell.shellType, {
+                      powershellParseFailed: section.parseFailed === true
+                    })
                       .map((hint) => `Command ${section.index}: ${hint}`)
                   )
                 : output.exitCode !== null && output.exitCode !== 0
@@ -950,7 +965,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           // A session id is a small integer that means nothing outside the chat that was given
           // it, and every chat reaches the same manager here. Refuse only what is proven to
           // belong elsewhere; an unproven caller keeps working exactly as before.
-          const asking = await execSession('write_stdin');
+          const asking = await execSession('write_stdin', true);
           if (execOwnershipDenied(input.session_id, asking)) {
             return fail(
               `write_stdin failed: session ${input.session_id} is not proven to belong to this durable Chat On Steroids session. A completed process may already have delivered its output and been retired. Check earlier tool results before deciding whether any work remains; an unavailable session id alone is not a reason to rerun the command.`

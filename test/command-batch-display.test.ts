@@ -20,6 +20,23 @@ it('removes only the invocation delimiter across every byte boundary, preserving
   expect(parseCommandBatchSections(wire, 'f'.repeat(24))).toEqual([]);
 });
 
+it('keeps an authenticated PowerShell parse-failure marker internal while exposing it as section metadata', () => {
+  const parseWire = [
+    `--- command 1/1 ---${suffix}`,
+    suffix,
+    'localized parser diagnostic',
+    `--- exit code 1 ---${suffix}`,
+    ''
+  ].join('\r\n');
+  const display = new CommandBatchDisplay(marker);
+  expect(display.push(Buffer.from(parseWire), true).toString()).toBe(
+    '--- command 1/1 ---\r\n\r\nlocalized parser diagnostic\r\n--- exit code 1 ---\r\n'
+  );
+  expect(parseCommandBatchSections(parseWire, marker)).toEqual([
+    { index: 1, exitCode: 1, text: 'localized parser diagnostic', parseFailed: true }
+  ]);
+});
+
 it('keeps different markers, ordinary Unicode bytes, and an incomplete delimiter at stream close', () => {
   const input = `hello 日本語 🦉 [clf-batch:${'f'.repeat(24)}]\n [clf-batch:012`;
   const display = new CommandBatchDisplay(marker);

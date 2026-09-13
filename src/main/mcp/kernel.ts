@@ -89,7 +89,7 @@ import { anyContinuationOpen, compactingConversation } from '../session/continua
 import { acknowledgeBackgroundExecOutput, backgroundExecRecoveryNotices, offerBackgroundExecOutput } from '../codex/ownership.js';
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '../codex/unified-exec-constants.js';
 import { unattributedRepairEta } from '../bridge.js';
-import { conversationAttachment, readOverflowText } from '../session/store.js';
+import { conversationAttachment, hasSupersededConversationAttachments, readOverflowText } from '../session/store.js';
 import type { StoredText, ToolOutcome } from '../../shared/session.js';
 
 export interface ToolContext {
@@ -271,6 +271,7 @@ function callerConversation(tool: string, startedAt: number, requestId: string |
 
 /** Publishes both halves of one exact request proof into the call context. */
 function setCallerConversation(context: CallContext, conversationId: string | null): void {
+  if (conversationId && context.caller.unattributedFrozen) return;
   context.caller.conversationId = conversationId;
   const exact = conversationId ? requestCorrelation(context.caller.requestId) : null;
   context.caller.sessionId = exact?.conversationId === conversationId ? exact.sessionId : null;
@@ -515,22 +516,36 @@ async function dispatchTracked(
   // mate while a swarm is active. Use the full exact-id window, not the shorter prime window:
   // the live worker failure that motivated IDENTITY_EVIDENCE_MS arrived ~8 seconds late.
   const identitySensitive = needsWorkspaceIdentity(name, args);
+  const allowUnattributed = getConfig().multiAgent.allowUnattributedCalls;
   // update_plan always consumes this exact session, even outside a swarm. Resolve it
   // before the shared blocked/superseded checks rather than guessing from selection.
-  // Observation and its dependent input must resolve the same caller before either
-  // handler runs. Recording a late identity cannot recover a discarded anonymous frame.
+  // Observation and its dependent input must always resolve the same caller before either
+  // Desktop handler runs; recording a late identity cannot repair a frame captured in the
+  // wrong observation context. Code mode is different: when anonymous execution is allowed,
+  // its outer call and children can consistently use the same anonymous principal.
   const desktopContext = surface === 'desktop' && (name === 'get_window_state' ||
     (WINDOWS_COMPUTER_STATE_INPUT_METHODS as readonly string[]).includes(name));
-  if (!context.caller.conversationId && (desktopContext || name === 'exec' || name === 'update_plan' || (identitySensitive && swarmRunning())) && requestId) {
+  const swarmIdentityRequired = swarmRunning() && (identitySensitive || name === 'exec_command');
+  const requiresCallerBeforeHandler =
+    name === 'update_plan' ||
+    desktopContext ||
+    (identitySensitive && swarmRunning()) ||
+    (!allowUnattributed && swarmIdentityRequired) ||
+    (!allowUnattributed && name === 'exec');
+  if (!context.caller.conversationId && requiresCallerBeforeHandler && requestId) {
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
     );
   }
-  // A run that ended leaves an explicit short-lived lease tombstone for each open worker
-  // chat. Resolve exact request identity before ordinary tools too while such leases exist;
-  // otherwise an explicit-workdir exec could keep mutating after its worker was retired.
-  if (!context.caller.conversationId && hasRetiredWorkerLeases() && requestId) {
+  // With unattributed work disabled, every retained worker identity remains an exact fence and
+  // therefore keeps the original full evidence window. With it enabled, the setting explicitly
+  // permits unknown callers; read-only calls must not spend fifteen seconds proving a negative.
+  // Mutation-capable calls get one short exact-id guard instead, then freeze on the anonymous
+  // principal so late evidence cannot reclassify authority after an irreversible boundary.
+  const retiredWorkerRisk = hasRetiredWorkerLeases();
+  const dormantWorkerRisk = hasDormantWorkerLeases();
+  if (!context.caller.conversationId && !allowUnattributed && retiredWorkerRisk && requestId) {
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
@@ -541,11 +556,38 @@ async function dispatchTracked(
   // attribution an absolute read/exec would otherwise look like an unrelated ordinary chat and
   // run successfully. Resolve the exact mate for every call while such worker conversations
   // exist, just as we do for short-lived retired worker leases.
-  if (!context.caller.conversationId && hasDormantWorkerLeases() && requestId) {
+  if (!context.caller.conversationId && !allowUnattributed && dormantWorkerRisk && requestId) {
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
     );
+  }
+  if (
+    !context.caller.conversationId &&
+    allowUnattributed &&
+    requestId &&
+    !context.caller.unattributedFrozen &&
+    !anyChatBlocked() &&
+    !anyContinuationOpen()
+  ) {
+    const mutationRisk = mutationNeedsHistoricalIdentity(name, surface);
+    const staleIdentityRisk =
+      retiredWorkerRisk ||
+      dormantWorkerRisk ||
+      (mutationRisk && swarmRunning()) ||
+      (mutationRisk && await hasSupersededConversationAttachments());
+    if (staleIdentityRisk) {
+      if (mutationRisk) {
+        setCallerConversation(
+          context,
+          await awaitFreshCallOrigin(name, startedAt, UNATTRIBUTED_IDENTITY_GUARD_MS, { requestId })
+        );
+      }
+      if (!context.caller.conversationId) {
+        context.caller.unattributedFrozen = true;
+        context.caller.sessionId = null;
+      }
+    }
   }
   // And the user's own block, which needs identity resolved to the same depth as everything
   // above and used to be the one rule here that read it without ever waiting.
@@ -664,7 +706,6 @@ async function dispatchTracked(
   // chat over to `superseded`, chat A gets no tool at all, and each refusal tells the model
   // the only thing it can usefully do is write the brief.
   const compacting = !blockedChat && compactingConversation(context.caller.conversationId) !== null;
-  const allowUnattributed = getConfig().multiAgent.allowUnattributedCalls;
   const retiredLeaseAmbiguous =
     !allowUnattributed && hasRetiredWorkerLeases() && !context.caller.conversationId;
   const dormantLeaseAmbiguous =
@@ -721,7 +762,7 @@ async function dispatchTracked(
               'CALLER_IDENTITY_REQUIRED: a dormant worker chat still belongs to its prime history, and the connector could not prove this call belongs to a different conversation. No local tool was run. For a browser chat, restore the companion connection and retry. Scheduled or headless runs may have no browser identity: the user can enable "Allow unattributed calls" in the app settings to permit self-contained calls recorded as Unattributed. This does not identify the caller or grant access to another chat’s workspace or processes.'
             )
           )
-        : !allowUnattributed && swarmRunning() && identitySensitive && !context.caller.conversationId
+        : !allowUnattributed && swarmIdentityRequired && !context.caller.conversationId
         ? Promise.resolve(
             fail(
               'CALLER_IDENTITY_REQUIRED: this operation needs this chat’s exact workspace, but the connector could not prove which ChatGPT conversation made the call. Retry after the extension reconnects; no file or command was changed.'
@@ -830,6 +871,7 @@ async function dispatchTracked(
     requestId: context.caller.requestId,
     conversationId: context.caller.conversationId,
     sessionId: context.caller.sessionId ?? null,
+    attributionFrozen: context.caller.unattributedFrozen === true,
     endsActivity: isFinish && !result.isError
   });
   // Exact request-id identity needs no browser wait, so make its durable session append part
@@ -867,12 +909,25 @@ function needsWorkspaceIdentity(name: string, args: unknown): boolean {
     return true;
   }
   if (name === 'exec_command') {
-    // Every exec in a swarm also needs caller identity so a long-running session can be
-    // owned by the right chat even when the cwd itself was explicit.
+    // A missing/relative cwd consumes the caller's workspace. Process ownership is a separate
+    // concern handled by the swarm identity fence above: when anonymous calls are explicitly
+    // allowed, an exec with an explicit absolute cwd may safely use the anonymous process bucket.
     const workdir = input['workdir'];
-    return swarmRunning() || workdir === undefined || relative(workdir);
+    return workdir === undefined || relative(workdir);
   }
   return false;
+}
+
+/**
+ * Tools whose unknown caller may cross an irreversible/local-state boundary before late page
+ * evidence can identify a stale worker or superseded chat. Pure reads remain anonymous-fast.
+ */
+function mutationNeedsHistoricalIdentity(name: string, surface: SurfaceId): boolean {
+  if (surface === 'plugins') return true;
+  if (surface === 'desktop') {
+    return !['list_windows', 'get_window', 'list_apps', 'get_window_state', 'read_clipboard'].includes(name);
+  }
+  return ['exec', 'exec_command', 'write_stdin', 'apply_patch', 'download_artifact'].includes(name);
 }
 
 /**
@@ -1175,6 +1230,13 @@ export const PRIME_EVIDENCE_MS = evidenceWindow(2_500);
  * seconds are only ever spent by a call that was going to be refused anyway.
  */
 export const IDENTITY_EVIDENCE_MS = evidenceWindow(15_000);
+
+/**
+ * Fast fence used only when the user explicitly permits unattributed ordinary work.
+ * It catches nearby late page evidence for stale mutation callers without turning retained
+ * worker history into the old fifteen-second tax on every unrelated call.
+ */
+export const UNATTRIBUTED_IDENTITY_GUARD_MS = evidenceWindow(500);
 
 /**
  * The same window again for the two `agents` actions whose refusal cannot be retried cheaply.

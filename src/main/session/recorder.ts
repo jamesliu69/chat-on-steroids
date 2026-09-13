@@ -1151,6 +1151,8 @@ export interface ToolCallInput {
   conversationId?: string | null;
   /** Durable local session principal carried by the exact request correlation, when available. */
   sessionId?: string | null;
+  /** Admission deliberately committed this unresolved call to Unattributed. */
+  attributionFrozen?: boolean;
   /** A successful worker finish report is a hard activity boundary, not fresh work. */
   endsActivity?: boolean;
 }
@@ -1209,7 +1211,9 @@ export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | n
   } else {
     // Open the evidence wait before entering this workflow's queue, so sequential calls never
     // restart its deadline. No other request or page state can satisfy this exact join.
-    attributing = input.requestId
+    attributing = input.attributionFrozen
+      ? Promise.resolve<Target>({ conversationId: null, sessionId: null, attribution: 'unattributed', turnId: null })
+      : input.requestId
       ? awaitRequestCorrelation(input.requestId, REQUEST_ID_GRACE_MS).then((correlation) => {
           const conversationId = correlation?.conversationId ?? null;
           // Say which request id gave up, not just that something did. `unattributed` is the

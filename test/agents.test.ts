@@ -2568,6 +2568,42 @@ describe('through the MCP endpoint', () => {
     expect(await callTool('read', { paths: ['/anything'] })).toContain('CALLER_IDENTITY_REQUIRED');
   });
 
+  it.each(['dormant', 'retired'] as const)(
+    'does not make an unrelated allowed unattributed read spend the full identity window with %s worker history',
+    async history => {
+      startSwarm(1);
+      const worker = startWorker('worker-1', history === 'retired' ? 'c-worker-retired-fast-read' : undefined);
+      if (history === 'retired') {
+        expect(clearAgent(PRIME_ID).cleared).toBe('run');
+      } else {
+        finishAgent(worker.caller, 'parked history for fast read');
+        expect(releaseQuiescentRun()).toBe(true);
+      }
+      await setEnabled(true, 3, true);
+
+      const requestId = `wfr_${history}_unrelated_fast_read`;
+      let settled = false;
+      const pending = ordinaryWithRequestId(requestId, 'read', { paths: ['/anything'] }).then(reply => {
+        settled = true;
+        return reply;
+      });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const settledBeforeEvidence = settled;
+      if (!settledBeforeEvidence) {
+        await recordChatObservations('c-unrelated-fast-read', [
+          { kind: 'turn_start', time: Date.now(), turnId: `t-${history}-fast-read` },
+          { kind: 'tool_evidence', time: Date.now(), turnId: `t-${history}-fast-read`,
+            calls: [{ messageId: `m-${history}-fast-read`, tool: 'read', order: 0, answered: false, requestId }] }
+        ]);
+      }
+      const reply = await pending;
+      await setEnabled(true);
+
+      expect(settledBeforeEvidence).toBe(true);
+      expect(textOfReply(reply)).toMatch(REFUSED_ON_ROOTS);
+    }
+  );
+
   it('permits an unattributed workspace-dependent call to fail honestly instead of guessing a chat', async () => {
     await setEnabled(true, 3, true);
     startSwarm(1);

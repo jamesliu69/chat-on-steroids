@@ -34,9 +34,24 @@ function powershellBatch(commands: readonly string[], marker: string): string {
     '  $global:LASTEXITCODE = 0',
     '  try {',
     '    $__cos_batch_text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($__cos_batch_commands[$__cos_batch_index]))',
-    '    . ([ScriptBlock]::Create($__cos_batch_text))',
-    '    $__cos_batch_succeeded = $?',
-    '    $__cos_batch_code = if ($LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } elseif ($__cos_batch_succeeded) { 0 } else { 1 }',
+    '    $__cos_batch_parse_failed = $false',
+    '    $__cos_batch_script = $null',
+    '    try {',
+    '      $__cos_batch_script = [ScriptBlock]::Create($__cos_batch_text)',
+    '    } catch {',
+    // A standalone authenticated delimiter is invisible in the model-facing display but lets
+    // parseCommandBatchSections distinguish ScriptBlock.Create failures from localized runtime
+    // text or a successful command that merely printed the word "ParserError".
+    `      [Console]::Error.WriteLine(" [clf-batch:${marker}]")`,
+    '      [Console]::Error.WriteLine($_.ToString())',
+    '      $__cos_batch_parse_failed = $true',
+    '      $__cos_batch_code = 1',
+    '    }',
+    '    if (-not $__cos_batch_parse_failed) {',
+    '      . $__cos_batch_script',
+    '      $__cos_batch_succeeded = $?',
+    '      $__cos_batch_code = if ($LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } elseif ($__cos_batch_succeeded) { 0 } else { 1 }',
+    '    }',
     '  } catch {',
     '    [Console]::Error.WriteLine($_.ToString())',
     '    $__cos_batch_code = 1',
@@ -136,6 +151,8 @@ export interface CommandBatchSection {
   exitCode: number;
   /** Output between this command's banner and its exit-code marker. */
   text: string;
+  /** Authenticated wrapper evidence that ScriptBlock.Create rejected this PowerShell item. */
+  parseFailed?: boolean;
 }
 
 /**
@@ -163,17 +180,27 @@ export function parseCommandBatchSections(output: string, marker: string): Comma
   const count = Number(first[1]);
   const pattern = new RegExp(`^--- command (\\d+)\\/${count} --- \\[clf-batch:${marker}\\]$`);
   const exitPattern = new RegExp(`^--- exit code (-?\\d+) --- \\[clf-batch:${marker}\\]$`);
-  let open: { index: number; body: string[] } | null = null;
+  const parseFailureMarker = ` [clf-batch:${marker}]`;
+  let open: { index: number; body: string[]; parseFailed: boolean } | null = null;
   for (const line of lines.slice(firstIndex)) {
     const banner = pattern.exec(line);
     if (banner) {
-      open = { index: Number(banner[1]), body: [] };
+      open = { index: Number(banner[1]), body: [], parseFailed: false };
       continue;
     }
     if (!open) continue;
+    if (line === parseFailureMarker) {
+      open.parseFailed = true;
+      continue;
+    }
     const exit = exitPattern.exec(line);
     if (exit) {
-      sections.push({ index: open.index, exitCode: Number(exit[1]), text: open.body.join('\n') });
+      sections.push({
+        index: open.index,
+        exitCode: Number(exit[1]),
+        text: open.body.join('\n'),
+        ...(open.parseFailed ? { parseFailed: true } : {})
+      });
       open = null;
       continue;
     }

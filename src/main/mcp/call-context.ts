@@ -60,6 +60,13 @@ export interface CallCaller {
   conversationId: string | null;
   /** Durable local session principal carried by the same exact request proof. */
   sessionId?: string | null;
+  /**
+   * Admission permanently chose the explicit Unattributed principal for this call.
+   *
+   * Late browser evidence may still repair historical correlation globally, but it must not
+   * retroactively move a process/window/file mutation whose authority was already chosen.
+   */
+  unattributedFrozen?: boolean;
 }
 
 export interface CallContext {
@@ -109,6 +116,14 @@ export function emptyEvidence(): CallEvidence {
 
 export function runInCallContext<T>(context: CallContext, fn: () => T): T {
   return storage.run(context, fn);
+}
+
+/** Freeze the current call on the anonymous principal before an irreversible child boundary. */
+export function freezeCurrentCallerUnattributed(): void {
+  const store = storage.getStore();
+  if (!store || store.caller.conversationId) return;
+  store.caller.unattributedFrozen = true;
+  store.caller.sessionId = null;
 }
 
 /**

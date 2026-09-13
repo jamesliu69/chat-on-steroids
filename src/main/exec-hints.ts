@@ -1440,7 +1440,8 @@ function rebuild(text: string, seps: readonly string[], map: (part: string) => s
 export function execRecoveryHints(
   command: string,
   outputText: string,
-  shellType: ShellType = 'powershell'
+  shellType: ShellType = 'powershell',
+  evidence: { powershellParseFailed?: boolean } = {}
 ): string[] {
   const hints: string[] = [];
   const powershell = shellType === 'powershell';
@@ -1545,6 +1546,7 @@ export function execRecoveryHints(
 
   const bashQuoteFailure = command.includes('\\"') && /The string (?:is missing the terminator|starting:)/i.test(outputText);
   const parserFailure =
+    evidence.powershellParseFailed === true ||
     /\bParserError\b/i.test(outputText) ||
     // The batch runner parses each item with ScriptBlock.Create; PowerShell wraps its
     // parser diagnostic in this exception instead of emitting FullyQualifiedErrorId.
