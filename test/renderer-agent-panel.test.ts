@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAgentPanel } from '../src/renderer/agent-panel.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 import type { SessionSummary } from '../src/shared/session.js';
 
 let dom: JSDOM;
@@ -8,6 +9,7 @@ afterEach(() => dom?.window.close());
 it('keeps Prime selection independent and rejects late results after parent navigation', async () => {
   dom = new JSDOM('<main></main><button></button>');
   Object.assign(globalThis, { document: dom.window.document });
+  setLanguage('en');
   const host = document.querySelector('main')!;
   const toggle = document.querySelector('button')!;
   let resolve!: (value: { events: [] }) => void;
@@ -31,6 +33,7 @@ it('keeps Prime selection independent and rejects late results after parent navi
 it('renders a selected worker and offers an explicit full-chat navigation', async () => {
   dom = new JSDOM('<main></main><button></button>');
   Object.assign(globalThis, { document: dom.window.document });
+  setLanguage('en');
   const host = document.querySelector('main')!, toggle = document.querySelector('button')!;
   const openMain = vi.fn();
   const panel = createAgentPanel({ host, toggle, load: async () => ({ events: [] }),
@@ -47,6 +50,7 @@ it('renders a selected worker and offers an explicit full-chat navigation', asyn
 it('preserves a readers scroll position during refresh and Escape returns focus', async () => {
   dom = new JSDOM('<main></main><button></button>', { pretendToBeVisual: true });
   Object.assign(globalThis, { document: dom.window.document });
+  setLanguage('en');
   const host = document.querySelector('main')!, toggle = document.querySelector('button')!;
   let resolve!: (value: { events: [] }) => void;
   const load = vi.fn().mockResolvedValueOnce({ events: [] }).mockImplementationOnce(() => new Promise(done => { resolve = done; }));

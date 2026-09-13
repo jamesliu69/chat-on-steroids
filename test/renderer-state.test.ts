@@ -15,6 +15,7 @@ it('does not overwrite a focused dirty settings field on an unsolicited state pu
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, {
     window: w,
     document: w.document,
@@ -171,6 +172,7 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, {
     window: w,
     document: w.document,
@@ -319,6 +321,7 @@ async function mountChat(
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, { Event: w.Event });
   Object.assign(globalThis, {
     window: w,
@@ -547,7 +550,7 @@ it('preserves native Desktop permissions when saving unrelated settings on Linux
   });
 });
 
-it('uses native menu-bar/Dock wording on macOS instead of Windows tray copy', async () => {
+it('exposes an explicit complete-quit option in UI settings', async () => {
   const mounted = await mountChat({
     platform: { family: 'macos', name: 'macOS', desktopAutomation: true }
   });
@@ -555,7 +558,19 @@ it('uses native menu-bar/Dock wording on macOS instead of Windows tray copy', as
 
   expect(doc.getElementById('backgroundRunningCopy')!.textContent).toContain('menu bar and Dock');
   expect(doc.getElementById('backgroundRunningCopy')!.textContent).not.toContain('tray');
-  expect(doc.getElementById('minimizeToTrayCopy')!.textContent).toBe('Hide the window to the menu bar when closed');
+  expect(doc.getElementById('minimizeToTray')!.closest('[data-view="settings"]')).not.toBeNull();
+  expect(doc.getElementById('minimizeToTrayCopy')!.textContent).toBe(
+    'Keep running after closing the window. Turn off to quit the app completely.'
+  );
+
+  const closeBehavior = doc.getElementById('minimizeToTray') as HTMLInputElement;
+  closeBehavior.checked = false;
+  closeBehavior.dispatchEvent(new mounted.window.Event('change', { bubbles: true }));
+  await settle();
+  expect(mounted.calls.at(-1)?.ui.minimizeToTray).toBe(false);
+  expect(doc.getElementById('backgroundRunningCopy')!.textContent).toBe(
+    'The app quits completely when you close the window.'
+  );
 });
 
 it('surfaces the existing root rename API in the folder row', async () => {

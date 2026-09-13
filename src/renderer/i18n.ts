@@ -1,19 +1,16 @@
 import zhTW from './locales/zh-TW.json';
+import zhCN from './locales/zh-CN.json';
 
-export type Language = 'en' | 'zh-TW';
+export type Language = 'en' | 'zh-TW' | 'zh-CN';
 const STORAGE_KEY = 'cos.ui.language';
-const catalog: Readonly<Record<string, string>> = zhTW;
+const catalogs: Record<Exclude<Language, 'en'>, Readonly<Record<string, string>>> = { 'zh-TW': zhTW, 'zh-CN': zhCN };
 
 function savedLanguage(): Language {
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved === 'zh-CN') {
-      window.localStorage.setItem(STORAGE_KEY, 'zh-TW');
-      return 'zh-TW';
-    }
-    return saved === 'zh-TW' ? 'zh-TW' : 'en';
+    if (saved === 'zh-TW' || saved === 'zh-CN' || saved === 'en') return saved;
   } catch { /* Storage may be unavailable in a restricted renderer. */ }
-  return 'en';
+  return 'zh-TW';
 }
 
 let language: Language = savedLanguage();
@@ -22,8 +19,9 @@ export function currentLanguage(): Language { return language; }
 
 /** Translate only app-authored copy at explicit call sites. Arguments remain verbatim. */
 export function t(source: string, args: readonly unknown[] = []): string {
+  const catalog: Readonly<Record<string, string>> = language === 'en' ? {} : catalogs[language];
   const key = Object.hasOwn(catalog, source) ? source : source.replace(/\s+/g, ' ').trim();
-  const translated = language === 'zh-TW' && Object.hasOwn(catalog, key) ? catalog[key]! : source;
+  const translated = language !== 'en' && Object.hasOwn(catalog, key) ? catalog[key]! : source;
   return translated.replace(/\{(\d+)\}/g, (match, index: string) => Number(index) < args.length ? String(args[Number(index)]) : match);
 }
 
@@ -89,6 +87,7 @@ function syncLanguageControls(): void {
 
 /** Run once on the static shell, before any user/provider content is inserted. */
 export function initLanguage(): void {
+  const catalog: Readonly<Record<string, string>> = language === 'en' ? {} : catalogs[language];
   const walker = document.createTreeWalker(document.body, 4 /* SHOW_TEXT */);
   const texts: Text[] = [];
   while (walker.nextNode()) texts.push(walker.currentNode as Text);
@@ -107,8 +106,8 @@ export function initLanguage(): void {
   document.documentElement.lang = language;
   const select = document.getElementById('uiLanguage') as HTMLSelectElement;
   syncLanguageControls();
-  select.addEventListener('change', () => setLanguage(select.value === 'zh-TW' ? 'zh-TW' : 'en'));
-  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-language]')) {
-    button.addEventListener('click', () => setLanguage(button.dataset.language === 'zh-TW' ? 'zh-TW' : 'en'));
-  }
+  const selectLanguage = (value: string): Language => value === 'zh-CN' ? 'zh-CN' : value === 'zh-TW' ? 'zh-TW' : 'en';
+  select.addEventListener('change', () => setLanguage(selectLanguage(select.value)));
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-language]'))
+    button.addEventListener('click', () => setLanguage(selectLanguage(button.dataset.language ?? '')));
 }

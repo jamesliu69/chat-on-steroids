@@ -2,6 +2,7 @@ import { JSDOM } from 'jsdom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { initContextMeter, paintContextMeter } from '../src/renderer/context-meter.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 import type { Config } from '../src/shared/types.js';
 import type { SessionSummary } from '../src/shared/session.js';
 
@@ -11,6 +12,7 @@ function setup(model: string, reasoningEffort: 'high' | 'pro' = 'high') {
   dom = new JSDOM(readFileSync('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('document', dom.window.document);
   vi.stubGlobal('Node', dom.window.Node);
+  setLanguage('en');
   const session = { conversationId: 'chat', contextTokens: 100000,
     selectedModel: { conversationId: 'chat', model, reasoningEffort } } as SessionSummary;
   const config = { sessions: { limitTokens: 200000 }, compaction: { auto: true, autoTokens: 150000 } } as Config;

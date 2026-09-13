@@ -31,6 +31,90 @@ Core, Desktop and Plugins are separate connectors. Configure each surface you en
 
 **Your own HTTPS tunnel:** forward to the loopback URL shown by CoS and preserve its secret path. Treat the resulting URL like a password.
 
+## Headless Linux ARM64 server
+
+A Raspberry Pi or other Linux ARM64 host can run Core without Electron, X11, Wayland or a desktop session. The headless runtime reuses the normal MCP, approved-root sandbox, command runner, plugins and tunnel implementation, but disables features that require the companion browser: Desktop control, session recording, Compact & Resume, Goal/Loop, finish injection and browser workers.
+
+Build the server on the ARM64 host:
+
+```sh
+npm ci
+npm run rg
+npm run tunnel
+npm run build
+```
+
+Initialize a dedicated server configuration. This example exposes the repository parent as `/repos` and uses a local/manual tunnel:
+
+```sh
+npm run server:init -- --root /home/pi/github --name repos --tunnel manual
+npm run server:check
+npm run server -- start
+```
+
+If you want to keep the server in a detachable tmux session so leaving SSH does not stop it:
+
+```sh
+npm run server:tmux
+tmux attach -t chat-on-steroids
+```
+
+To force a clean restart in the background later:
+
+```sh
+npm run server:tmux:restart
+```
+
+To start that detached session at boot, add this to the same user's crontab (`crontab -e`), using the absolute Node path from `command -v node`:
+
+```cron
+@reboot cd /home/pi/github/chat-on-steroids && /usr/bin/node scripts/run-server-tmux.mjs --restart
+```
+
+The launcher is idempotent: if `chat-on-steroids` already exists, it does not start a second server. Use `tmux attach -t chat-on-steroids` whenever you want to inspect its output. The existing systemd setup below remains the better choice when automatic restart and service supervision are more important than tmux access.
+
+The MCP listener always binds to `127.0.0.1` and uses a new random secret path on each process start. Manual and Cloudflare modes write the current connector endpoint to `~/.config/chat-on-steroids-server/endpoint.json` with mode `0600`; the URL is deliberately not printed into long-lived service logs. Treat that file like a credential.
+
+For a Cloudflare quick tunnel, initialize with `--tunnel cloudflared`. The bundled, checksum-verified `cloudflared` is prepared by `npm run tunnel`; after the server connects, read `endpoint.json` for the current public URL.
+
+For OpenAI Secure MCP Tunnel, keep the machine-specific tunnel id in the repository-local `.env` file. The server automatically loads it for `init`, `check` and `start`; `.env` is ignored by Git:
+
+```sh
+cat > .env <<'EOF'
+COS_TUNNEL_ID=tunnel_0123456789abcdef0123456789abcdef
+EOF
+npm run server:init -- --root /home/pi/github --name repos
+```
+
+`COS_TUNNEL_ID` switches the headless runtime to the OpenAI transport and overrides a tunnel id previously persisted in the server config. An explicit `--tunnel-id` supplied to `server:init` still wins for that initialization command.
+
+For an interactive development run, `OPENAI_API_KEY` may be supplied in the server process environment. For systemd, use a systemd credential instead so the key is not stored in the unit or CoS config:
+
+```sh
+mkdir -p ~/.config/chat-on-steroids-server
+systemd-ask-password "OpenAI tunnel API key" | \
+  systemd-creds encrypt --name=openai-api-key - ~/.config/chat-on-steroids-server/openai-api-key.cred
+
+mkdir -p ~/.config/systemd/user/chat-on-steroids-server.service.d
+cat > ~/.config/systemd/user/chat-on-steroids-server.service.d/credentials.conf <<'EOF'
+[Service]
+LoadCredentialEncrypted=openai-api-key:%h/.config/chat-on-steroids-server/openai-api-key.cred
+EOF
+```
+
+Install the user service after `npm run build`:
+
+```sh
+npm run server:install-service
+systemctl --user daemon-reload
+systemctl --user enable --now chat-on-steroids-server
+systemctl --user status chat-on-steroids-server
+```
+
+Use `journalctl --user-unit chat-on-steroids-server -f` for service logs. If the service must remain up after the account logs out, enable user lingering for that account with `loginctl enable-linger`. The installer also accepts `--data-dir <path>`, `--print`, and `--enable-now`; it never writes an API key.
+
+The server data directory defaults to `~/.config/chat-on-steroids-server`. Set `COS_SERVER_DATA_DIR` or pass `--data-dir` to use another location. Run `node out/main/server.js check --data-dir <path>` before service startup when using manual or Cloudflare mode; OpenAI credentials loaded by `LoadCredentialEncrypted` exist only inside the systemd service process.
+
 ## Permissions and connectors
 
 | Connector | What it adds |

@@ -43,14 +43,18 @@ jobs:
             runner: windows-2025
             script: dist:x64
             artifact: package-windows-x64
-            files: release/Chat-On-Steroids-Setup-x64.exe
+            files: |
+              release/Chat-On-Steroids-Setup-x64.exe
+              release/Chat-On-Steroids-Portable-x64.exe
           - name: Windows arm64
             platform: win32
             arch: arm64
             runner: windows-11-arm
             script: dist:arm64
             artifact: package-windows-arm64
-            files: release/Chat-On-Steroids-Setup-arm64.exe
+            files: |
+              release/Chat-On-Steroids-Setup-arm64.exe
+              release/Chat-On-Steroids-Portable-arm64.exe
           - name: macOS x64
             platform: darwin
             arch: x64
@@ -114,6 +118,25 @@ jobs:
 
       - name: Package
         run: npm run ${{ matrix.script }}
+
+      - name: Package Windows portable executable
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $builder = Join-Path $PWD 'node_modules/electron-builder/out/cli/cli.js'
+          node $builder --win portable --${{ matrix.arch }} --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder portable target failed with exit code $LASTEXITCODE"
+          }
+          $portableFiles = @(
+            Get-ChildItem -LiteralPath 'release' -File -Filter '*.exe' |
+              Where-Object { $_.Name -notlike 'Chat-On-Steroids-Setup-*' }
+          )
+          if ($portableFiles.Count -ne 1) {
+            $names = ($portableFiles | ForEach-Object Name) -join ', '
+            throw "Expected one generated Windows portable executable, found $($portableFiles.Count): $names"
+          }
+          Move-Item -LiteralPath $portableFiles[0].FullName -Destination (Join-Path $PWD 'release/Chat-On-Steroids-Portable-${{ matrix.arch }}.exe')
 
       - name: Smoke packaged runtime natively
         run: node scripts/smoke-packaged-runtime.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
@@ -363,6 +386,8 @@ jobs:
           files=(
             release/Chat-On-Steroids-Setup-x64.exe
             release/Chat-On-Steroids-Setup-arm64.exe
+            release/Chat-On-Steroids-Portable-x64.exe
+            release/Chat-On-Steroids-Portable-arm64.exe
             release/Chat-On-Steroids-macOS-x64.dmg
             release/Chat-On-Steroids-macOS-x64.zip
             release/Chat-On-Steroids-macOS-arm64.dmg
@@ -378,6 +403,8 @@ jobs:
           (cd release && sha256sum \
             Chat-On-Steroids-Setup-x64.exe \
             Chat-On-Steroids-Setup-arm64.exe \
+            Chat-On-Steroids-Portable-x64.exe \
+            Chat-On-Steroids-Portable-arm64.exe \
             Chat-On-Steroids-macOS-x64.dmg \
             Chat-On-Steroids-macOS-x64.zip \
             Chat-On-Steroids-macOS-arm64.dmg \
@@ -399,6 +426,8 @@ jobs:
           path: |
             release/Chat-On-Steroids-Setup-x64.exe
             release/Chat-On-Steroids-Setup-arm64.exe
+            release/Chat-On-Steroids-Portable-x64.exe
+            release/Chat-On-Steroids-Portable-arm64.exe
             release/Chat-On-Steroids-macOS-x64.dmg
             release/Chat-On-Steroids-macOS-x64.zip
             release/Chat-On-Steroids-macOS-arm64.dmg

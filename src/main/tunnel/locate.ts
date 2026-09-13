@@ -88,6 +88,7 @@ export function locateBinary(name: BinaryName, hint?: string): string | null {
     hint ?? '',
     process.platform,
     process.resourcesPath ?? '',
+    process.cwd(),
     process.env.PATH ?? process.env.Path ?? '',
     process.env.USERPROFILE ?? '',
     process.env.HOME ?? '',
@@ -118,6 +119,11 @@ export function locateBinary(name: BinaryName, hint?: string): string | null {
       locateCache.set(key, sibling);
       return sibling;
     }
+    // An explicit user choice is authoritative. If it exists but is not executable, or
+    // otherwise cannot resolve to the requested binary, fail closed instead of silently
+    // switching to the bundled/PATH copy and pretending the saved setting worked.
+    locateCache.set(key, null);
+    return null;
   }
 
   const bundled = bundledDir();
@@ -155,8 +161,14 @@ export function locateBinary(name: BinaryName, hint?: string): string | null {
 function bundledDir(): string | null {
   const packaged = process.resourcesPath ? path.join(process.resourcesPath, 'tunnel') : null;
   if (packaged && existsSync(packaged)) return packaged;
-  // Source: src/main/tunnel -> repo root is three levels up.
-  // Packaged/compiled dev output keeps the same main/tunnel nesting under dist.
+
+  // A headless Rollup build can move shared code below out/main/chunks, so __dirname no longer
+  // identifies the repository root. The systemd service owns WorkingDirectory and starts in the
+  // CoS source/install root, making cwd the stable server resource anchor.
+  const workingTree = path.join(process.cwd(), 'resources', 'tunnel');
+  if (existsSync(workingTree)) return workingTree;
+
+  // Source: src/main/tunnel -> repo root is three levels up. Keep this for Electron dev/tests.
   const dev = path.resolve(__dirname, '..', '..', '..', 'resources', 'tunnel');
   return existsSync(dev) ? dev : null;
 }

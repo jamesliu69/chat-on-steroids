@@ -133,14 +133,9 @@ describe('native window activation', () => {
     expect(source.on).not.toHaveBeenCalled();
   });
 
-  it('keeps a macOS app alive after its last window closes, regardless of close-to-tray preference', () => {
-    expect(shouldQuitOnWindowAllClosed('darwin', true)).toBe(false);
-    expect(shouldQuitOnWindowAllClosed('darwin', false)).toBe(false);
-  });
-
-  it.each(['win32', 'linux'] as const)('keeps close-to-tray semantics on %s', (platform) => {
-    expect(shouldQuitOnWindowAllClosed(platform, true)).toBe(false);
-    expect(shouldQuitOnWindowAllClosed(platform, false)).toBe(true);
+  it('honors close-to-tray semantics on every supported platform', () => {
+    expect(shouldQuitOnWindowAllClosed(true)).toBe(false);
+    expect(shouldQuitOnWindowAllClosed(false)).toBe(true);
   });
 });
 

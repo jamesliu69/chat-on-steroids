@@ -31,8 +31,10 @@ bughunt-*/
 docs/evidence/
 docs/android-mcp-brainstorm/
 
-# Smoke-test scratch fixtures.
+# Smoke-test and local headless-server runtime data.
 smoke/
+.server-smoke/
+.server-live/
 smoke-switch.txt
 HANDOFF.md
 docs/handoff-*.md

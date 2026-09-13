@@ -8,6 +8,7 @@ afterEach(() => { dom?.window.close(); vi.unstubAllGlobals(); vi.resetModules();
 
 it('explains a pending background rebuild and replaces transport failure with a retryable status', async () => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let reject!: (error: Error) => void;
   Object.assign(dom.window, { api: {
@@ -28,6 +29,7 @@ it('explains a pending background rebuild and replaces transport failure with a 
 
 it.each([256_000, 400_000])('shows the calculated %i context cap and edits formula preferences without reloading recordings', async (contextTokenCap) => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const models = [
     { model: 'gpt-5.6', reasoningEffort: 'high', assumed: true, tokens: 1e6 },
@@ -81,6 +83,7 @@ it.each([256_000, 400_000])('shows the calculated %i context cap and edits formu
 
 it('shows the Sol picker alias rate and preserves an explicitly cleared rate after reload', async () => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const models = [{ model: 'gpt-5-6-thinking', reasoningEffort: 'high', assumed: false, tokens: 427245 }];
   const data: UsageOverview = { contextTokenCap: 256_000, tokens: 427245, models, days: [{ date: '2026-09-07', tokens: 427245, models }], sessions: 1, limits: [] };
@@ -104,6 +107,7 @@ it('shows the Sol picker alias rate and preserves an explicitly cleared rate aft
 
 it('combines equivalent recorded names in the table while keeping raw rate edits and partial unknown cost', async () => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const models = ['5.6', 'gpt-5-6-thinking', 'gpt-5.6-sol'].map(model => ({ model, reasoningEffort: 'high', assumed: false, tokens: 1e6 }));
   const data: UsageOverview = { contextTokenCap: 256_000, tokens: 3e6, models, days: [{ date: '2026-09-08', tokens: 3e6, models }], sessions: 1, limits: [] };

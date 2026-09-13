@@ -755,13 +755,26 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           // profile work before the requested command even begins. Keep explicit login=true,
           // but make the deterministic/no-profile path the Windows default.
           const useLoginShell = input.login ?? process.platform !== 'win32';
-          const command = deriveExecArgs(shell, boundCommand, useLoginShell);
+          // POSIX login shells are allowed to source the user's normal profile, but Debian's
+          // /etc/profile (and many user profiles) replace PATH outright. Re-assert only CoS's
+          // bundled ripgrep directory after login initialization so the runtime we advertise
+          // remains reachable without suppressing the user's login-shell semantics.
+          const interceptCommand = deriveExecArgs(shell, boundCommand, useLoginShell);
+          let executableCommand = boundCommand;
+          if (useLoginShell && (shell.shellType === 'bash' || shell.shellType === 'zsh' || shell.shellType === 'sh')) {
+            const bundledRipgrep = locateRipgrep();
+            if (bundledRipgrep) {
+              executableCommand = `export PATH=${shlexJoin([nodePath.dirname(bundledRipgrep)])}:"$PATH"; ${boundCommand}`;
+            }
+          }
+          const command = deriveExecArgs(shell, executableCommand, useLoginShell);
           try {
             // Current Codex intercepts an explicit `apply_patch` shell invocation before spawning
             // the shell process. The parser is the port of apply-patch/src/invocation.rs and uses
-            // the same tree-sitter-bash grammar/query as upstream.
+            // the same tree-sitter-bash grammar/query as upstream. Inspect the caller's original
+            // command rather than the runtime PATH prefix injected only for process execution.
             if (!isBatch) {
-              const interceptedPatch = maybeParseApplyPatchForExec(command, dir.real);
+              const interceptedPatch = maybeParseApplyPatchForExec(interceptCommand, dir.real);
               if (interceptedPatch.kind === 'correctness_error') {
                 return fail(`apply_patch verification failed: ${interceptedPatch.error.message}`);
               }

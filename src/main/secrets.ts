@@ -10,7 +10,6 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { safeStorage } from 'electron';
 import type { SecureStorageInfo } from '../shared/types.js';
 import { logError, logWarn } from './logger.js';
 
@@ -64,6 +63,37 @@ function enqueue<T>(operation: () => Promise<T>): Promise<T> {
  */
 export type SecretKey = 'openaiApiKey' | 'bridgeToken' | 'openRouterApiKey' | 'customProviderApiKey' | `plugin:${string}`;
 
+/**
+ * Read-only secret source used by non-Electron runtimes such as the headless server.
+ * Desktop keeps the encrypted Electron safeStorage implementation below.
+ */
+export interface SecretProvider {
+  get(key: SecretKey): Promise<string | null>;
+}
+
+interface SafeStorageLike {
+  isAsyncEncryptionAvailable(): Promise<boolean>;
+  encryptStringAsync(plaintext: string): Promise<Buffer>;
+  decryptStringAsync(ciphertext: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>;
+}
+
+let externalProvider: SecretProvider | null = null;
+let safeStoragePromise: Promise<SafeStorageLike> | null = null;
+
+async function electronSafeStorage(): Promise<SafeStorageLike> {
+  safeStoragePromise ??= import('electron').then((module) => module.safeStorage as SafeStorageLike);
+  return safeStoragePromise;
+}
+
+/** Installs a process-lifetime read-only provider before the headless runtime loads credentials. */
+export function configureSecretProvider(provider: SecretProvider | null): void {
+  externalProvider = provider;
+  loadGeneration += 1;
+  cache = null;
+  rotationPending = false;
+  loadInFlight = null;
+}
+
 export function initSecretsPath(userDataDir: string): void {
   secretsPath = path.join(userDataDir, FILE_NAME);
 }
@@ -84,7 +114,9 @@ export function secureStorageCiphertextIsProtected(
 }
 
 export async function secureStorageStatus(platform: NodeJS.Platform = process.platform): Promise<SecureStorageInfo> {
+  if (externalProvider) return { available: true, detail: null };
   try {
+    const safeStorage = await electronSafeStorage();
     if (!(await safeStorage.isAsyncEncryptionAvailable())) {
       return {
         available: false,
@@ -157,6 +189,7 @@ async function loadAll(): Promise<Record<string, string>> {
       rotationPending = false;
       return {};
     }
+    const safeStorage = await electronSafeStorage();
     const decrypted = await safeStorage.decryptStringAsync(blob);
     const parsed = parseSecretStore(decrypted.result);
     // `deleteAllSecrets()` is allowed to race a Keychain decrypt without waiting for a prompt or
@@ -208,6 +241,7 @@ async function writeAll(values: Record<string, string>): Promise<void> {
   if (!(await isEncryptionAvailable())) {
     throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
   }
+  const safeStorage = await electronSafeStorage();
   const blob = await safeStorage.encryptStringAsync(JSON.stringify(values));
   if (!secureStorageCiphertextIsProtected(blob)) {
     throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
@@ -249,6 +283,7 @@ async function rotateIfNeeded(): Promise<void> {
 }
 
 export async function getSecret(key: SecretKey): Promise<string | null> {
+  if (externalProvider) return externalProvider.get(key);
   const all = await readAll();
   const value = all[key];
   await rotateIfNeeded();
@@ -260,6 +295,7 @@ export async function hasSecret(key: SecretKey): Promise<boolean> {
 }
 
 export function setSecret(key: SecretKey, value: string): Promise<void> {
+  if (externalProvider) return Promise.reject(new Error('The headless server secret provider is read-only; update its systemd credential or environment instead'));
   return enqueue(async () => {
     if (!(await isEncryptionAvailable())) {
       throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
@@ -290,6 +326,7 @@ export function clearSecret(key: SecretKey): Promise<void> {
 }
 
 export function deleteAllSecrets(): Promise<void> {
+  if (externalProvider) return Promise.reject(new Error('The headless server secret provider is read-only; update its systemd credential or environment instead'));
   return enqueue(async () => {
     // Invalidate first, before touching disk. A decrypt may already hold the old ciphertext in
     // memory and can complete after rm(); its generation check above then returns the new empty
@@ -313,4 +350,6 @@ export function resetSecretsCacheForTests(): void {
   cache = null;
   rotationPending = false;
   loadInFlight = null;
+  externalProvider = null;
+  safeStoragePromise = null;
 }

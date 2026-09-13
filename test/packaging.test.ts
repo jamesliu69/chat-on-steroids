@@ -156,11 +156,13 @@ describe('cross-platform packaging targets', () => {
     expect(matrix).toEqual([
       {
         name: 'Windows x64', platform: 'win32', arch: 'x64', runner: 'windows-2025',
-        script: 'dist:x64', artifact: 'package-windows-x64', files: 'release/Chat-On-Steroids-Setup-x64.exe'
+        script: 'dist:x64', artifact: 'package-windows-x64',
+        files: 'release/Chat-On-Steroids-Setup-x64.exe\nrelease/Chat-On-Steroids-Portable-x64.exe\n'
       },
       {
         name: 'Windows arm64', platform: 'win32', arch: 'arm64', runner: 'windows-11-arm',
-        script: 'dist:arm64', artifact: 'package-windows-arm64', files: 'release/Chat-On-Steroids-Setup-arm64.exe'
+        script: 'dist:arm64', artifact: 'package-windows-arm64',
+        files: 'release/Chat-On-Steroids-Setup-arm64.exe\nrelease/Chat-On-Steroids-Portable-arm64.exe\n'
       },
       {
         name: 'macOS x64', platform: 'darwin', arch: 'x64', runner: 'macos-15-intel',
@@ -185,6 +187,9 @@ describe('cross-platform packaging targets', () => {
     ]);
     expect(parsed.jobs.package['runs-on']).toBe('${{ matrix.runner }}');
     expect(workflow).toContain('name: chat-on-steroids-candidate-${{ github.run_id }}');
+    expect(workflow).toContain('name: Package Windows portable executable');
+    expect(workflow).toContain('--win portable --${{ matrix.arch }} --publish never');
+    expect(workflow).toContain('Chat-On-Steroids-Portable-${{ matrix.arch }}.exe');
     expect(workflow).toContain('Install generated DEB on target distro');
     expect(workflow).toContain('Launch installed DEB normally under Xvfb');
     expect(workflow).toContain('CLF_DEBUG=1 timeout --signal=TERM --kill-after=5s 12s xvfb-run -a /usr/bin/chat-on-steroids');
@@ -651,6 +656,8 @@ Load command 11
     const artifacts = [
       'Chat-On-Steroids-Setup-x64.exe',
       'Chat-On-Steroids-Setup-arm64.exe',
+      'Chat-On-Steroids-Portable-x64.exe',
+      'Chat-On-Steroids-Portable-arm64.exe',
       'Chat-On-Steroids-macOS-x64.dmg',
       'Chat-On-Steroids-macOS-x64.zip',
       'Chat-On-Steroids-macOS-arm64.dmg',
