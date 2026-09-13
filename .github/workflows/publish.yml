@@ -77,6 +77,8 @@ jobs:
           for (const artifact of [
             'Chat-On-Steroids-Setup-x64.exe',
             'Chat-On-Steroids-Setup-arm64.exe',
+            'Chat-On-Steroids-Portable-x64.exe',
+            'Chat-On-Steroids-Portable-arm64.exe',
             'Chat-On-Steroids-macOS-x64.dmg',
             'Chat-On-Steroids-macOS-x64.zip',
             'Chat-On-Steroids-macOS-arm64.dmg',
@@ -181,6 +183,8 @@ jobs:
           gh release create "$TAG" \
             publish/Chat-On-Steroids-Setup-x64.exe \
             publish/Chat-On-Steroids-Setup-arm64.exe \
+            publish/Chat-On-Steroids-Portable-x64.exe \
+            publish/Chat-On-Steroids-Portable-arm64.exe \
             publish/Chat-On-Steroids-macOS-x64.dmg \
             publish/Chat-On-Steroids-macOS-x64.zip \
             publish/Chat-On-Steroids-macOS-arm64.dmg \
