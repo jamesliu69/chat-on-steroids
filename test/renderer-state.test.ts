@@ -439,7 +439,7 @@ it('always offers setup collapse and preserves the choice across incomplete stat
   expect(doc.getElementById('wizard')!.classList.contains('is-tidy')).toBe(false);
 });
 
-it('adds and selects setup profiles and rejects an older profile status response', async () => {
+  it('adds and selects setup profiles and rejects an older profile status response', async () => {
   const add = vi.fn(); const select = vi.fn();
   const mounted = await mountChat({}, [], { addSetupProfile: add, selectSetupProfile: select });
   const doc = mounted.window.document;
@@ -567,6 +567,32 @@ it('shows the current host Desktop tools without rebuilding permission controls 
   mounted.push(mounted.state);
   expect(names()).toEqual(windowsNames);
   expect(mounted.calls).toHaveLength(0);
+});
+
+it('does not let a failed API-key save permanently block setup profile changes', async () => {
+  const setApiKey = vi.fn().mockResolvedValue({ ok: false, error: 'temporary secure storage failure' });
+  const selectSetupProfile = vi.fn();
+  const mounted = await mountChat({}, [], { setApiKey, selectSetupProfile });
+  const doc = mounted.window.document;
+  doc.getElementById('setupProfileMenu')!.hidePopover = vi.fn();
+  const initial = structuredClone(mounted.state);
+  initial.config.tunnel.profileId = 'default';
+  initial.config.tunnel.profileName = 'Default';
+  initial.config.tunnel.profileEpoch = 0;
+  initial.config.setupProfiles = [{ id: 'work', name: 'Work', tunnelId: '', desktopTunnelId: '', pluginsTunnelId: '' }];
+  mounted.push(initial);
+  selectSetupProfile.mockResolvedValue({ ok: true, data: {
+    ...initial,
+    config: { ...initial.config, tunnel: { ...initial.config.tunnel, profileId: 'work', profileName: 'Work', profileEpoch: 1 },
+      setupProfiles: [{ id: 'default', name: 'Default', tunnelId: '', desktopTunnelId: '', pluginsTunnelId: '' }] }
+  } });
+  const input = doc.getElementById('apiKey') as HTMLInputElement;
+  input.value = 'bad-key';
+  input.dispatchEvent(new mounted.window.Event('blur'));
+  await vi.waitFor(() => expect(setApiKey).toHaveBeenCalled());
+  input.value = '';
+  (doc.querySelector('[data-profile-id="work"]') as HTMLButtonElement).click();
+  await vi.waitFor(() => expect(selectSetupProfile).toHaveBeenCalledWith('work'));
 });
 
 it('preserves native Desktop permissions when saving unrelated settings on Linux', async () => {

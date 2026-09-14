@@ -45,7 +45,8 @@ import {
   CONTINUATION_MARKER,
   TURN_OUTCOME_LABELS,
   foldProgress,
-  toolCallSummary
+  toolCallSummary,
+  workSequence
 } from '../shared/session.js';
 import { chronological } from '../shared/chronology.js';
 import { recentChatActivity, sessionWorkingAt, workerReportedFinish } from '../shared/session-activity.js';
@@ -3745,7 +3746,10 @@ export function initChat(next: Deps): void {
     if (!older && !newer) return;
     historyIntent = null;
     if (newer) {
-      const from = events.reduce((cursor, event) => Math.max(cursor, event.seq + 1), 0);
+      // A background process completion revises an older tool row with a newer seq.
+      // Page from the row's logical work position or that revision can skip every
+      // still-unread event between its original launch and eventual completion.
+      const from = events.reduce((cursor, event) => Math.max(cursor, workSequence(event) + 1), 0);
       historyLoading = true;
       void loadDetail(true, false, from).finally(() => { historyLoading = false; });
       return;

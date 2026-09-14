@@ -115,7 +115,8 @@ let openGroup: string | null = null;
 /** Null follows setup completion; an explicit guide choice survives status pushes. */
 let showAllSteps: boolean | null = null;
 let setupProfileBusy = false;
-let setupKeySave: Promise<boolean> = Promise.resolve(true);
+let setupKeySave: Promise<boolean> | null = null;
+let setupKeySaveFailed = false;
 
 // ------------------------------------------------------------------- tabs
 
@@ -905,12 +906,18 @@ async function changeSetupProfile(action: 'add' | 'select' | 'remove', id?: stri
   setupProfileBusy = true; paintSetupProfiles(state);
   try {
     await settingsSaveQueue;
-    if (!(await setupKeySave)) return;
+    const pendingKeySave = setupKeySave;
+    if (pendingKeySave) await pendingKeySave;
+    const apiKey = $<HTMLInputElement>('apiKey');
+    // A failed write retains its draft for retry, but the failure itself is not a
+    // permanent profile lock. Clearing the unsaved draft makes profile navigation safe.
+    if (setupKeySaveFailed && apiKey.value.trim() !== '') { apiKey.focus(); return; }
     const next = await run(action === 'add' ? api.addSetupProfile(name)
       : action === 'remove' ? api.removeSetupProfile(id!) : api.selectSetupProfile(id!));
     if (!next) return;
     requestedSettings = null;
-    $<HTMLInputElement>('apiKey').value = '';
+    apiKey.value = '';
+    setupKeySaveFailed = false;
     if (action === 'add') {
       if (nameInput.value.trim() === name) nameInput.value = '';
       $<HTMLDialogElement>('setupProfileDialog').close();
@@ -1732,7 +1739,7 @@ $('apiKey').addEventListener('blur', () => {
   const submitted = input.value;
   if (submitted === '') return;
   const owner = state?.config.tunnel.profileId;
-  setupKeySave = (async () => {
+  const save = (async () => {
     const next = await run(api.setApiKey(submitted, owner));
     if (next) {
     // Do not erase a newer value typed while safeStorage/IPC was still resolving the previous
@@ -1743,8 +1750,14 @@ $('apiKey').addEventListener('blur', () => {
       }
       toast('API key stored');
     }
+    setupKeySaveFailed = next === null;
     return next !== null;
   })();
+  setupKeySave = save;
+  void save.then(
+    () => { if (setupKeySave === save) setupKeySave = null; },
+    () => { setupKeySaveFailed = true; if (setupKeySave === save) setupKeySave = null; }
+  );
 });
 
 $('removeApiKey').addEventListener('click', async () => {

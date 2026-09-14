@@ -102,6 +102,38 @@ it('keeps plugin connection setup local, preserves a draft and saves through the
   expect(document.querySelector('#pluginDialog .plugin-tools')).toBeNull();
 });
 
+it('stores a Plugins setup API key in the currently selected setup profile', async () => {
+  const next = {
+    hasApiKey: false,
+    config: {
+      tunnel: {
+        kind: 'openai',
+        profileId: 'work-profile',
+        profileName: 'Work',
+        profileEpoch: 3,
+        tunnelId: 'core-work',
+        desktopTunnelId: '',
+        pluginsTunnelId: ''
+      },
+      setupProfiles: [{ id: 'default', name: 'Default', tunnelId: 'core-default', desktopTunnelId: '', pluginsTunnelId: '' }],
+      ui: { theme: 'dark' }
+    },
+    status: { surfaces: [{ id: 'plugins', state: 'offline', tools: [], connectorName: 'Chat On Steroids Plugins', description: 'External tools', lastRequestAt: null }] }
+  } as unknown as AppState;
+  initPlugins(); applyPluginsState(next); await tick();
+  document.getElementById('pluginsSetupLink')!.click();
+  const password = document.querySelector<HTMLInputElement>('#pluginDialog input[type=password]')!;
+  const tunnel = document.querySelector<HTMLInputElement>('#pluginDialog #pluginsTunnelId')!;
+  password.value = 'work-key';
+  tunnel.value = 'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  api.setApiKey!.mockResolvedValue({ ok: true, data: next });
+  api.saveSettings!.mockResolvedValue({ ok: true, data: next });
+  api.connect!.mockResolvedValue({ ok: true, data: next });
+  [...document.querySelectorAll<HTMLButtonElement>('#pluginDialog button')].find(node => node.textContent === 'Save & connect')!.click();
+  await tick();
+  expect(api.setApiKey).toHaveBeenCalledWith('work-key', 'work-profile');
+});
+
 it('explains starting enabled runtimes and tool publication conflicts', async () => {
   state.plugins[0]!.status = 'connecting';
   state.plugins[0]!.tools = [{ name: 'get_scene_info', exposedName: 'get_scene_info', enabled: true, published: false, exposureError: 'Another installed plugin declares get_scene_info.' }];

@@ -207,4 +207,15 @@ describe('Chinese app interface', () => {
         .toEqual([...key.matchAll(/\{\d+\}/g)].map(match => match[0]).sort());
     }
   });
+
+  it('translates dynamic recovery, reasoning and setup-profile strings in Traditional Chinese', async () => {
+    const { setLanguage, t } = await import('../src/renderer/i18n.js');
+    setLanguage('zh-TW');
+    expect(Object.keys(zhCN).filter(key => !(key in zhTW))).toEqual([]);
+    const required = [
+      'Reload in {0}', 'Check in {0}', 'Default ({0})', 'Waiting for running tools',
+      'Show setup guide', 'Delete profile: {0}', 'Queued message', 'Unattributed call'
+    ];
+    for (const key of required) expect(t(key, ['X']), key).not.toBe(key.replace('{0}', 'X'));
+  });
 });

@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_GOAL_SYSTEM_PROMPT } from '../src/shared/goal.js';
 import { prependUserPrompt } from '../src/shared/user-prompt.js';
-import type { SessionEvent, SessionSummary } from '../src/shared/session.js';
+import { workSequence, type SessionEvent, type SessionSummary } from '../src/shared/session.js';
 import type { InputArgs, InputEntry } from '../src/main/session/input.js';
 import type { LocalProject } from '../src/shared/projects.js';
 
@@ -2262,6 +2262,50 @@ it('scrolls forward through evicted history with wheel, keyboard and scrollbar, 
   await append([{ seq: 401, time: T0 + 401, source: 'extension', kind: 'user_message', messageId: 'live-again', message: text('Live again') }]);
   expect(timeline.textContent).toContain('Live again');
   geometryChanges.disconnect();
+});
+
+it('uses logical work position when paging forward past a late background-process completion', async () => {
+  const rows = Array.from({ length: 400 }, (_, i): SessionEvent => ({ seq: i + 1, time: T0 + i,
+    source: 'extension', kind: 'user_message', messageId: `late-process-${i}`, message: text(`Late process item ${i + 1}.`) }));
+  const completed = toolCall(1000, 'late-process') as Extract<SessionEvent, { kind: 'tool_call' }>;
+  rows[19] = {
+    ...completed,
+    origin: 20,
+    time: T0 + 20,
+    call: { ...completed.call, process: { sessionId: 'proc', completedAt: T0 + 1000, exitCode: 0, durationMs: 980 } }
+  };
+  const { w, live } = await boot(rows);
+  const api = (w as any).api;
+  const read = vi.fn(async (_id: string, options: { from?: number; before?: number; limit: number }) => {
+    const eligible = live.events.filter(event =>
+      (options.from === undefined || event.seq >= options.from) &&
+      (options.before === undefined || workSequence(event) < options.before));
+    const ordered = [...eligible].sort((a, b) => workSequence(a) - workSequence(b));
+    const page = options.from === undefined ? ordered.slice(-options.limit) : ordered.slice(0, options.limit);
+    return { ok: true, data: { summary: summary(live.events), events: page, total: live.events.length,
+      nextFrom: page.reduce((next, event) => Math.max(next, workSequence(event) + 1), options.from ?? 0) } };
+  });
+  api.getSession = read;
+  const timeline = w.document.getElementById('timeline')!;
+  const pane = w.document.getElementById('chatBody')!;
+  Object.defineProperties(pane, { clientHeight: { configurable: true, value: 400 },
+    scrollHeight: { configurable: true, get: () => timeline.querySelectorAll('[data-timeline-key]').length * 20 } });
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    const index = [...timeline.querySelectorAll('[data-timeline-key]')].indexOf(this as Element);
+    const top = Math.max(0, index) * 20 - pane.scrollTop;
+    return { top, bottom: top + 20, height: 20 } as DOMRect;
+  };
+  for (let i = 0; i < 3; i++) {
+    pane.scrollTop = 0;
+    pane.dispatchEvent(new w.WheelEvent('wheel', { deltaY: -100 }));
+    await settle();
+  }
+  expect(timeline.textContent).toContain('Late process item 1.');
+  pane.scrollTop = pane.scrollHeight - pane.clientHeight;
+  pane.dispatchEvent(new w.WheelEvent('wheel', { deltaY: 100 }));
+  await settle();
+  const forward = read.mock.calls.findLast(([, options]) => options.from !== undefined)?.[1].from;
+  expect(forward).toBeLessThan(1000);
 });
 
 it('keeps admitting newer data when dense collapsed activity reaches the resident bound', async () => {
