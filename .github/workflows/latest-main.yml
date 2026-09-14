@@ -1,0 +1,60 @@
+name: Latest main Windows
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: latest-main-windows
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and publish Windows x64 portable
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows x64 packages
+        run: npm run dist:x64
+
+      - name: Verify portable executable exists
+        shell: pwsh
+        run: |
+          $portable = 'release/Chat-On-Steroids-Portable-x64.exe'
+          if (-not (Test-Path -LiteralPath $portable -PathType Leaf)) {
+            throw "Missing $portable"
+          }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $portable
+
+      - name: Replace latest-main prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete latest-main --cleanup-tag --yes 2>/dev/null || true
+          gh release create latest-main \
+            release/Chat-On-Steroids-Portable-x64.exe \
+            --title "Latest main Windows x64" \
+            --notes "Automated Windows x64 portable build from tested main commit ${{ github.event.workflow_run.head_sha }}." \
+            --prerelease \
+            --target "${{ github.event.workflow_run.head_sha }}"

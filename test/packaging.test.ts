@@ -633,6 +633,21 @@ Load command 11
     expect(workflow).toContain('name: chat-on-steroids-candidate-${{ github.run_id }}');
   });
 
+  it('publishes the tested main Windows x64 portable build to a stable prerelease', () => {
+    const workflow = readFileSync(path.join(root, '.github', 'workflows', 'latest-main.yml'), 'utf8');
+
+    expect(workflow).toContain('workflow_run:');
+    expect(workflow).toContain('workflows: [CI]');
+    expect(workflow).toContain('branches: [main]');
+    expect(workflow).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(workflow).toContain('ref: ${{ github.event.workflow_run.head_sha }}');
+    expect(workflow).toContain('npm run dist:x64');
+    expect(workflow).toContain('release/Chat-On-Steroids-Portable-x64.exe');
+    expect(workflow).toContain('gh release delete latest-main --cleanup-tag --yes');
+    expect(workflow).toContain('gh release create latest-main');
+    expect(workflow).toContain('--prerelease');
+    expect(workflow).toContain('--target "${{ github.event.workflow_run.head_sha }}"');
+  });
   it('keeps the current changelog and reviewed release notes aligned with every published artifact', () => {
     const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string };
     const lock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
