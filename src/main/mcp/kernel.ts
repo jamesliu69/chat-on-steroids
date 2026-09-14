@@ -34,11 +34,13 @@ import { toolSchema } from './tool-declarations.js';
 import {
   SandboxError,
   isAbsoluteVirtualPath,
+  isContained,
   isNativeWindowsPath,
   resolvePath,
   type Resolved
 } from '../sandbox.js';
 import { currentWorkspace, learnWorkspace, setCurrentWorkspace } from '../workspace.js';
+import { skillsDirectory } from '../skills.js';
 import { getSessionProject } from '../projects.js';
 import { ExecError } from '../exec.js';
 import { ComputerError } from '../computer/index.js';
@@ -91,6 +93,7 @@ import { acknowledgeBackgroundExecOutput, backgroundExecRecoveryNotices, offerBa
 import { DEFAULT_MAX_OUTPUT_TOKENS } from '../codex/unified-exec-constants.js';
 import { unattributedRepairEta } from '../bridge.js';
 import { conversationAttachment, hasSupersededConversationAttachments, readOverflowText } from '../session/store.js';
+import { sessionFinishDeadline } from '../session/finish.js';
 import type { StoredText, ToolOutcome } from '../../shared/session.js';
 
 export interface ToolContext {
@@ -576,7 +579,7 @@ async function dispatchTracked(
   // the live worker failure that motivated IDENTITY_EVIDENCE_MS arrived ~8 seconds late.
   const identitySensitive = needsWorkspaceIdentity(name, args);
   const allowUnattributed = getConfig().multiAgent.allowUnattributedCalls;
-  // update_plan always consumes this exact session, even outside a swarm. Resolve it
+  // update_plan and session_finish consume this exact session, even outside a swarm. Resolve it
   // before the shared blocked/superseded checks rather than guessing from selection.
   // Observation and its dependent input must always resolve the same caller before either
   // Desktop handler runs; recording a late identity cannot repair a frame captured in the
@@ -584,9 +587,15 @@ async function dispatchTracked(
   // its outer call and children can consistently use the same anonymous principal.
   const desktopContext = surface === 'desktop' && (name === 'get_window_state' ||
     (WINDOWS_COMPUTER_STATE_INPUT_METHODS as readonly string[]).includes(name));
+  // Identity and the finish hold share one ingress deadline; late proof must not
+  // add another complete hold interval to an already waiting provider request.
+  const finishDeadline = name === 'session_finish' ? sessionFinishDeadline(startedAt) : null;
+  const identityWindow = (requested: number): number => finishDeadline === null
+    ? requested : Math.min(requested, Math.max(0, finishDeadline - Date.now()));
   const swarmIdentityRequired = swarmRunning() && (identitySensitive || name === 'exec_command');
   const requiresCallerBeforeHandler =
     name === 'update_plan' ||
+    name === 'session_finish' ||
     desktopContext ||
     (identitySensitive && swarmRunning()) ||
     (!allowUnattributed && swarmIdentityRequired) ||
@@ -594,7 +603,7 @@ async function dispatchTracked(
   if (!context.caller.conversationId && requiresCallerBeforeHandler && requestId) {
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
+      await awaitFreshCallOrigin(name, startedAt, identityWindow(name === 'session_finish' ? SPAWN_EVIDENCE_MS : IDENTITY_EVIDENCE_MS), { requestId })
     );
   }
   // With unattributed work disabled, every retained worker identity remains an exact fence and
@@ -607,7 +616,7 @@ async function dispatchTracked(
   if (!context.caller.conversationId && !allowUnattributed && retiredWorkerRisk && requestId) {
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
+      await awaitFreshCallOrigin(name, startedAt, identityWindow(IDENTITY_EVIDENCE_MS), { requestId })
     );
   }
   // Dormant histories are long-lived identity fences, not active slot claims. An old worker tab
@@ -618,7 +627,7 @@ async function dispatchTracked(
   if (!context.caller.conversationId && !allowUnattributed && dormantWorkerRisk && requestId) {
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, IDENTITY_EVIDENCE_MS, { requestId })
+      await awaitFreshCallOrigin(name, startedAt, identityWindow(IDENTITY_EVIDENCE_MS), { requestId })
     );
   }
   if (
@@ -670,7 +679,7 @@ async function dispatchTracked(
   if (!context.caller.conversationId && (anyChatBlocked() || anyContinuationOpen()) && requestId) {
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, REQUEST_ID_GRACE_MS, { requestId })
+      await awaitFreshCallOrigin(name, startedAt, identityWindow(REQUEST_ID_GRACE_MS), { requestId })
     );
   }
   const supersededConversation = context.caller.conversationId
@@ -1063,7 +1072,10 @@ export async function resolveIn(
   });
   // Absolute only: a workspace learned from a relative path would let one loose resolution
   // decide where the next loose resolution points. See workspace.ts.
-  if (isAbsoluteVirtualPath(requested) || isNativeWindowsPath(requested)) await learnWorkspace(resolved);
+  // Loading shared skill instructions must not move the chat away from its project.
+  const skillDirectory = skillsDirectory();
+  const isSkill = resolved.root.name === 'skills' || (skillDirectory !== null && isContained(skillDirectory, resolved.real));
+  if (!isSkill && (isAbsoluteVirtualPath(requested) || isNativeWindowsPath(requested))) await learnWorkspace(resolved);
   return resolved;
 }
 

@@ -9,7 +9,16 @@ The app and the `extension/` companion are versioned together. **Reload the
 extension after updating the app**. If their bridge protocols are incompatible,
 the app refuses the extension and asks you to reload the matching copy.
 
-## [2.1.12] — fork integration and reliability
+## [2.1.13] — Skills and reliability
+
+- Import text skills through **+ → Skills**, select them from the library, or autocomplete their commands with **/**.
+- Selected skill instructions precede project instructions. The 96,000-character message limit preserves skills and user text while shortening AGENTS.md when necessary.
+- Models can read and install skills in the managed `/skills` directory using the existing Core tools. No skills are preinstalled and no extra MCP tools are required.
+- Includes the updated ChatGPT model-picker support from 2.1.12 for main chats and workers.
+- More reliable request attribution, answer boundaries, recovery, Goal/Loop continuation and worker revival.
+- Clearer plugin, permission and terminal-ownership errors; repeated transport notices stay with their original question.
+
+## [2.1.12] — fork integration, model picker and reliability
 
 - Integrated the upstream 2.1.11 Goal/Loop, model-specific reasoning, recovery, plugin and renderer-memory improvements.
 - Added complete Traditional Chinese UI coverage for the new setup, recovery and reasoning flows.
@@ -17,6 +26,12 @@ the app refuses the extension and asks you to reload the matching copy.
 - Fixed setup-profile API-key ownership, stale profile-save locking and late background-process history paging.
 - Kept MCP identity/attribution hardening and lower-latency attribution behavior across the upstream merge.
 - Added Windows portable executables to release packaging and fixed cross-platform CI language assumptions.
+- Model discovery tolerates effort-only labels and missing family prefixes in the refreshed ChatGPT picker.
+- Version-menu retirement captions no longer invalidate discovery or selection.
+- Closed-picker observation supports `6 Pro` and checks any visible version against the provider model id.
+- Account availability, exact model/effort confirmation and restoration of the original selection remain required.
+
+**Reload the companion extension and refresh your ChatGPT tabs after updating.**
 
 ## [2.1.11] — 2 weeks 6 sol
 

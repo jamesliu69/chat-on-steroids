@@ -44,7 +44,9 @@ it('preserves Unicode, literal delimiters and complete mandatory text under both
   expect(userPromptText(text)).toBe(user);
   expect(text).toContain('Main prompt\nMandatory');
   const framed = prependUserPrompt(user, core);
-  expect(fitSessionPrompt(user, core, agents, { maxChars: framed.length, maxBytes: Infinity })).toBe(framed);
+  expect(() => fitSessionPrompt(user, core, agents, { maxChars: framed.length, maxBytes: Infinity }))
+    .toThrow(/project instructions.*delivery limit/i);
+  expect(fitSessionPrompt(user, core, null, { maxChars: framed.length, maxBytes: Infinity })).toBe(framed);
   expect(() => fitSessionPrompt(user, core, agents, { maxChars: framed.length - 1, maxBytes: Infinity })).toThrow(/main instructions/);
 });
 

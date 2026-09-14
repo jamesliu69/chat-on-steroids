@@ -62,11 +62,12 @@ const {
   swarmStateForCaller
 } = await import('../src/main/agents.js');
 const { registerIpc } = await import('../src/main/ipc.js');
+const { initSkills, skillsDirectory } = await import('../src/main/skills.js');
 const { openInPreferredBrowser } = await import('../src/main/browser.js');
 const { app, nativeTheme, safeStorage, shell, dialog } = await import('electron');
 const { extensionDownloadUrl } = await import('../src/main/version.js');
 const { resetWorkspaces, setWorkspaceFor, workspaceEntries } = await import('../src/main/workspace.js');
-const { makeTempDir, removeTempDir } = await import('./helpers.js');
+const { DIR_LINK, makeTempDir, removeTempDir } = await import('./helpers.js');
 
 let dir: string;
 let currentWindow: {
@@ -308,6 +309,7 @@ beforeAll(async () => {
   initSecretsPath(dir);
   initSessionStore(dir);
   initDurableStore(dir);
+  await initSkills(dir);
   onSwarmPersist(() => writeDurableSoon('ipc-swarm', snapshotSwarm()));
   onSwarmPersistNow((snapshot) => writeDurableNow('ipc-swarm', snapshot));
   onRetiredWorkersPersist(() => writeDurableSoon('ipc-retired-workers', snapshotRetiredWorkers()));
@@ -547,6 +549,26 @@ describe('turning multi-agent mode off', () => {
 });
 
 describe('bounded IPC identities and OS launch results', () => {
+  it('refuses to open a replaced skills root', async () => {
+    const managed = skillsDirectory()!;
+    const original = path.join(dir, 'skills-original');
+    const replacement = path.join(dir, 'skills-replacement');
+    await fs.rename(managed, original);
+    await fs.mkdir(replacement);
+    await fs.symlink(replacement, managed, DIR_LINK);
+
+    try {
+      const reply = await handlers.get('skills:openFolder')!(null, undefined) as { ok: boolean; error?: string };
+      expect(reply.ok).toBe(false);
+      expect(reply.error).toMatch(/skill.*(?:unsafe|changed|unavailable)/i);
+      expect(shell.openPath).not.toHaveBeenCalled();
+    } finally {
+      await fs.unlink(managed);
+      await fs.rename(original, managed);
+      await fs.rmdir(replacement);
+    }
+  });
+
   it('reports shell.openPath failure instead of claiming the extension folder opened', async () => {
     vi.mocked(shell.openPath).mockResolvedValueOnce('Access is denied');
     const reply = (await handlers.get('bridge:openExtensionFolder')!(null, undefined)) as {
