@@ -1,11 +1,14 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderRecoveryCountdowns } from '../src/renderer/recovery.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 
 let dom: JSDOM, host: HTMLElement;
 beforeEach(() => {
   dom = new JSDOM('<div id="recovery" hidden></div>');
   vi.stubGlobal('document', dom.window.document);
+  vi.stubGlobal('window', dom.window);
+  setLanguage('en');
   host = document.getElementById('recovery')!;
 });
 afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });
@@ -63,6 +66,6 @@ it('reveals Pro silence at five minutes using the UI clock and hides again when 
 
 it.each(['queue', 'goal', 'loop'] as const)('names %s as the next step without claiming it was sent', next => {
   renderRecoveryCountdowns(host, [{ kind: 'post-reload', next, deadline: 60_000 }], 0);
-  expect(host.textContent).toContain(`Reloaded · next: ${next === 'queue' ? 'Queued message' : next === 'goal' ? '目標' : '迴圈'}`);
+  expect(host.textContent).toContain(`Reloaded · next: ${next === 'queue' ? 'Queued message' : next === 'goal' ? 'Goal' : 'Loop'}`);
   expect(host.textContent).toContain('Check in 1:00');
 });
