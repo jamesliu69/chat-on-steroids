@@ -9,6 +9,15 @@ The app and the `extension/` companion are versioned together. **Reload the
 extension after updating the app**. If their bridge protocols are incompatible,
 the app refuses the extension and asks you to reload the matching copy.
 
+## [2.1.12] — fork integration and reliability
+
+- Integrated the upstream 2.1.11 Goal/Loop, model-specific reasoning, recovery, plugin and renderer-memory improvements.
+- Added complete Traditional Chinese UI coverage for the new setup, recovery and reasoning flows.
+- Preserved Raspberry Pi/Linux ARM64 headless operation, tmux/service support and complete-quit behavior.
+- Fixed setup-profile API-key ownership, stale profile-save locking and late background-process history paging.
+- Kept MCP identity/attribution hardening and lower-latency attribution behavior across the upstream merge.
+- Added Windows portable executables to release packaging and fixed cross-platform CI language assumptions.
+
 ## [2.1.11] — 2 weeks 6 sol
 
 - Goal/Loop decisions use authored conversation context without recorded tool bodies.

@@ -19,6 +19,7 @@ concurrency:
 jobs:
   preflight:
     name: Preflight
+    if: github.repository == 'jamesliu69/chat-on-steroids'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:

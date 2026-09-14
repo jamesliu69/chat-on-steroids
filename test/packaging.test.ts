@@ -364,7 +364,7 @@ describe('cross-platform packaging targets', () => {
     expect(builder.linux.syncDesktopName).toBe(true);
     expect(builder.linux.maintainer).toMatch(/^Chat On Steroids <[^>]+@users\.noreply\.github\.com>$/);
     expect(pkg.desktopName).toBe('com.chatonsteroids.app.desktop');
-    expect(pkg.homepage).toBe('https://github.com/totec448-spec/chat-on-steroids');
+    expect(pkg.homepage).toBe('https://github.com/jamesliu69/chat-on-steroids');
     expect(iconScript).toContain("build', 'icon.png'), pngFor(1024)");
 
     const packageScript = readFileSync(path.join(root, 'scripts', 'package.mjs'), 'utf8');
@@ -402,6 +402,48 @@ describe('cross-platform packaging targets', () => {
       expect(document).toContain('--no-sandbox');
       expect(document).toMatch(/unprivileged user namespaces/i);
     }
+  });
+
+  it('keeps fork downloads and matching native sources under one release authority while crediting upstream', () => {
+    const readme = readFileSync(path.join(root, 'README.md'), 'utf8');
+    const nativeLicenseReadme = readFileSync(path.join(root, 'docs', 'licenses', 'native', 'README.md'), 'utf8');
+    const bundledNotices = readFileSync(path.join(root, 'THIRD-PARTY-NOTICES.txt'), 'utf8');
+    const issueTemplate = yamlFile('.github/ISSUE_TEMPLATE/config.yml');
+    const fork = 'https://github.com/jamesliu69/chat-on-steroids';
+    const upstream = 'https://github.com/totec448-spec/chat-on-steroids';
+
+    for (const asset of [
+      'Chat-On-Steroids-Setup-x64.exe',
+      'Chat-On-Steroids-macOS-arm64.dmg',
+      'Chat-On-Steroids-Linux-x64.deb'
+    ]) {
+      expect(readme).toContain(`${fork}/releases/latest/download/${asset}`);
+    }
+    expect(readme).toContain(`${fork}/releases/latest`);
+    expect(nativeLicenseReadme).toContain(`${fork}/releases`);
+    expect(bundledNotices).toContain(`${fork}/releases`);
+    expect(issueTemplate.contact_links).toContainEqual(expect.objectContaining({
+      name: 'Security vulnerability',
+      url: `${fork}/security/advisories/new`
+    }));
+    expect(readme).not.toContain(`${upstream}/releases`);
+    expect(nativeLicenseReadme).not.toContain(`${upstream}/releases`);
+    expect(bundledNotices).not.toContain(`${upstream}/releases`);
+    expect(readme).toContain(`<a href="${upstream}">upstream project</a>`);
+  });
+
+  it('refuses release-writing workflows outside this fork', () => {
+    const latestMainWorkflow = yamlFile('.github/workflows/latest-main.yml');
+    const publishWorkflow = readFileSync(path.join(root, '.github', 'workflows', 'publish.yml'), 'utf8');
+
+    expect(latestMainWorkflow.jobs.publish.if).toBe(
+      "github.repository == 'jamesliu69/chat-on-steroids' && " +
+      "github.event.workflow_run.event == 'push' && " +
+      "github.event.workflow_run.head_branch == 'main' && " +
+      'github.event.workflow_run.head_repository.full_name == github.repository && ' +
+      "github.event.workflow_run.conclusion == 'success'"
+    );
+    expect(publishWorkflow).toContain("if: github.repository == 'jamesliu69/chat-on-steroids'");
   });
 
   it('keeps the static AppImage sandbox fallback conditional and duplicate-safe', () => {

@@ -41,8 +41,8 @@ vi.mock('electron', () => ({
 }));
 vi.mock('../src/main/logger.js', () => ({ logInfo: () => undefined, logWarn: () => undefined }));
 
-const { APP_VERSION } = await import('../src/main/version.js');
-const { isNewer } = await import('../src/shared/types.js');
+const { APP_VERSION, extensionDownloadUrl } = await import('../src/main/version.js');
+const { isNewer, RELEASES_PAGE } = await import('../src/shared/types.js');
 const {
   applyStagedUpdate,
   checkForUpdates,
@@ -173,6 +173,20 @@ describe('which installations update themselves', () => {
 });
 
 describe('finding a newer release', () => {
+  it('uses this fork as the release authority for app and matching-extension updates', async () => {
+    const { fetch } = github();
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual([
+      'https://api.github.com/repos/jamesliu69/chat-on-steroids/releases/latest',
+      `https://github.com/jamesliu69/chat-on-steroids/releases/download/v${NEXT}/SHA256SUMS.txt`,
+      `https://github.com/jamesliu69/chat-on-steroids/releases/download/v${NEXT}/${WINDOWS_ASSET}`
+    ]);
+    expect(RELEASES_PAGE).toBe('https://github.com/jamesliu69/chat-on-steroids/releases/latest');
+    expect(extensionDownloadUrl('2.1.12')).toBe(
+      'https://github.com/jamesliu69/chat-on-steroids/releases/download/v2.1.12/Chat-On-Steroids-Extension.zip'
+    );
+  });
+
   it('reads a release tag, and refuses anything that is not one', () => {
     expect(releaseVersion('v2.1.0')).toBe('2.1.0');
     expect(releaseVersion('2.1.0')).toBe('2.1.0');

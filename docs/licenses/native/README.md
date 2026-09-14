@@ -19,7 +19,7 @@ Upstream build/source projects:
 
 The current dependency set uses sharp 0.35.4 / libvips 8.18.6. The release pipeline
 places `Chat-On-Steroids-Native-Sources.tar.gz` beside the matching installers at:
-https://github.com/totec448-spec/chat-on-steroids/releases
+https://github.com/jamesliu69/chat-on-steroids/releases
 Use the source archive and checksums from the same release as your installer.
 
 It contains original component archives, locked Rust dependency sources, build repositories,
