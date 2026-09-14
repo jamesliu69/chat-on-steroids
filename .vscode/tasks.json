@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "打包 Windows 安裝版 (x64)",
+      "type": "shell",
+      "command": "npm",
+      "windows": {
+        "command": "npm.cmd"
+      },
+      "args": ["run", "dist:x64"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "打包 Windows 免安裝版 (x64)",
+      "type": "shell",
+      "command": "npm",
+      "windows": {
+        "command": "npm.cmd"
+      },
+      "args": ["run", "dist:win:portable"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "打包 Raspberry Pi 5 (Linux ARM64)",
+      "type": "shell",
+      "command": "npm",
+      "windows": {
+        "command": "npm.cmd"
+      },
+      "args": ["run", "dist:linux:arm64"],
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

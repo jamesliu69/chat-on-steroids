@@ -16,6 +16,9 @@ function value(name, fallback) {
 const platform = normalizePlatform(value('platform', process.platform));
 const arches = value('arch', process.arch).split(',').map((item) => normalizeArch(item.trim()));
 const dirOnly = args.includes('--dir');
+const portable = args.includes('--portable');
+if (portable && platform !== 'win32') throw new Error('The portable target is only supported on Windows.');
+if (portable && dirOnly) throw new Error('The portable target cannot be combined with --dir.');
 
 function run(command, commandArgs, env = process.env) {
   const result = spawnSync(command, commandArgs, { cwd: root, stdio: 'inherit', env });
@@ -38,6 +41,7 @@ for (const arch of arches) {
   const builderArgs = [
     path.join('node_modules', 'electron-builder', 'out', 'cli', 'cli.js'),
     PLATFORM_INFO[platform].builderFlag,
+    ...(portable ? ['portable'] : []),
     `--${arch}`,
     '--publish',
     'never'

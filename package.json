@@ -32,6 +32,7 @@
     "desktop:mac": "node scripts/prepare-macos-desktop-helper.mjs --platform darwin",
     "dist": "node scripts/package.mjs --arch x64,arm64",
     "dist:win": "node scripts/package.mjs --platform win32 --arch x64,arm64",
+    "dist:win:portable": "node scripts/package.mjs --platform win32 --arch x64 --portable",
     "dist:x64": "node scripts/package.mjs --platform win32 --arch x64",
     "dist:arm64": "node scripts/package.mjs --platform win32 --arch arm64",
     "dist:mac": "node scripts/package.mjs --platform darwin --arch x64,arm64",
