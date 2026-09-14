@@ -38,6 +38,24 @@ jobs:
       - name: Build Windows x64 packages
         run: npm run dist:x64
 
+      - name: Package Windows x64 portable executable
+        shell: pwsh
+        run: |
+          $builder = Join-Path $PWD 'node_modules/electron-builder/out/cli/cli.js'
+          node $builder --win portable --x64 --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder portable target failed with exit code $LASTEXITCODE"
+          }
+          $portableFiles = @(
+            Get-ChildItem -LiteralPath 'release' -File -Filter '*.exe' |
+              Where-Object { $_.Name -notlike 'Chat-On-Steroids-Setup-*' }
+          )
+          if ($portableFiles.Count -ne 1) {
+            $names = ($portableFiles | ForEach-Object Name) -join ', '
+            throw "Expected one generated Windows portable executable, found $($portableFiles.Count): $names"
+          }
+          Move-Item -LiteralPath $portableFiles[0].FullName -Destination (Join-Path $PWD 'release/Chat-On-Steroids-Portable-x64.exe')
+
       - name: Verify portable executable exists
         shell: pwsh
         run: |

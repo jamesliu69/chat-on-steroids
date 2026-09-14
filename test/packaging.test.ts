@@ -642,6 +642,7 @@ Load command 11
     expect(workflow).toContain("github.event.workflow_run.conclusion == 'success'");
     expect(workflow).toContain('ref: ${{ github.event.workflow_run.head_sha }}');
     expect(workflow).toContain('npm run dist:x64');
+    expect(workflow).toContain('node $builder --win portable --x64 --publish never');
     expect(workflow).toContain('release/Chat-On-Steroids-Portable-x64.exe');
     expect(workflow).toContain('gh release delete latest-main --cleanup-tag --yes');
     expect(workflow).toContain('gh release create latest-main');
