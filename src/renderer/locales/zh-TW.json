@@ -1149,5 +1149,22 @@
   "Use {0}": "使用 {0}",
   "Retry": "重試",
   "Skills could not be loaded.": "無法載入技能。",
-  "Check the error above, then try again.": "請檢查上方錯誤後再試一次。"
+  "Check the error above, then try again.": "請檢查上方錯誤後再試一次。",
+  "When available for your account, this option reduces per-action prompts. ChatGPT may still ask for approval. Review the requested permissions; your folder and tool permissions in CoS still apply.": "若您的帳號支援，此選項可減少逐次操作的提示。ChatGPT 仍可能要求核准；請檢查所要求的權限，CoS 中的資料夾與工具權限仍然有效。",
+  "Check that Core actions loaded": "確認 Core actions 已載入",
+  "Open the Core plugin's Actions list in ChatGPT. Check for read, and for exec_command when command access is enabled in CoS. An empty list needs attention even when the tunnel says Connected.": "在 ChatGPT 開啟 Core 外掛的 Actions 清單。確認其中有 read；若 CoS 已啟用命令存取，也應有 exec_command。即使 tunnel 顯示 Connected，空白清單仍需要處理。",
+  "For an empty list, check the Core Tunnel ID and the selected ChatGPT workspace, then refresh this plugin's actions. If it stays empty, reconnect the affected tunnel in CoS when no task is running, refresh the plugin again, and use Home → Run checks. Core, Desktop and Plugins each use their own tunnel ID.": "若清單為空，請檢查 Core Tunnel ID 與所選的 ChatGPT workspace，再重新整理此外掛的 actions。若仍為空，請在沒有任務執行時於 CoS 重新連線受影響的 tunnel，再次重新整理外掛，並使用首頁 → 執行檢查。Core、Desktop 與 Plugins 各自使用不同的 tunnel ID。",
+  "Image preview retained with this delivery; not yet saved to history.": "這次傳送已保留圖片預覽，但尚未儲存至歷史記錄。",
+  "Image preview unavailable in this recording.": "此記錄中沒有可用的圖片預覽。",
+  "Important: ChatGPT may be waiting for approval": "重要：ChatGPT 可能正在等待您的核准",
+  "After your first Chat On Steroids tool call, open the ChatGPT window created by CoS. A tool approval prompt may be waiting there, with choices such as Allow once, Always allow or Deny.": "首次呼叫 Chat On Steroids 工具後，請開啟 CoS 建立的 ChatGPT 視窗。工具核准提示可能正在等待，其中會顯示 Allow once、Always allow 或 Deny 等選項。",
+  "Goal, Loop and agents can appear stuck while ChatGPT is waiting for your decision. Review the requested action and choose in ChatGPT.": "當 ChatGPT 等待您的決定時，Goal、Loop 與 agents 可能看似卡住。請檢查要求的操作，並在 ChatGPT 中選擇。",
+  "If tools disappear, try disconnecting and reconnecting the affected Chat On Steroids plugin, then make one tool call and check for approval again.": "若工具消失，請嘗試中斷再重新連線受影響的 Chat On Steroids 外掛，接著呼叫一次工具並再次檢查核准提示。",
+  "Close and acknowledge": "關閉並確認已知悉",
+  "Understood": "知道了",
+  "Understood dismisses only this CoS reminder. It does not grant tool access or answer an approval prompt in ChatGPT.": "「知道了」只會關閉這則 CoS 提醒，不會授予工具存取權，也不會代您回應 ChatGPT 中的核准提示。",
+  "Could not save this acknowledgement. Try again. {0}": "無法儲存這次確認。請再試一次。{0}",
+  "A newer permission notice is still pending.": "仍有較新的權限提示待處理。",
+  "Illustrative example. ChatGPT’s appearance may vary.": "示意圖。ChatGPT 的實際介面可能有所不同。",
+  "Illustrative ChatGPT tool approval showing Deny, Allow once, and Always allow": "ChatGPT 工具核准示意圖，顯示 Deny、Allow once 與 Always allow"
 }

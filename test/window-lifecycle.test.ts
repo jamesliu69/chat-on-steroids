@@ -68,7 +68,9 @@ describe('native window activation', () => {
     show(); await Promise.resolve();
     show(); await Promise.resolve();
     expect(start).toHaveBeenCalledTimes(1);
-    expect(start).toHaveBeenCalledWith(true);
+    // Showing the app is passive startup behavior. Only explicit renderer requests may
+    // trigger the one-time ChatGPT permission reminder.
+    expect(start).toHaveBeenCalledWith(false);
     state = 'unavailable';
     show(); await Promise.resolve();
     expect(start).toHaveBeenCalledTimes(1);

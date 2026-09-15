@@ -228,7 +228,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | --- | --- |
 | App shell | `src/main/index.ts`, `window-lifecycle.ts`, `window-layout.ts`, `window-icon.ts`, `tray-image.ts`, `shutdown.ts`: bootstrap, activation, geometry, tray and bounded exit. |
 | Config/security | `src/main/config.ts`, `platform.ts`, `secrets.ts`, `sandbox.ts`, `redaction.ts`; `src/shared/types.ts`, `capabilities.ts`: permission and host projection, secrets, approved paths. |
-| Publication | `src/main/connection.ts`, `mcp/server.ts`, `mcp/surfaces.ts`, `tunnel/{index,health,locate}.ts`, `diagnostics.ts`: endpoint/tunnel generation and truthful status. |
+| Publication | `src/main/connection.ts`, `mcp/{server,surfaces,catalog-observation}.ts`, `tunnel/{index,health,locate}.ts`, `diagnostics.ts`: endpoint/tunnel generation, bounded catalog evidence and truthful status. |
 | Tool dispatch | `src/main/mcp/{tools,kernel,inbound,call-context,tool-declarations}.ts`, `tools-core.ts`, `tools-desktop.ts`, `tools-plugins.ts`: declarations, exact caller, live guards and evidence. |
 | Code composition | `src/main/mcp/code-mode-{tool,runtime,worker}.ts`: surface-scoped `exec`, QuickJS admission, limits and explicit emissions. |
 | Instructions/plan | `src/main/mcp/{instructions,coding-instructions,plan-tool}.ts`, `src/shared/agent-plan.ts`, `src/renderer/agent-plan.ts`: executor contract and displayed progress plan. |
@@ -246,9 +246,9 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Agents | `src/main/agents.ts`, `src/renderer/{agent-panel,agent-communication}.ts`: independent prime families, staged mutations and addressed messages. |
 | Browser orchestration | `src/main/bridge.ts`, `browser.ts`, `browser-startup.ts`, `browser-wake.ts`, `browser-window-layout.ts`, `browser-preferences.ts`; `src/shared/browser-preferences.ts`. |
 | Extension | `extension/{manifest.json,chatgpt-dom.js,content.js,fiber.js,background.js,usage.js,overlay.css,popup.html,popup.css,popup.js}`: injection worlds, native observations/actions, journal and UI. |
-| Models/usage | `src/main/chat-models.ts`, `session/usage.ts`; `src/shared/{chat-models,usage}.ts`; `src/renderer/{chat-models,context-meter,usage}.ts`: account observations vs local estimates. |
+| Models/usage | `src/main/{chat-models,chatgpt-permission-notice}.ts`, `session/usage.ts`; `src/shared/{chat-models,chatgpt-permission-notice,usage}.ts`; `src/renderer/{chat-models,chatgpt-permission-notice,context-meter,usage}.ts`: account observations, first-use approval guidance and local estimates. |
 | External plugins | `src/main/plugins/{catalog,installer,manager,exposure,oauth}.ts`, `plugins-ipc.ts`, `plugin-refresh.ts`, `src/shared/{plugins,plugin-refresh}.ts`, `src/renderer/plugins.ts`. |
-| Renderer boundary | `src/main/ipc.ts`, `edit-context-menu.ts`, `src/preload/index.ts`; `src/renderer/{main,chat,dom,tool-result,timeline-scroll,sidebar-resize,browser-preferences,i18n}.ts`, `locales/zh-TW.json`, `index.html`, `styles.css`. |
+| Renderer boundary | `src/main/ipc.ts`, `edit-context-menu.ts`, `src/preload/index.ts`; `src/renderer/{main,chat,dom,tool-result,timeline-scroll,sidebar-resize,browser-preferences,i18n}.ts`, `locales/{zh-TW,zh-CN}.json`, `index.html`, `styles.css`. |
 | Native Desktop | `src/main/computer/{index,helper,browser-chords,windows-api,windows-capture,windows-apps,windows-keys}.ts`, `src/shared/windows-computer.ts`, `mcp/tools-desktop-{windows,macos}.ts`, `native/macos-desktop-helper/*`, `native/macos-desktop-addon/*`. |
 | Delivery/build | `src/main/{update,extension-path,version,logger,durable}.ts`, `electron.vite.config.ts`, `electron-builder.yml`, `scripts/*`, `.github/workflows/*`, `vitest.config.ts`. |
 
@@ -290,7 +290,8 @@ and every active/dormant prime family. Persistence hooks exist even when multi-a
 Continuation restore follows swarm restore because it may repair prime ownership. IPC/input
 hooks precede browser traffic. Then the secure window/tray, bridge for recording or agents,
 independent retention maintenance, optional connector auto-connect and updater lifetime begin.
-The current first-window model-discovery exception is noted in §21.
+Passive first-window model discovery does not request the explicit approval reminder; renderer
+refresh remains the user-owned path that may request it.
 
 Settings use validated current config and `effectiveCapabilities()`. Fresh-install defaults,
 legacy omitted fields and malformed-file recovery are three different cases. User choices must
@@ -384,6 +385,11 @@ not intercepted.
 `mcp/instructions.ts` adds currently available local-tool guidance and the user's bounded
 standing additions. There is no extra instructions tool or per-chat “already sent prompt” flag.
 
+The opening frame also names the bound project's exact virtual path as the primary workdir,
+even if AGENTS.md is missing or cannot fit. This is mandatory project context, not a new root
+or a restriction against task-relevant work elsewhere. Durable session ownership beats a
+caller's currently selected project, including worker inheritance.
+
 The whole message has a **96,000 UTF-16-character ceiling**, plus the input transport's UTF-8
 byte envelope. For eligible openings, authored work and complete Core instructions are mandatory;
 selected skill bodies are mandatory too. Only AGENTS content spends remaining room. Read it as a bounded UTF-8 prefix, validate the same project/root/read
@@ -418,6 +424,30 @@ oversized selected skills fail visibly rather than silently losing instructions.
 refreshed from disk, including skills installed by the model with existing file/command tools.
 No bundled skills, new MCP surface, automatic script execution or permission expansion accompanies
 an import. Dialog and autocomplete replies must still belong to the current draft and request.
+
+### First-use ChatGPT approval guidance is not provider approval
+
+`chatgpt-permission-notice.ts` owns a durable first-use reminder after explicit model discovery
+successfully requests browser opening. Passive model reads do not request it. Acknowledgement
+commits before the renderer closes the dialog; the setup copy remains visible. Renderer revisions
+reject stale replies and defer the reminder while another dialog is open. This guidance describes
+browser-only tool approval prompts; it does not detect pending provider approvals, answer them,
+change plugin permissions or grant consent on the user's behalf.
+
+### Catalog diagnostics and injected image history
+
+The MCP observer reads bounded clones and returns the original SDK request/response unchanged.
+Only sanitized method, outcome, count and schema hash are retained. Completed external Core
+tools/list responses are separate evidence from loopback probes, tunnel health and other HTTP
+requests. A nonempty server response cannot prove ChatGPT accepted its cached Actions list or
+approved an operation. Never fix stale Plugins calls by dispatching Core tools across surfaces.
+
+Tool input records its canonical user row before optional image assets. Preview quota failures
+retain outbox bytes for retry and do not lose the transcript anchor. The kernel defers this row
+until its carrier tool record commits; concurrent outbox reads respect the same in-memory offer
+gate. A finally path releases it even if recording fails. Restart retries the durable receipt;
+history replay never resends the image. The renderer can use retained images while storage catches
+up, and later receipts or asset backfills keep the first message position.
 
 ### `exec({code})` composes tools; it is not a shell
 
@@ -2099,9 +2129,6 @@ These are source-level discrepancies checked for this map, not new live reproduc
 permission for an unsolicited rewrite. Recheck current code/tests before acting; another
 shared-tree change may already have addressed them.
 
-- **Startup opening:** `index.ts` still calls `startChatModelDiscovery(true)` on window show
-  when the catalog is unknown. Desired policy requires a concrete operation to own any new
-  browser document; app opening alone must not become a fallback opener.
 - **Repair handout vs action:** attribution and assistant-error repairs claim their exact attempt after the
   extension's tab scan. Other repair reasons still mark handout before the tab query/action
   without that final claim. Intent requires browser actions to retain current authority

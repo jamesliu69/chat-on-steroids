@@ -495,6 +495,26 @@ describe('durable user input ownership', () => {
     await listInputs();
     expect(record).toHaveBeenCalledTimes(calls);
   });
+  it('keeps deferred tool history behind its carrier when a later call acknowledges first', async () => {
+    binding.activeTurnId = 'active';
+    const record = vi.fn(async (_entry: Readonly<InputEntry>) => true);
+    configureInputDelivery({ applyAutomation: automate, changed, recordDelivered: record });
+    const row = await enqueueInput(input());
+    const batch = await offerToolInputBatch(sessionId, binding.conversationId, 'carrier-request', now, false, true);
+    expect(batch.messages).toEqual([{ text: row.text, images: [] }]);
+    expect(batch.recordHistory).toBeTypeOf('function');
+
+    await acknowledgeToolInput(sessionId, binding.conversationId, 'later-request', ++now);
+    expect(record).not.toHaveBeenCalled();
+    expect((await offerToolInputBatch(sessionId, binding.conversationId, 'later-request', now)).messages).toEqual([]);
+    expect(record).not.toHaveBeenCalled();
+    expect((await listInputs())[0]).toMatchObject({ state: 'sent', historyRecorded: false });
+    expect(record).not.toHaveBeenCalled();
+
+    await batch.recordHistory!();
+    expect(record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: row.id, state: 'sent' }));
+    expect((await listInputs())[0]).toMatchObject({ state: 'sent', historyRecorded: true });
+  });
   it('reprojects a wrapped recorded receipt after restart without reopening delivery', async () => {
     const record = vi.fn(async (_entry: InputEntry) => true);
     configureInputDelivery({ applyAutomation: automate, changed, recordDelivered: record });

@@ -133,7 +133,7 @@ function createWindow(): void {
   // First use discovers the account once. A restored catalog is immediately usable;
   // showing the window again cannot refresh it or open another browser attempt.
   window.on('show', () => {
-    if (!quitting && getChatModels().state === 'unknown') void startChatModelDiscovery(true)
+    if (!quitting && getChatModels().state === 'unknown') void startChatModelDiscovery(false)
       .catch(error => logWarn(`model discovery on window open: ${error.message}`));
   });
   window.once('ready-to-show', () => {
