@@ -5686,27 +5686,21 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
   const repair = repairsInFlight.get(conversationId);
   const confirmed = repair?.reason === 'silence' && repair.state === 'done' && repair.sessionId === sessionId;
   const owned = grant?.sessionId === sessionId && grant.turnId === source;
-  // A native completion without the canonical final is an immediately visible
-  // recovery wait. New accepted work advances this same grant (or reopens the
-  // turn), restoring normal hidden/timed visibility without a second flag.
-  if (owned && !grant.thinkingFailed && !confirmed && !session.activeTurnId &&
-      boundary?.kind === 'turn_end' && boundary.outcome === 'completed' && grant.evidenceAt <= boundary.time &&
-      (tabRecoveryWanted(conversationId) || loopAfterTurnFor(conversationId) || queuedAfterTurn)) {
+  // One presentation window for active and incompletely ended turns. Thinking failed is
+  // still owned by the original work clock; the failure observation itself does not reveal
+  // or reset the timer.
+  if (owned && !confirmed &&
+      (grant.thinkingFailed || tabRecoveryWanted(conversationId) || loopAfterTurnFor(conversationId) || queuedAfterTurn)) {
     result.push({ kind: 'silence', deadline: grant.until,
       visibleAt: grant.until - (grant.model === 'pro' ? 300_000 : 30_000) });
     return result;
   }
-  if (owned && !grant.thinkingFailed && !confirmed &&
-      (tabRecoveryWanted(conversationId) || loopAfterTurnFor(conversationId) || queuedAfterTurn)) {
-    result.push({ kind: 'silence', deadline: grant.until,
-      visibleAt: grant.until - (grant.model === 'pro' ? 300_000 : 30_000) });
-    return result;
-  }
-  // A confirmed reload's listening deadline is not fresh work. Real activity
-  // replaces the grant and retires the receipt, withdrawing this row immediately.
-  const normalReloadDeadline = confirmed ? (lastBrowserRecoveryAt.get(conversationId) ?? 0) + recoveryBusyMs(false) : undefined;
-  const postReloadDeadline = owned && confirmed && !grant.thinkingFailed && grant.model === 'other' &&
-    grant.until === normalReloadDeadline ? grant.until : undefined;
+  // A confirmed reload's listening deadline is not fresh work. Real activity replaces the
+  // grant and retires the receipt immediately. Normal listens one minute; Pro five minutes.
+  const reloadDeadline = confirmed
+    ? (lastBrowserRecoveryAt.get(conversationId) ?? 0) + recoveryBusyMs(grant?.model === 'pro')
+    : undefined;
+  const postReloadDeadline = owned && confirmed && grant.until === reloadDeadline ? grant.until : undefined;
   if (owned && !grant.thinkingFailed && !postReloadDeadline && grant.until > Date.now()) return result;
   const queued = rows.find(row => row.sessionId === sessionId && row.state === 'queued' && row.purpose !== 'decision' &&
     row.silenceBoundary?.conversationId === conversationId && row.silenceBoundary.turnId === source && row.silenceBoundary.listenUntil &&
@@ -5718,7 +5712,7 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
   const deadline = queued?.silenceBoundary?.listenUntil ?? goalDeadline ?? failedDeadline ?? postReloadDeadline;
   const thinkingFailed = boundary?.kind === 'turn_end' && boundary.reason === 'thinking_failed';
   const next = queuedAfterTurn ? 'queue' : goalDeadline ? goalModeFor(conversationId) : undefined;
-  if (deadline) result.push({ kind: !queued?.silenceBoundary?.nativeBusy && deadline === normalReloadDeadline ? 'post-reload' :
+  if (deadline) result.push({ kind: !queued?.silenceBoundary?.nativeBusy && deadline === reloadDeadline ? 'post-reload' :
     queued?.silenceBoundary?.nativeBusy || !thinkingFailed ? 'native-busy' : 'thinking-failed', deadline, ...(next ? { next } : {}) });
   return result;
 }
@@ -5730,6 +5724,8 @@ const UNATTRIBUTED_REQUEST_MEMORY = 500;
 
 /** One existing browser-action owner per chat: queued, issued, or acknowledged. */
 interface Repair {
+  /** Exact work owner retained across the browser reload receipt. */
+  silenceGrant?: ActivityGrant;
   /** The authored question owns transport recovery across document-local generation changes. */
   assistantSource?: { key: string; turnId: string | null; completed: boolean };
   attribution?: { incident: UnattributedIncident; candidate: UnattributedCandidate };
@@ -5883,6 +5879,7 @@ function queueBrowserRecovery(
       ? now
       : Math.max(now, (lastBrowserRecoveryAt.get(conversationId) ?? 0) + BROWSER_RECOVERY_COOLDOWN_MS);
   const repair: Repair = {
+    ...(reason === 'silence' ? { silenceGrant: activeUntil.get(conversationId) } : {}),
     ...(assistantSource ? { assistantSource } : {}),
     sessionId,
     endedTurns,
@@ -6039,7 +6036,7 @@ async function noteRecoveryObservations(
     // Failure is not new model work. Preserve the exact source grant when possible; otherwise
     // anchor the recovery window to the newest genuine work event instead of Date.now().
     const previous = terminalGrant?.sessionId === sessionId && terminalGrant.turnId === ended.turnId
-      ? terminalGrant : undefined;
+      ? terminalGrant : sameFailedRepair?.silenceGrant;
     const [work] = previous ? [] : await readRecentEvents(sessionId, 1, {
       kinds: ['user_message', 'assistant_message', 'tool_call', 'page_tool', 'turn_start']
     });
@@ -7177,25 +7174,16 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | nu
       awaitingReturn.add(conversationId);
       if (repair.reason === 'silence') {
         const failedGrant = activeUntil.get(conversationId);
-        if (failedGrant?.thinkingFailed) failedGrant.until = Date.now() + recoveryBusyMs(failedGrant.model === 'pro');
-        else if (failedGrant?.model === 'other') failedGrant.until = Date.now() + recoveryBusyMs(false);
+        if (failedGrant) failedGrant.until = Date.now() + recoveryBusyMs(failedGrant.model === 'pro');
         // Persist the next existing instruction as soon as this exact refresh is
         // acknowledged. Native readiness and the normal Send receipt still gate delivery.
         const inputFiled = await fileSilenceInputTicket(conversationId, Date.now());
-        if (!inputFiled && (loopAfterTurnFor(conversationId) || failedGrant?.model === 'other')) await fileSilenceTickets([conversationId], Date.now());
-        // Ordinary models listen for one minute from the confirmed refresh;
-        // failed views retain one minute for Normal or five minutes for Pro.
-        // Worker retirement retains its separate recovery rules below.
+        if (!inputFiled && (loopAfterTurnFor(conversationId) || (failedGrant && failedGrant.model !== 'pro')))
+          await fileSilenceTickets([conversationId], Date.now());
+        // The confirmed refresh owns one minute for ordinary models and five for Pro,
+        // including failed views. These reuse the same grant and tickets.
         const grant = activeUntil.get(conversationId);
-        const pro = await extendedSilenceWindowFor(conversationId, repair.sessionId);
-        if (grant?.thinkingFailed) {
-          armSilenceSweep();
-        } else if (pro) {
-          if (grant && activeUntil.get(conversationId) === grant) {
-            grant.until = Math.max(Date.now(), grant.evidenceAt + activityLifetime(grant));
-            armSilenceSweep();
-          }
-        } else if (grant && (goalActiveFor(conversationId) || inputFiled || !goalWorkerChat(conversationId))) {
+        if (grant && (grant.thinkingFailed || grant.model === 'pro' || goalActiveFor(conversationId) || inputFiled || !goalWorkerChat(conversationId))) {
           armSilenceSweep();
         } else grantActivity(
           conversationId,
