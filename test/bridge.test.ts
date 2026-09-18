@@ -7218,7 +7218,7 @@ describe('unattributed activity recovery', () => {
       await events(chat, [{ kind: 'model_selection', model: model === 'pro' ? 'gpt-6-pro' : 'GPT-5.6 Sol', reasoningEffort: model === 'pro' ? 'pro' : 'high', time: Date.now() }, openTurn('off-silence-source')]);
       const sessionId = (await request('GET', `/activity?conversationId=${chat}`)).body.sessionId;
       await setSessionAutomation(sessionId, 'off');
-      await attributed(chat, false, Date.now());
+      await attributed(chat, false, Date.now() + 1);
       await setSessionAutomation(sessionId, 'loop', true);
       expect(goalPendingReplyFor(chat)).toBeNull();
       await setSessionAutomation(sessionId, 'off');
