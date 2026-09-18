@@ -5618,10 +5618,11 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
       if (incident.pass >= 2) return [];
       const suspect = pendingSuspects(incident).find(candidate => candidate.sessionId === sessionId && candidate.conversationId === conversationId);
       if (!suspect || (session.activeTurnId ?? null) !== suspect.turnId) return [];
-      // Keep the whole original cohort visible until the existing incident ends,
-      // even without another unknown call. This watch does not authorize a retry.
+      // Retain the original cohort, but reveal its watch only in the last
+      // thirty seconds. Presentation never authorizes or postpones a retry.
+      const deadline = incident.pass === 0 ? incident.firstDueAt : incident.startedAt + UNATTRIBUTED_FINAL_WINDOW_MS;
       return [{ kind: incident.pass === 0 ? 'unattributed' as const : 'unattributed-wait' as const,
-        deadline: incident.pass === 0 ? incident.firstDueAt : incident.startedAt + UNATTRIBUTED_FINAL_WINDOW_MS }];
+        deadline, visibleAt: deadline - 30_000 }];
     });
     const earliest = deadlines.sort((a, b) => a.deadline - b.deadline)[0];
     if (earliest) result.push(earliest);
@@ -5631,6 +5632,7 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
   const source = boundary?.kind === 'turn_start' || boundary?.kind === 'turn_end' ? boundary.turnId : null;
   if (!source || (session.activeTurnId && session.activeTurnId !== source)) return result;
   if (boundary?.kind === 'turn_end' && boundary.outcome === 'stopped') return result;
+  if (!await turnHasMcpCall(sessionId, conversationId, source)) return result;
   const repair = repairsInFlight.get(conversationId);
   const confirmed = repair?.reason === 'silence' && repair.state === 'done' && repair.sessionId === sessionId;
   const owned = grant?.sessionId === sessionId && grant.turnId === source;
@@ -5640,12 +5642,14 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
   if (owned && !grant.thinkingFailed && !confirmed && !session.activeTurnId &&
       boundary?.kind === 'turn_end' && boundary.outcome === 'completed' && grant.evidenceAt <= boundary.time &&
       (tabRecoveryWanted(conversationId) || loopAfterTurnFor(conversationId) || queuedAfterTurn)) {
-    result.push({ kind: 'silence', deadline: grant.until });
+    result.push({ kind: 'silence', deadline: grant.until,
+      visibleAt: grant.until - (grant.model === 'pro' ? 300_000 : 30_000) });
     return result;
   }
-  if (owned && !grant.thinkingFailed && grant.model === 'pro' && !confirmed &&
+  if (owned && !grant.thinkingFailed && !confirmed &&
       (tabRecoveryWanted(conversationId) || loopAfterTurnFor(conversationId) || queuedAfterTurn)) {
-    result.push({ kind: 'silence', deadline: grant.until, visibleAt: grant.evidenceAt + PRO_SILENCE_MS / 2 });
+    result.push({ kind: 'silence', deadline: grant.until,
+      visibleAt: grant.until - (grant.model === 'pro' ? 300_000 : 30_000) });
     return result;
   }
   // A confirmed reload's listening deadline is not fresh work. Real activity
@@ -6673,6 +6677,7 @@ async function queueMissingTab(conversationId: string, working: boolean, now = D
   };
   // A chat with no session is not this app's chat; its tab closing is nobody's business here.
   if (!session) return;
+  if (!session.activeTurnId && session.lastTurnOutcome === 'stopped') return declined('the user stopped its turn');
   if (!tabRecoveryWanted(conversationId)) return declined('tab recovery is off for this chat');
   if (agent && agent.state !== 'detached') return declined(`its ${agent.role} slot is ${agent.state}, not working`);
   if (!agent && !goalActiveFor(conversationId) && (session.toolCalls ?? 0) === 0) return declined('it has never called a tool');

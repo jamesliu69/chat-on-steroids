@@ -2163,12 +2163,20 @@ async function recordChatObservationsNow(
         activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time);
         activity.working = true;
         break;
-      case 'turn_end':
+      case 'turn_end': {
         // An unnamed end closes nothing durable and, worse, used to clear whichever named
         // turn happened to be live. Ignore it. A stale named end is still useful history for
         // the turn it names, but it must not tear down a newer active generation.
         if (!item.turnId) continue;
-        if (live?.knownTurnEnds.has(item.turnId)) continue;
+        const stopOverride = live?.knownTurnEnds.has(item.turnId) && item.outcome === 'stopped';
+        if (live?.knownTurnEnds.has(item.turnId)) {
+          // Native Stop may arrive after an interrupted/failed terminal observation. Allow
+          // this exact latest turn to strengthen once to stopped, but never an older turn.
+          if (!stopOverride || (live.turnId && live.turnId !== item.turnId)) continue;
+          const [latest] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start', 'turn_end', 'user_message'] });
+          if (latest?.kind !== 'turn_end' || latest.turnId !== item.turnId ||
+              latest.outcome === 'stopped' || item.time < latest.time) continue;
+        }
         if (live?.turnId === item.turnId) {
           const [latest] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
           // A replay of the pre-reopen end cannot undo newer app-owned work.
@@ -2185,7 +2193,7 @@ async function recordChatObservationsNow(
         // As above, durable journal state owns idempotency; in-memory state follows it.
         if (live) {
           const endedStartedAt = live.turnId === item.turnId ? live.turnStartedAt : null;
-          if (live.turnId === item.turnId) activity.endedTurnId = item.turnId;
+          if (live.turnId === item.turnId || stopOverride) activity.endedTurnId = item.turnId;
           live.knownTurnEnds.add(item.turnId);
           live.openTurns.delete(item.turnId);
           live.lastTurnOutcome = item.outcome ?? 'unknown';
@@ -2209,6 +2217,7 @@ async function recordChatObservationsNow(
           activity.terminal = true;
         }
         break;
+      }
     }
     stored++;
   }

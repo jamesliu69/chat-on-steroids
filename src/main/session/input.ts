@@ -710,7 +710,7 @@ export function pendingQueuedPickups(): Promise<Array<{ conversationId: string; 
       const probe = row.silenceBoundary ? { ...row, silenceBoundary: { ...row.silenceBoundary, listenUntil: undefined } } : row;
       const sourceTurnId = await eligibleStageEnd(probe);
       if (!sourceTurnId || rows.some(other => other.sessionId === row.sessionId &&
-          (other.completedTurnId === sourceTurnId || other.state === 'browser' || other.state === 'tool'))) continue;
+          (consumedTurn(other, sourceTurnId) || other.state === 'browser' || other.state === 'tool'))) continue;
       const [end] = await readRecentEvents(row.sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
       const completed = end?.kind === 'turn_end' && end.outcome === 'completed';
       const acceptedAt = row.silenceBoundary?.acceptedAt ?? (!row.silenceBoundary && completed ? end.time : undefined);
@@ -724,6 +724,11 @@ export function pendingQueuedPickups(): Promise<Array<{ conversationId: string; 
   });
 }
 
+function consumedTurn(row: InputEntry, turnId: string): boolean {
+  return row.completedTurnId === turnId &&
+    (row.sendAuthorizedAt !== undefined || row.deliveredAt !== undefined || row.requiresAuthorization === false);
+}
+
 /** The visible outbox precedes automatic Goal work, including an ineligible head.
  * A spent completion also belongs to its user input after that row leaves the queue. */
 export function inputBeforeGoal(sessionId: string, sourceTurnId?: string): Promise<'queued' | 'consumed' | null> {
@@ -731,8 +736,7 @@ export function inputBeforeGoal(sessionId: string, sourceTurnId?: string): Promi
     const rows = await load();
     if (rows.some(row => row.sessionId === sessionId && row.purpose !== 'decision' &&
       ['queued', 'browser', 'tool'].includes(row.state))) return 'queued';
-    return sourceTurnId && rows.some(row => row.sessionId === sessionId && row.completedTurnId === sourceTurnId &&
-      (row.sendAuthorizedAt !== undefined || row.deliveredAt !== undefined || row.requiresAuthorization === false)) ? 'consumed' : null;
+    return sourceTurnId && rows.some(row => row.sessionId === sessionId && consumedTurn(row, sourceTurnId)) ? 'consumed' : null;
   });
 }
 
@@ -761,7 +765,7 @@ export function fileSilenceInput(sessionId: string, conversationId: string, turn
     if (!boundary || boundary.turnId !== turnId || (boundary.kind !== 'turn_start' && boundary.kind !== 'turn_end')) return false;
     if (!await turnHasMcpCall(sessionId, conversationId, turnId) || !currentOwner()) return false;
     if (current.some(row => row.sessionId === sessionId &&
-      (row.completedTurnId === turnId || (row.silenceBoundary?.turnId === turnId && row.state === 'browser')))) return true;
+      (consumedTurn(row, turnId) || (row.silenceBoundary?.turnId === turnId && row.state === 'browser')))) return true;
     if (current.some(row => row.sessionId === sessionId && (row.state === 'browser' || row.state === 'tool'))) return false;
     const candidates = ordered(current).filter(row => row.sessionId === sessionId && row.state === 'queued');
     const row = candidates.find(row => manualInput(row) && row.offeredAt === undefined && row.dueAt <= Date.now()) ?? candidates.find(queuedFollowup);
@@ -829,7 +833,7 @@ async function completedStageBoundary(entry: InputEntry, current: InputEntry[]):
   // A deferred ticket still owns this boundary. Later queue rows cannot overtake it.
   if (current.some(row => row !== entry && row.sessionId === entry.sessionId && row.state === 'queued' &&
       row.silenceBoundary?.turnId === turnId)) return null;
-  if (current.some(row => row.sessionId === entry.sessionId && (row.completedTurnId === turnId || row.state === 'tool' || row.state === 'browser'))) return null;
+  if (current.some(row => row.sessionId === entry.sessionId && (consumedTurn(row, turnId) || row.state === 'tool' || row.state === 'browser'))) return null;
   if (current.some(row => row.sessionId === entry.sessionId && !queuedFollowup(row) && row.purpose !== 'decision' &&
       row.dueAt <= Date.now() && ['queued', 'browser', 'tool'].includes(row.state))) return null;
   return turnId;

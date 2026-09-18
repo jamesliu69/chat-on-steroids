@@ -5190,11 +5190,11 @@ describe('unattributed activity recovery', () => {
       expect((await sessionControlsFor(ids[0]!)).recovery).toEqual([]);
       await unattributed();
       const deadline = Date.now() + (count === 1 ? 15_000 : 60_000);
-      for (const id of ids) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed', deadline }]);
+      for (const id of ids) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed', deadline, visibleAt: deadline - 30_000 }]);
       await vi.advanceTimersByTimeAsync(1000);
       await attributed(chats[0]!, false, Date.now());
-      expect((await sessionControlsFor(ids[0]!)).recovery).toEqual([]);
-      for (const id of ids.slice(1)) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed', deadline }]);
+      expect((await sessionControlsFor(ids[0]!)).recovery?.filter(row => row.kind.startsWith('unattributed'))).toEqual([]);
+      for (const id of ids.slice(1)) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed', deadline, visibleAt: deadline - 30_000 }]);
       if (ids.length > 1) {
         await events(chats[1]!, [endTurn('countdown-source', 'stopped')]);
         expect((await sessionControlsFor(ids[1]!)).recovery).toEqual([]);
@@ -5223,7 +5223,7 @@ describe('unattributed activity recovery', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it.each(['pro', 'other'] as const)('shows the %s incomplete completion countdown immediately and hides it again on new MCP work', async model => {
+  it.each(['pro', 'other'] as const)('keeps the %s incomplete completion countdown hidden until its presentation window', async model => {
     const { setSessionAutomation } = await import('../src/main/bridge.js');
     vi.useFakeTimers();
     try {
@@ -5237,13 +5237,16 @@ describe('unattributed activity recovery', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       await events(OTHER, [endTurn('incomplete-countdown', 'completed')]);
       const deadline = model === 'pro' ? began + PRO_SILENCE_MS : Date.now() + CHAT_SILENCE_MS;
-      expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'silence', deadline }]);
-      expect((await sessionControlsFor(id)).goalWait).toEqual({ reason: 'silence', until: deadline });
-      expect((await request('GET', `/activity?conversationId=${OTHER}`)).body.goal.wait).toEqual({ reason: 'silence', until: deadline });
+      expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'silence', deadline,
+        visibleAt: deadline - (model === 'pro' ? 300_000 : 30_000) }]);
+      expect((await sessionControlsFor(id)).goalWait).toBeNull();
+      expect((await request('GET', `/activity?conversationId=${OTHER}`)).body.goal.wait).toBeNull();
       expect(goalPendingReplyFor(OTHER)).toBeNull();
       await vi.advanceTimersByTimeAsync(1_000);
       await attributed(OTHER, false, Date.now());
-      const ordinary = model === 'pro' ? [{ kind: 'silence', deadline: Date.now() + PRO_SILENCE_MS, visibleAt: Date.now() + 300_000 }] : [];
+      const ordinary = model === 'pro'
+        ? [{ kind: 'silence', deadline: Date.now() + PRO_SILENCE_MS, visibleAt: Date.now() + 300_000 }]
+        : [{ kind: 'silence', deadline: Date.now() + CHAT_SILENCE_MS, visibleAt: Date.now() + CHAT_SILENCE_MS - 30_000 }];
       expect((await sessionControlsFor(id)).recovery).toEqual(ordinary);
       expect((await sessionControlsFor(id)).goalWait).toBeNull();
       expect((await request('GET', `/activity?conversationId=${OTHER}`)).body.goal.wait).toBeNull();
@@ -5276,7 +5279,7 @@ describe('unattributed activity recovery', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('keeps the original unattributed cohort visible for five minutes without requiring another unknown call', async () => {
+  it('retains the original unattributed cohort with a delayed reveal without requiring another unknown call', async () => {
     vi.useFakeTimers();
     try {
       await pair();
@@ -5288,21 +5291,21 @@ describe('unattributed activity recovery', () => {
       const batch = await maintenanceBatch();
       expect(batch).toHaveLength(3);
       for (const repair of batch) await maintenanceBatch(repair.token, 'reloaded');
-      for (const id of ids) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed-wait', deadline }]);
+      for (const id of ids) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed-wait', deadline, visibleAt: deadline - 30_000 }]);
       // The retry's existing eligibility remains unchanged; this is a UI watch.
       expect(unattributedRepairEta(Date.now(), 'five-minute-cohort-request')).toBeNull();
       await vi.advanceTimersByTimeAsync(1000);
       await attributed(WORKER, false, Date.now());
-      expect((await sessionControlsFor(ids[1]!)).recovery).toEqual([]);
+      expect((await sessionControlsFor(ids[1]!)).recovery?.filter(row => row.kind.startsWith('unattributed'))).toEqual([]);
       const late = 'decafbad-1111-2222-3333-444444444444';
       await events(late, [openTurn('late-cohort-outsider')]);
       const lateId = (await findSessionByConversation(late, { requireUnique: true }))!.id;
       expect((await sessionControlsFor(lateId)).recovery).toEqual([]);
       await vi.advanceTimersByTimeAsync(120_000);
       await request('GET', '/status'); // Extension check-in; this is not an MCP attribution.
-      for (const id of [ids[0]!, ids[2]!]) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed-wait', deadline }]);
+      for (const id of [ids[0]!, ids[2]!]) expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'unattributed-wait', deadline, visibleAt: deadline - 30_000 }]);
       await vi.advanceTimersByTimeAsync(deadline - Date.now());
-      for (const id of ids) expect((await sessionControlsFor(id)).recovery).toEqual([]);
+      for (const id of ids) expect((await sessionControlsFor(id)).recovery?.filter(row => row.kind.startsWith('unattributed'))).toEqual([]);
       expect(await maintenanceBatch()).toEqual([]);
     } finally { vi.useRealTimers(); }
   });
@@ -5319,7 +5322,8 @@ describe('unattributed activity recovery', () => {
       const session = await findSessionByConversation(OTHER, { requireUnique: true });
       const row = await input.enqueueInput({ id: randomUUID(), sessionId: session!.id, text: 'The next checkpoint', mode: 'after-turn',
         dueAt: Date.now(), model: null, reasoningEffort: null });
-      expect((await sessionControlsFor(session!.id)).recovery).toEqual([]);
+      expect((await sessionControlsFor(session!.id)).recovery).toEqual([{ kind: 'silence', deadline: Date.now() + CHAT_SILENCE_MS,
+        visibleAt: Date.now() + CHAT_SILENCE_MS - 30_000 }]);
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
       await sweepStaleSwarm(Date.now());
       const repair = await maintenance();
@@ -5338,7 +5342,8 @@ describe('unattributed activity recovery', () => {
         if (attempt === 0) await vi.advanceTimersByTimeAsync(300_000);
       }
       await attributed(OTHER, false, Date.now());
-      expect((await sessionControlsFor(session!.id)).recovery).toEqual([]);
+      expect((await sessionControlsFor(session!.id)).recovery).toEqual([{ kind: 'silence', deadline: Date.now() + CHAT_SILENCE_MS,
+        visibleAt: Date.now() + CHAT_SILENCE_MS - 30_000 }]);
     } finally { await writeDurableNow('session-input', []); input.resetInputForTests(); vi.useRealTimers(); }
   });
 
@@ -5371,8 +5376,11 @@ describe('unattributed activity recovery', () => {
         await sweepStaleSwarm(Date.now());
         expect((await sessionControlsFor(session.id)).recovery).toEqual([{ kind: 'post-reload', next: 'queue', deadline }]);
         expect(await input.claimBrowserInput(row.id, 'normal-listen-page', OTHER)).not.toBeNull();
-      } else {
+      } else if (ending === 'stop') {
         expect((await sessionControlsFor(session.id)).recovery).toEqual([]);
+      } else {
+        expect((await sessionControlsFor(session.id)).recovery).toEqual([{ kind: 'silence', deadline: Date.now() + CHAT_SILENCE_MS,
+          visibleAt: Date.now() + CHAT_SILENCE_MS - 30_000 }]);
       }
     } finally { await writeDurableNow('session-input', []); input.resetInputForTests(); vi.useRealTimers(); }
   });
@@ -7302,7 +7310,8 @@ describe('unattributed activity recovery', () => {
         await vi.advanceTimersByTimeAsync(20_000);
         await events(OTHER, [endTurn('turn-loop-dead', 'completed')]);
         const sessionId = (await request('GET', `/activity?conversationId=${OTHER}`)).body.sessionId;
-        expect((await sessionControlsFor(sessionId)).recovery).toEqual([{ kind: 'silence', deadline: Date.now() + CHAT_SILENCE_MS }]);
+        expect((await sessionControlsFor(sessionId)).recovery).toEqual([{ kind: 'silence', deadline: Date.now() + CHAT_SILENCE_MS,
+          visibleAt: Date.now() + CHAT_SILENCE_MS - 30_000 }]);
       }
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS - 1);
       expect(await maintenance()).toBeNull();

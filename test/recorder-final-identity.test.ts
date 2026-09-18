@@ -51,6 +51,28 @@ it.each([false, true])('records stopped partial-answer revisions without restori
   expect(current.activity.working).toBe(true);
 });
 
+it('strengthens the latest interrupted terminal verdict to native stopped exactly once', async () => {
+  const conversationId = 'native-stop-after-interrupted';
+  const opened = await recordChatObservations(conversationId, [
+    { kind: 'turn_start', time: 10, turnId: 'stop-turn' },
+    { kind: 'turn_end', time: 20, turnId: 'stop-turn', outcome: 'interrupted' }
+  ]);
+
+  const stopped = await recordChatObservations(conversationId, [
+    { kind: 'turn_end', time: 21, turnId: 'stop-turn', outcome: 'stopped' }
+  ]);
+  expect(stopped.activity).toMatchObject({ terminal: true, endedTurnId: 'stop-turn' });
+  expect((await getSession(opened.sessionId!))?.lastTurnOutcome).toBe('stopped');
+  expect((await readEvents(opened.sessionId!, { kinds: ['turn_end'] }))
+    .filter((event): event is Extract<typeof event, { kind: 'turn_end' }> => event.kind === 'turn_end')
+    .map(event => event.outcome)).toEqual(['interrupted', 'stopped']);
+
+  await recordChatObservations(conversationId, [
+    { kind: 'turn_end', time: 22, turnId: 'stop-turn', outcome: 'stopped' }
+  ]);
+  expect(await readEvents(opened.sessionId!, { kinds: ['turn_end'] })).toHaveLength(2);
+});
+
 it.each(['missing', 'replaced', 'matching', 'restart'])('closes the canonical reply owner after reload with a %s page turn id', async mode => {
   const conversationId = `canonical-final-${mode}`;
   const turnId = `original-${mode}`;
