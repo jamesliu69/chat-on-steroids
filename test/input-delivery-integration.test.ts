@@ -249,8 +249,12 @@ it.each(['interim', 'native-tool', 'mcp', 'final', 'replay'] as const)('releases
     now += 29_000;
     await bridge.sweepStaleSwarm(now);
     const repairs = (await post('/status', {openConversations: [conversationId]})).body.repairs;
-    expect(repairs.some((row: any) => row.conversationId === conversationId)).toBe(activity === 'replay');
+    expect(repairs.some((row: any) => row.conversationId === conversationId)).toBe(false);
     expect((await input.pendingBrowserInputs()).some(row => row.id === queued.id)).toBe(activity === 'final');
+    now += 270_000;
+    await bridge.sweepStaleSwarm(now);
+    expect((await post('/status', {openConversations: [conversationId]})).body.repairs
+      .some((row: any) => row.conversationId === conversationId && row.reason === 'silence')).toBe(activity === 'replay');
   } finally { clock.mockRestore(); }
 });
 
@@ -373,15 +377,19 @@ it.each(['app', 'browser'] as const)('files a missing failed-turn Loop ticket on
   } finally { clock.mockRestore(); }
 });
 
-async function refreshFailedView(conversationId: string, advance: (ms: number) => void, delay = 0) {
+async function refreshFailedView(conversationId: string, advance: (ms: number) => void) {
   const bridge = await import('../src/main/bridge.js');
-  if (delay) expect((await post('/status', { openConversations: [conversationId] })).body.repairs.some((r: any) => r.conversationId === conversationId)).toBe(false);
-  advance(delay);
+  const { findSessionByConversation } = await import('../src/main/session/store.js');
+  const session = (await findSessionByConversation(conversationId))!;
+  const deadline = (await bridge.sessionControlsFor(session.id)).recovery?.find(row => row.kind === 'silence')?.deadline;
+  expect(deadline).toBeDefined();
+  advance(Math.max(0, deadline! - Date.now()));
   await bridge.sweepStaleSwarm(Date.now());
   const repair = (await post('/status', { openConversations: [conversationId] })).body.repairs.find((r: any) => r.conversationId === conversationId);
   expect(repair).toMatchObject({ reason: 'silence' });
   await post(`/status?repaired=${repair.token}&repairAction=reloaded`, { openConversations: [conversationId] });
-  advance(5 * 60_000 - 1);
+  const listenMs = session.selectedModel?.model === 'gpt-6-pro' ? 300_000 : 60_000;
+  advance(listenMs - 1);
   const pending = await input.pendingBrowserInputs();
   expect(pending.some(row => row.conversationId === conversationId)).toBe(false);
   advance(1);
@@ -403,6 +411,8 @@ it.each(['auto', 'after-turn'] as const)('reserves the failed-view five-minute w
     const row = await input.enqueueInput({ ...message(session.id, 'off'), automation: undefined, mode });
     now++;
     await post('/events', { conversationId, events: [{ kind: 'turn_end', turnId: 'failure-priority', outcome: 'failed', reason: 'thinking_failed', time: now }] });
+    expect((await input.pendingBrowserInputs()).some(r => r.id === row.id)).toBe(mode === 'auto');
+    now += 300_000;
     await bridge.sweepStaleSwarm(now);
     const repair = (await post('/status', { openConversations: [conversationId] })).body.repairs.find((r: any) => r.conversationId === conversationId);
     await post(`/status?repaired=${repair.token}&repairAction=reloaded`, { openConversations: [conversationId] });
@@ -538,20 +548,25 @@ describe.each(['input', 'loop'] as const)('MCP admission for %s recovery', desti
         if (evidence === 'request-only') await post('/events', { conversationId, events: [
           { kind: 'tool_evidence', time: now, calls: [{ messageId: 'request-sighting', tool: 'read', order: 0, answered: false, requestId: randomUUID() }] }
         ] });
+        const eligible = evidence === 'current-turn';
         if (boundary === 'silence') {
           now += bridge.PRO_SILENCE_MS + 1;
           await bridge.sweepStaleSwarm(now);
           const repair = (await post('/status', { openConversations: [conversationId] })).body.repairs.find((item: any) => item.conversationId === conversationId);
-          expect(repair).toBeDefined(); // Reload remains allowed even without MCP.
-          await post(`/status?repaired=${repair.token}&repairAction=reloaded`, { openConversations: [conversationId] });
+          expect(repair !== undefined).toBe(eligible);
+          if (repair) await post(`/status?repaired=${repair.token}&repairAction=reloaded`, { openConversations: [conversationId] });
         } else {
           now += 330_000;
           await post('/events', { conversationId, events: [
             { kind: 'turn_end', turnId: 'current-turn', outcome: 'failed', reason: 'thinking_failed', time: now }
           ] });
-          await refreshFailedView(conversationId, ms => { now += ms; });
+          if (eligible) await refreshFailedView(conversationId, ms => { now += ms; });
+          else {
+            await bridge.sweepStaleSwarm(now);
+            expect((await post('/status', { openConversations: [conversationId] })).body.repairs
+              .some((item: any) => item.conversationId === conversationId)).toBe(false);
+          }
         }
-        const eligible = evidence === 'current-turn';
         if (row) {
           input.resetInputForTests();
           expect((await input.listInputs()).find(item => item.id === row.id)?.silenceBoundary !== undefined).toBe(eligible);
@@ -598,10 +613,11 @@ it.each(['gpt-6-pro', 'gpt-5.6-sol'])('carries settled Thinking failed through H
       clock.mockReturnValue(busyAt);
       expect((await post('/input/claim', { id: first.id, owner: 'failed-turn-page', conversationId, silenceBusyTurnId: 'native-failed-turn' })).body.ok).toBe(true);
       input.resetInputForTests();
-      clock.mockReturnValue(busyAt + 5 * 60_000 - 1);
+      const extraWait = model === 'gpt-6-pro' ? 300_000 : 60_000;
+      clock.mockReturnValue(busyAt + extraWait - 1);
       expect(await input.pendingBrowserInputs()).toEqual([]);
       expect((await post('/input/claim', { id: first.id, owner: 'failed-turn-page', conversationId, requiresAuthorization: true })).body.input).toBeNull();
-      clock.mockReturnValue(busyAt + 5 * 60_000);
+      clock.mockReturnValue(busyAt + extraWait);
       expect(await input.pendingBrowserInputs()).toHaveLength(1);
     }
     const claim = await post('/input/claim', { id: first.id, owner: 'failed-turn-page', conversationId, requiresAuthorization: true });

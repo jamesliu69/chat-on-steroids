@@ -5209,17 +5209,20 @@ describe('unattributed activity recovery', () => {
       await events(OTHER, [{ kind: 'model_selection', model, reasoningEffort: model === 'gpt-6-pro' ? 'pro' : 'high', time: Date.now() }, openTurn('failed-countdown')]);
       await attributed(OTHER, false, Date.now());
       const id = (await request('GET', `/activity?conversationId=${OTHER}`)).body.sessionId;
-      expect((await sessionControlsFor(id)).recovery?.every(row => (row.visibleAt ?? 0) > Date.now())).toBe(true);
+      expect((await sessionControlsFor(id)).recovery?.every(row => row.kind === 'silence')).toBe(true);
       await events(OTHER, [{ kind: 'turn_end', turnId: 'failed-countdown', outcome: 'failed', reason: 'thinking_failed', time: Date.now() }]);
+      expect(await maintenance()).toBeNull();
+      await vi.advanceTimersByTimeAsync(model === 'gpt-6-pro' ? 300_000 : CHAT_SILENCE_MS);
+      await sweepStaleSwarm(Date.now());
       const repair = await maintenance();
       expect(repair?.reason).toBe('silence');
       await maintenance(repair!.token);
-      const deadline = Date.now() + 5 * 60_000;
-      expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'thinking-failed', deadline }]);
+      const deadline = Date.now() + (model === 'gpt-6-pro' ? 300_000 : 60_000);
+      expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'post-reload', deadline }]);
       await vi.advanceTimersByTimeAsync(10_000);
-      expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'thinking-failed', deadline }]);
+      expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'post-reload', deadline }]);
       await events(OTHER, [{ kind: 'assistant_message', messageId: 'fresh-after-failure', turnId: 'failed-countdown', text: 'Continuing the work.', state: 'streaming', activeNow: true, time: Date.now() }]);
-      expect((await sessionControlsFor(id)).recovery?.every(row => (row.visibleAt ?? 0) > Date.now())).toBe(true);
+      expect((await sessionControlsFor(id)).recovery?.every(row => row.kind === 'silence')).toBe(true);
     } finally { vi.useRealTimers(); }
   });
 
@@ -5275,7 +5278,7 @@ describe('unattributed activity recovery', () => {
       const repair = await maintenance();
       expect(repair?.reason).toBe('silence');
       await maintenance(repair!.token);
-      expect((await sessionControlsFor(id)).recovery).toEqual([]);
+      expect((await sessionControlsFor(id)).recovery).toEqual([{ kind: 'post-reload', deadline: Date.now() + 300_000 }]);
     } finally { vi.useRealTimers(); }
   });
 
@@ -5338,8 +5341,8 @@ describe('unattributed activity recovery', () => {
       for (let attempt = 0; attempt < 2; attempt++) {
         const response = await request('POST', '/input/claim', { body: { id: row.id, owner: 'queue-countdown-page', conversationId: OTHER, silenceBusyTurnId: 'queue-countdown' } });
         expect(response.body.ok).toBe(true);
-        expect((await sessionControlsFor(session!.id)).recovery).toEqual([{ kind: 'native-busy', next: 'queue', deadline: Date.now() + 300_000 }]);
-        if (attempt === 0) await vi.advanceTimersByTimeAsync(300_000);
+        expect((await sessionControlsFor(session!.id)).recovery).toEqual([{ kind: 'native-busy', next: 'queue', deadline: Date.now() + 60_000 }]);
+        if (attempt === 0) await vi.advanceTimersByTimeAsync(60_000);
       }
       await attributed(OTHER, false, Date.now());
       expect((await sessionControlsFor(session!.id)).recovery).toEqual([{ kind: 'silence', deadline: Date.now() + CHAT_SILENCE_MS,
@@ -6193,6 +6196,7 @@ describe('unattributed activity recovery', () => {
       const { setGoalSwitchNow } = await import('../src/main/goal.js');
       await setGoalSwitchNow(PRIME, mode, true, true);
       await events(PRIME, [{ kind: 'model_selection', time: Date.now(), model: 'GPT-5.6 Sol', reasoningEffort: 'high' }, openTurn('limited-goal')]);
+      await attributed(PRIME, false, Date.now());
       const deadline = Date.now() + CHAT_SILENCE_MS;
       const notice = () => events(PRIME, [{ kind: 'chat_error', time: Date.now(), turnId: 'limited-goal',
         recoverable: false, blocking: true, text: 'provider access limit' }]);
@@ -6223,6 +6227,7 @@ describe('unattributed activity recovery', () => {
       const { setGoalSwitchNow } = await import('../src/main/goal.js');
       await setGoalSwitchNow(PRIME, 'loop', true, true);
       await events(PRIME, [{ kind: 'model_selection', time: Date.now(), model: 'GPT-5.6 Sol', reasoningEffort: 'high' }, openTurn('limited-work')]);
+      await attributed(PRIME, false, Date.now());
       await vi.advanceTimersByTimeAsync(60_000);
       await events(PRIME, [
         { kind: 'chat_error', time: Date.now(), turnId: 'limited-work', recoverable: false, blocking: true, text: 'provider access limit' },
@@ -6244,6 +6249,7 @@ describe('unattributed activity recovery', () => {
       const { setGoalSwitchNow } = await import('../src/main/goal.js');
       await setGoalSwitchNow(PRIME, 'loop', true, true);
       await events(PRIME, [{ kind: 'model_selection', time: Date.now(), model: 'GPT-5.6 Sol', reasoningEffort: 'high' }, openTurn('limited-completed')]);
+      await attributed(PRIME, false, Date.now());
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS + 1);
       await sweepStaleSwarm(Date.now());
       const repair = handed ? await maintenance() : null;
@@ -6651,6 +6657,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-dead')]);
+      await attributed(OTHER, false, Date.now());
       await events(OTHER, [endTurn('turn-dead', 'failed')]);
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
       await sweepStaleSwarm(Date.now());
@@ -6688,6 +6695,7 @@ describe('unattributed activity recovery', () => {
         body: { id: bootstrap.id, status: 'sent', conversationId: WORKER, agent: 'worker-1' }
       });
       await events(WORKER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-long-answer')]);
+      await attributed(WORKER, false, Date.now());
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
       await sweepStaleSwarm(Date.now());
       const handout = await maintenance();
@@ -6793,6 +6801,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-heavy')]);
+      await attributed(OTHER, false, Date.now());
       await events(OTHER, [
         {
           kind: 'chat_error',
@@ -6847,6 +6856,7 @@ describe('unattributed activity recovery', () => {
       expect(await maintenance()).toBeNull();
 
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-broken')]);
+      await attributed(OTHER, false, Date.now());
       await events(OTHER, [
         {
           kind: 'chat_error',
@@ -6920,14 +6930,10 @@ describe('unattributed activity recovery', () => {
   });
 
   /**
-   * The turn opening is the whole arming condition.
-   *
-   * A turn that goes quiet the instant it opens — no interim text, no tool call, nothing the
-   * request-id join could carry — is the exact stall this watch exists for, and it was the one
-   * stall that never armed it: the ledger used to wait for an interim update or an attributed
-   * call before it would start counting.
+   * A native opening is observable activity, but only a current-turn local MCP
+   * call admits silence intervention. Ordinary website browsing stays untouched.
    */
-  it('watches an open turn that produces no interim update or tool call at all', async () => {
+  it('does not intervene in an open turn that never calls a local tool', async () => {
     vi.useFakeTimers();
     try {
       await pair();
@@ -6939,7 +6945,7 @@ describe('unattributed activity recovery', () => {
 
       await vi.advanceTimersByTimeAsync(1);
       await sweepStaleSwarm(Date.now());
-      expect(chatOf(await maintenance())).toBe(OTHER);
+      expect(await maintenance()).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -6962,19 +6968,21 @@ describe('unattributed activity recovery', () => {
       const PUNCTUAL = 'a1a1a1a1-1111-2222-3333-444444444444';
       await pair();
       await events(PUNCTUAL, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-silent-punctual')]);
+      await attributed(PUNCTUAL, false, Date.now());
 
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS - 1);
       expect(await maintenance()).toBeNull();
 
       // No sweepStaleSwarm() call: the deadline itself must be what wakes the app.
       await vi.advanceTimersByTimeAsync(2);
-      expect(chatOf(await maintenance())).toBe(PUNCTUAL);
+      // The deadline callback revalidates durable source-turn MCP proof asynchronously.
+      await vi.waitFor(async () => expect(chatOf(await maintenance())).toBe(PUNCTUAL), { interval: 1, timeout: 1000 });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('makes a newly started session recoverable for the full unknown-model opening window', async () => {
+  it('does not acquire silence authority from an authored opening without a source-turn MCP call', async () => {
     vi.useFakeTimers();
     try {
       await pair();
@@ -6986,13 +6994,13 @@ describe('unattributed activity recovery', () => {
         text: 'start working'
       }]);
 
-      await vi.advanceTimersByTimeAsync(PRO_SILENCE_MS - 1);
+      await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS - 1);
       await sweepStaleSwarm(Date.now());
       expect(await maintenance()).toBeNull();
 
       await vi.advanceTimersByTimeAsync(1);
       await sweepStaleSwarm(Date.now());
-      expect(chatOf(await maintenance())).toBe(OTHER);
+      expect(await maintenance()).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -7059,6 +7067,7 @@ describe('unattributed activity recovery', () => {
         },
         openTurn('turn-android-stale')
       ]);
+      await attributed(OTHER, false, Date.now());
 
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
       await sweepStaleSwarm(Date.now());
@@ -7100,6 +7109,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-silent-across-detach')]);
+      await attributed(OTHER, false, Date.now());
       await request('POST', '/closed', { body: { conversationId: OTHER } });
 
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
@@ -7116,6 +7126,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-ends-uncertain')]);
+      await attributed(OTHER, false, Date.now());
       await events(OTHER, [
         { kind: 'turn_end', time: Date.now(), turnId: 'turn-ends-uncertain', outcome: 'unknown' }
       ]);
@@ -7179,6 +7190,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-loop-silent')]);
+      await attributed(OTHER, false, Date.now());
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
       await sweepStaleSwarm(Date.now());
       expect(await maintenance()).toMatchObject({ conversationId: OTHER, reason: 'silence' });
@@ -7217,6 +7229,10 @@ describe('unattributed activity recovery', () => {
       await maintenance(repair!.token);
       await sweepStaleSwarm(Date.now());
       expect(goalPendingReplyFor(chat)).toBeNull();
+      if (model === 'pro') {
+        await vi.advanceTimersByTimeAsync(300_000);
+        await sweepStaleSwarm(Date.now());
+      }
       const held = goal.snapshotGoalReplies().replies.find(row => row.conversationId === chat);
       expect(held).toMatchObject({ state: 'handled', silenceSourceTurnId: 'off-silence-source' });
       if (model === 'other') {
@@ -7269,13 +7285,16 @@ describe('unattributed activity recovery', () => {
       await events(OTHER, [{ kind: 'turn_end', turnId: `reload-source-${delay}`, outcome: 'failed', reason: 'thinking_failed', time: Date.now() }]);
       expect(await maintenance()).toBeNull();
       expect(goalPendingReplyFor(OTHER)?.replyId).toBe(pending.replyId);
-      expect(goalPendingReplyFor(OTHER)?.listenUntil).toBe(confirmedAt + 300_000);
+      const listenUntil = confirmedAt + (pro ? 300_000 : 60_000);
+      expect(goalPendingReplyFor(OTHER)?.listenUntil).toBe(listenUntil);
       const sessionId = (await findSessionByConversation(OTHER, { requireUnique: true }))!.id;
-      expect((await sessionControlsFor(sessionId)).recovery).toEqual([{ kind: 'thinking-failed', next: 'loop', deadline: confirmedAt + 300_000 }]);
-      expect((await request('POST', '/goal/draft', { body: { conversationId: OTHER, turnId: pending.turnId } })).body.error).toBe('chat_still_working');
-      await vi.advanceTimersByTimeAsync(confirmedAt + 5 * 60_000 - Date.now() - 1);
-      expect((await request('POST', '/goal/draft', { body: { conversationId: OTHER, turnId: pending.turnId } })).body.error).toBe('chat_still_working');
-      await vi.advanceTimersByTimeAsync(1);
+      if (Date.now() < listenUntil) {
+        expect((await sessionControlsFor(sessionId)).recovery).toEqual([{ kind: 'post-reload', next: 'loop', deadline: listenUntil }]);
+        expect((await request('POST', '/goal/draft', { body: { conversationId: OTHER, turnId: pending.turnId } })).body.error).toBe('chat_still_working');
+        await vi.advanceTimersByTimeAsync(listenUntil - Date.now() - 1);
+        expect((await request('POST', '/goal/draft', { body: { conversationId: OTHER, turnId: pending.turnId } })).body.error).toBe('chat_still_working');
+        await vi.advanceTimersByTimeAsync(1);
+      }
       await sweepStaleSwarm(Date.now());
       expect(await maintenance()).toBeNull();
       expect(goalPendingReplyFor(OTHER)?.replyId).toBe(pending.replyId);
@@ -7362,6 +7381,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events(OTHER, [{ kind: 'model_selection', model, time: Date.now() }, openTurn('pro-silent-' + model)]);
+      await attributed(OTHER, false, Date.now());
       await vi.advanceTimersByTimeAsync(1_000);
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }]);
       await vi.advanceTimersByTimeAsync(PRO_SILENCE_MS - 1_001);
@@ -7398,6 +7418,7 @@ describe('unattributed activity recovery', () => {
       const began = Date.now();
       const picker = { kind: 'model_selection', model: 'gpt-6-pro', reasoningEffort: 'pro', time: began };
       await events(id, proof === 'picker after start in same batch' ? [openTurn('late-pro'), picker] : [openTurn('late-pro')]);
+      if (proof !== 'exact call') await attributed(id, false, Date.now());
       const sessionId = (await request('GET', `/activity?conversationId=${id}`)).body.sessionId;
       if (proof !== 'picker after start in same batch') {
         await vi.advanceTimersByTimeAsync(60_000);
@@ -7608,13 +7629,9 @@ describe('unattributed activity recovery', () => {
         ...(model === 'normal' ? [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }] : []),
         openTurn(`no-queue-${model}`)
       ]);
-      const deadline = model === 'unknown' ? PRO_SILENCE_MS : CHAT_SILENCE_MS;
+      await attributed(chat, false, Date.now());
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS - 1);
       expect(await maintenance()).toBeNull();
-      if (model === 'unknown') {
-        await vi.advanceTimersByTimeAsync(deadline - CHAT_SILENCE_MS);
-        expect(await maintenance()).toBeNull();
-      }
       await vi.advanceTimersByTimeAsync(1);
       await sweepStaleSwarm(Date.now());
       expect(await maintenance()).toMatchObject({ conversationId: chat, reason: 'silence' });
@@ -7643,7 +7660,7 @@ describe('unattributed activity recovery', () => {
     } finally { await saveConfig(previous); vi.useRealTimers(); }
   });
 
-  for (const selection of ['missing', 'stale', 'after-start']) it(`does not synthesize a silence Goal from ${selection} model evidence`, async () => {
+  for (const selection of ['missing', 'stale', 'after-start']) it(`does not synthesize a silence Goal without MCP proof (${selection} model evidence)`, async () => {
     // Persisted model observations survive the bridge reset: use a fresh conversation.
     const uncertainChat = `a4444444-1111-4111-8111-00000000000${["missing", "stale", "after-start"].indexOf(selection)}`;
     const previous = getConfig();
@@ -7656,12 +7673,11 @@ describe('unattributed activity recovery', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       await events(uncertainChat, [openTurn('uncertain-' + selection)]);
       if (selection === 'after-start') await events(uncertainChat, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() + 1 }]);
-      await vi.advanceTimersByTimeAsync(PRO_SILENCE_MS);
+      await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
       await sweepStaleSwarm(Date.now());
       const reload = await maintenance();
-      expect(reload).toMatchObject({ reason: 'silence' });
-      await maintenance(reload!.token);
-      await vi.advanceTimersByTimeAsync(PRO_SILENCE_RETIRE_MS);
+      expect(reload).toBeNull();
+      await vi.advanceTimersByTimeAsync(60_000);
       await sweepStaleSwarm(Date.now());
       expect(goalPendingReplyFor(uncertainChat)).toBeNull();
     } finally { resetGoalStateForTests(); await setSecret('openRouterApiKey', ''); await saveConfig(previous); vi.useRealTimers(); }
@@ -7699,6 +7715,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events('a6666666-1111-4111-8111-000000000006', [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-loop-slow')]);
+      await attributed('a6666666-1111-4111-8111-000000000006', false, Date.now());
       await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS);
       await sweepStaleSwarm(Date.now());
       const handout = await maintenance();
@@ -7967,7 +7984,7 @@ describe('unattributed activity recovery', () => {
       expect(busy.body.error).toBe('chat_still_working');
       const deferred = goalPendingReplyFor(OTHER)!;
       expect(deferred.listenUntil).toBe(Date.now() + 5 * 60_000);
-      expect((await sessionControlsFor(activity.sessionId)).recovery).toEqual([{ kind: 'native-busy', next: 'loop', deadline: deferred.listenUntil }]);
+      expect((await sessionControlsFor(activity.sessionId)).recovery).toEqual([{ kind: 'post-reload', next: 'loop', deadline: deferred.listenUntil }]);
       goal.restoreGoalReplies(goal.snapshotGoalReplies());
       expect(goalPendingReplyFor(OTHER)).toEqual(deferred);
       const waiting = await request('POST', '/goal/draft', { body: { conversationId: OTHER, turnId: ticket.turnId, terminalRequired: true } });
@@ -8381,6 +8398,7 @@ describe('unattributed activity recovery', () => {
     try {
       await pair();
       await events(OTHER, [{ kind: 'model_selection', model: 'GPT-5.6 Sol', reasoningEffort: 'high', time: Date.now() }, openTurn('turn-lost-on-reload')]);
+      await attributed(OTHER, false, Date.now());
       await events(OTHER, [endTurn('turn-lost-on-reload', 'unknown')]);
       await attributed(OTHER);
 

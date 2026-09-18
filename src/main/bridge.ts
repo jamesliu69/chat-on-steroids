@@ -6326,6 +6326,12 @@ async function inspectSilentChats(now: number): Promise<{ queued: boolean; spent
   for (const [conversationId, grant] of activeUntil) {
     if (compacting.has(conversationId)) continue;
     if (grant.until > now) continue;
+    // Observation proves liveness, not permission to interrupt the native page. Only an
+    // exactly recorded local MCP call in this source turn earns automatic silence recovery.
+    if (!grant.turnId || !await turnHasMcpCall(grant.sessionId, conversationId, grant.turnId)) {
+      if (activeUntil.get(conversationId) === grant) spent.push(conversationId);
+      continue;
+    }
     const pro = await extendedSilenceWindowFor(conversationId, grant.sessionId);
     const afterTurn = loopAfterTurnFor(conversationId) || await hasQueuedAfterTurnInput(grant.sessionId);
     if (activeUntil.get(conversationId) !== grant) continue;
