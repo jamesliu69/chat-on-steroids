@@ -227,12 +227,17 @@ export async function sessionForConversation(
  * history first, then use the ordinary reopen path so live turn/session state is rebuilt from
  * the existing log exactly as if the page had just reported an observation.
  */
-export async function restoreRecordedConversation(conversationId: string): Promise<string | null> {
+export async function restoreRecordedConversation(conversationId: string, pageObservedAt = Date.now()): Promise<string | null> {
   if (!recordingEnabled() || !conversationId) return null;
   const existing = conversations.get(conversationId);
-  if (existing) return existing.sessionId;
-  const known = await findSessionByConversation(conversationId);
+  const known = existing ? await getSession(existing.sessionId) : await findSessionByConversation(conversationId);
   if (!known) return null;
+  if (known.browserRecoveryDismissedAt !== undefined) {
+    // A poll accepted before Close cannot undo a newer user decision after an await.
+    if (pageObservedAt <= known.browserRecoveryDismissedAt) return null;
+    await reopenSession(known.id, pageObservedAt);
+  }
+  if (existing) return existing.sessionId;
   return sessionForConversation(conversationId);
 }
 
@@ -2411,9 +2416,13 @@ export async function ensureHandoffRecorded(
  * stays open; the detach is recorded as a note, which the timeline shows without ending
  * anything, and recordChatObservations writes the real terminal when the chat comes back.
  */
-export async function closeConversation(conversationId: string): Promise<void> {
+export async function closeConversation(conversationId: string, dismissBrowserRecovery = false): Promise<void> {
   const live = conversations.get(conversationId);
-  if (!live) return;
+  if (!live) {
+    const known = dismissBrowserRecovery ? await findSessionByConversation(conversationId) : null;
+    if (known) await endSession(known.id, true, conversationId);
+    return;
+  }
   if (live.turnStartedAt !== null) {
     await appendEvent(live.sessionId, {
       time: Date.now(),
@@ -2428,7 +2437,7 @@ export async function closeConversation(conversationId: string): Promise<void> {
     }).catch(() => undefined);
   }
   conversations.delete(conversationId);
-  await endSession(live.sessionId).catch(() => undefined);
+  await endSession(live.sessionId, dismissBrowserRecovery, conversationId).catch(() => undefined);
   notifyChanged();
 }
 

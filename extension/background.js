@@ -2467,7 +2467,8 @@ async function drainCloses() {
       if (conversationStillOpen(conversationId)) continue;
       const result = await call('/closed', {
         method: 'POST',
-        body: JSON.stringify({ conversationId })
+        // Confirmed removal/navigation is a deliberate departure, never a reload or a lost poll.
+        body: JSON.stringify({ conversationId, manual: true })
       });
       if (!result.ok) {
         scheduleRetry();

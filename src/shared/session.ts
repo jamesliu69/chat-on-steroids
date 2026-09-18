@@ -470,10 +470,15 @@ export interface SessionSummary {
    * can be recognised rather than silently filed as if nothing had moved.
    */
   chatIds: string[];
+  /** Durable departure times from the same rebind commit. Used only to recover plans
+   * accepted before a historical frontend was replaced, never to infer caller identity. */
+  retiredChatAt?: Record<string, number>;
   startedAt: number;
   updatedAt: number;
   /** Null while the session is still the active one. */
   endedAt: number | null;
+  /** Explicit user departure suspends activity and automatic recovery until the exact page returns. */
+  browserRecoveryDismissedAt?: number;
   events: number;
   userMessages: number;
   toolCalls: number;

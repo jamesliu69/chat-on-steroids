@@ -53,6 +53,7 @@ import { DEFAULT_TRUNCATION_POLICY, EXEC_OUTPUT_CEILING_POLICY, unifiedExecManag
 import {
   backgroundExecObligations,
   execOwnershipFailure,
+  executionPrincipal,
   forgetExecOwner,
   MAX_UNREAD_EXEC_RESULTS_PER_CONVERSATION,
   noteExecAttended,
@@ -234,33 +235,31 @@ function execChildEnvironment(): NodeJS.ProcessEnv {
   return applyUnifiedExecEnv(env);
 }
 
-/** Resolve the stable local session once so exec admission and later ownership cannot disagree. */
-async function execSession(tool: 'exec_command' | 'write_stdin', finalizeAnonymous = false): Promise<string | null> {
+/** Resolve one stable terminal principal without borrowing another chat's identity. */
+async function execPrincipal(tool: 'exec_command' | 'write_stdin', finalizeAnonymous = false): Promise<string | null> {
   const call = currentCall();
-  // A frozen call cannot be re-attributed for the handler itself. The final owner lookup is
-  // different: an exec process id has not been published until after the child returns, so an
-  // exact proof that arrived while that child was starting may still own the new process.
+  // A frozen headerless call cannot be re-attributed for the handler itself. Request-scoped
+  // callers are not frozen: their transport request id is a temporary principal until exact
+  // browser proof upgrades it to the durable session.
   if (call?.caller.unattributedFrozen && !finalizeAnonymous) return null;
-  let conversationId = provenConversation(currentCaller().requestId, currentCaller().conversationId);
-  // Once the user explicitly permits unattributed calls, an unproven command belongs to the
-  // anonymous process bucket only when that principal is finalized. Before a new command's
-  // initial yield we leave the principal open so exact request evidence that lands while the
-  // process is starting can still own the process before its session id is published.
-  if (!conversationId && call?.caller.requestId && !getConfig().multiAgent.allowUnattributedCalls) {
-    conversationId = await awaitFreshCallOrigin(tool, call.startedAt, IDENTITY_EVIDENCE_MS, {
-      requestId: call.caller.requestId
+  const caller = currentCaller();
+  const allowUnattributed = call?.allowUnattributed ?? getConfig().multiAgent.allowUnattributedCalls;
+  let conversationId = provenConversation(caller.requestId, caller.conversationId);
+  if (!conversationId && caller.requestId && !allowUnattributed) {
+    conversationId = await awaitFreshCallOrigin(tool, call?.startedAt ?? Date.now(), IDENTITY_EVIDENCE_MS, {
+      requestId: caller.requestId
     });
-    if (conversationId) call.caller.conversationId = conversationId;
+    if (conversationId && call) call.caller.conversationId = conversationId;
   }
-  if (!conversationId && finalizeAnonymous) {
+  if (!conversationId && !caller.requestId && finalizeAnonymous) {
     freezeCurrentCallerUnattributed();
     return null;
   }
   const sessionId = conversationId
-    ? provenSession(currentCaller().requestId, currentCaller().sessionId ?? null)
+    ? provenSession(caller.requestId, caller.sessionId ?? null)
     : null;
   if (call) call.caller.sessionId = sessionId;
-  return sessionId;
+  return executionPrincipal(caller.requestId, sessionId, allowUnattributed);
 }
 
 export function registerCoreTools(reg: SurfaceRegistrar): void {
@@ -820,7 +819,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               }
             }
 
-            const initialOwner = await execSession('exec_command');
+            const initialOwner = await execPrincipal('exec_command');
             const unread = backgroundExecObligations(initialOwner).exitedUnread;
             if (unread.length >= MAX_UNREAD_EXEC_RESULTS_PER_CONVERSATION) {
               const sessionIds = unread.map((session) => session.processId).join(', ');
@@ -850,9 +849,9 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               env: execChildEnvironment(),
               tty: input.tty ?? DEFAULT_TTY
             });
-            const owner = await execSession('exec_command', true);
-            // Which durable local session may later write to this process id. The frontend
-            // conversation is replaceable during Compact & Resume; the local session is not.
+            const owner = await execPrincipal('exec_command', true);
+            // Which exact session or temporary request principal may later write to this
+            // process id. Request custody upgrades lazily when exact correlation arrives.
             if (output.processId === null) {
               forgetExecOwner(processId);
             } else {
@@ -971,13 +970,13 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           // a small integer shared by every chat, so an identified caller must never adopt a
           // process launched by an anonymous caller; the registry also distinguishes retryable
           // missing identity from a proven owner mismatch.
-          const asking = await execSession('write_stdin', true);
+          const asking = await execPrincipal('write_stdin', true);
           const denied = execOwnershipFailure(input.session_id, asking);
           if (denied) {
             const reason = {
               unavailable: 'EXEC_SESSION_UNAVAILABLE: This process id is not available to this call in the running app. Check the original exec_command response and earlier results for its exit/output before deciding what remains; do not rerun the command solely because its id is unavailable.',
               anonymous: 'EXEC_SESSION_ANONYMOUS: This process was launched without proven chat identity. An identified chat cannot adopt it. Check the original command and its saved output; retrying from this identified chat cannot change its ownership.',
-              unidentified: 'EXEC_CALLER_UNIDENTIFIED: The current call has no proven chat identity, so it cannot access this owned process. After exact identity recovers, retry this same session_id once; do not launch a replacement command.',
+              unidentified: 'EXEC_CALLER_UNIDENTIFIED: The current request has not been proven to own this process, so it cannot access it yet. After exact identity recovers, retry this same session_id once; do not launch a replacement command.',
               'different-owner': 'EXEC_SESSION_OWNER_MISMATCH: This process belongs to a different local session. Only its owning session can poll it or send input; use a process id returned to this session.'
             }[denied];
             const message = `write_stdin failed for session ${input.session_id}: ${reason} No input was sent and no output was read. This refusal concerns this process id, not Read-only mode or permission to edit files or launch other authorized work.`;

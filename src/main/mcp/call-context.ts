@@ -61,6 +61,8 @@ export interface CallCaller {
   conversationId: string | null;
   /** Durable local session principal carried by the same exact request proof. */
   sessionId?: string | null;
+  /** Selected agent family. This selects state only after the broker checks its owner. */
+  runId?: string;
   /**
    * Admission permanently chose the explicit Unattributed principal for this call.
    *
@@ -79,6 +81,11 @@ export interface CallContext {
   transportKey: string | null;
   /** Resolved agent id in multi-agent mode, else null. */
   agent: string | null;
+  /**
+   * Whether this call may keep its workspace, plan, terminals and worker family under its
+   * transport request id before browser proof names the durable chat.
+   */
+  allowUnattributed?: boolean;
   /** Who this call was proven to be, for the broker tools to route by. */
   caller: CallCaller;
   /**

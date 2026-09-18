@@ -1369,12 +1369,37 @@ export async function readRecentEvents(
   return readRecentEventsFromDisk(sessionId, limit, options);
 }
 
-/** The latest authored question, unaffected by later revisions of older messages. */
-export async function readLatestUserMessage(sessionId: string): Promise<Extract<SessionEvent, { kind: 'user_message' }> | undefined> {
+/** The latest authored question. A recovery source excludes its injected corrections,
+ * which have no native user bubble and cannot grant another error reload. */
+export async function readLatestUserMessage(sessionId: string, turnId?: string | null): Promise<Extract<SessionEvent, { kind: 'user_message' }> | undefined> {
   assertSessionId(sessionId);
   await flushSession(sessionId);
-  const [message] = await readRecentEventsFromDisk(sessionId, 1, { kinds: ['user_message'], orderByOrigin: true });
+  const [message] = await readRecentEventsFromDisk(sessionId, 1, {
+    kinds: ['user_message'],
+    orderByOrigin: true,
+    ...(turnId ? { before: Number.POSITIVE_INFINITY, acceptEvent: (event: SessionEvent) => !isTurnCorrection(event, turnId) } : {})
+  });
   return message?.kind === 'user_message' ? message : undefined;
+}
+
+/** An injected instruction belongs to its existing generation, even after native reconciliation. */
+function isTurnCorrection(event: SessionEvent, turnId?: string | null): boolean {
+  return event.kind === 'user_message' && !!event.inputId && !!turnId && event.turnId === turnId;
+}
+
+/** Latest lifecycle boundary for one recovery source. Injected same-turn instructions do not replace it. */
+export async function readRecoveryBoundary(sessionId: string, turnId?: string | null): Promise<SessionEvent | undefined> {
+  const entry = await ensureOpen(sessionId);
+  await flushSession(sessionId);
+  return enqueueSessionOperation(entry, 'recovery boundary read', async () => {
+    const [boundary] = await readRecentEventsFromDisk(sessionId, 1, {
+      kinds: ['turn_start', 'turn_end', 'user_message'],
+      orderByOrigin: true,
+      before: Number.POSITIVE_INFINITY,
+      acceptEvent: event => !isTurnCorrection(event, turnId)
+    });
+    return boundary;
+  });
 }
 
 /** Recorded local execution, not a native tool label or a request-id sighting alone. */
@@ -1688,6 +1713,14 @@ function normalizeSummary(id: string, raw: string): MetaCheckpoint | null {
         : null;
     const { [META_HISTORY_SEQ]: _historySeq, [META_CANONICAL_PROJECTION]: canonicalProjection, [META_TOKEN_ESTIMATE]: tokenEstimate, ...publicFields } = parsed;
     const publicSummary = publicFields as SessionSummary;
+    if (publicSummary.retiredChatAt !== undefined) {
+      const retired = publicSummary.retiredChatAt;
+      publicSummary.retiredChatAt = retired && typeof retired === 'object' && !Array.isArray(retired)
+        ? Object.fromEntries(Object.entries(retired).filter(([chat, at]) =>
+          Array.isArray(publicSummary.chatIds) && publicSummary.chatIds.includes(chat) &&
+          chat !== publicSummary.conversationId && typeof at === 'number' && Number.isFinite(at) && at >= 0))
+        : {};
+    }
     if (publicSummary.titleSource !== undefined && !['fallback', 'provider', 'manual'].includes(publicSummary.titleSource)) delete publicSummary.titleSource;
     const selected = publicSummary.selectedModel;
     if (selected !== undefined && (!selected || typeof selected !== 'object' ||
@@ -2298,7 +2331,8 @@ export async function readSessionPlan(id: string): Promise<AgentPlan | null> {
 }
 
 export async function updateSessionPlan(
-  id: string, conversationId: string, input: AgentPlanUpdate, startedAt: number
+  id: string, conversationId: string, input: AgentPlanUpdate, startedAt: number,
+  recovery?: { storedAt: number }
 ): Promise<boolean> {
   const plan = agentPlanSchema.parse({ ...agentPlanUpdateSchema.parse(input), updatedAt: startedAt });
   const bytes = JSON.stringify(plan);
@@ -2307,7 +2341,12 @@ export async function updateSessionPlan(
   return enqueueSessionOperation(entry, 'plan', async () => {
     // Rebind and plan updates use this same queue. A delayed A call cannot overwrite
     // B's plan after Compact & Resume, even if A was current when the tool started.
-    if (entry.summary.conversationId !== conversationId) return false;
+    if (entry.summary.conversationId !== conversationId) {
+      const retiredAt = entry.summary.retiredChatAt?.[conversationId];
+      if (!recovery || !entry.summary.conversationId || !entry.summary.chatIds.includes(conversationId) ||
+        typeof retiredAt !== 'number' || !Number.isFinite(recovery.storedAt) || recovery.storedAt < 0 ||
+        Math.max(startedAt, recovery.storedAt) >= retiredAt) return false;
+    }
     const previous = await readPlanFile(id);
     if (previous && previous.updatedAt > startedAt) return false;
     const target = path.join(sessionDir(id), 'plan.json');
@@ -2322,19 +2361,23 @@ export async function updateSessionPlan(
   });
 }
 
-export async function endSession(id: string): Promise<void> {
-  const entry = open.get(id);
+export async function endSession(id: string, dismissBrowserRecovery = false, expectedConversationId?: string): Promise<void> {
+  const entry = dismissBrowserRecovery ? await ensureOpen(id) : open.get(id);
   if (!entry) return;
-  if (entry.metaTimer) {
-    clearTimeout(entry.metaTimer);
-    entry.metaTimer = null;
-  }
-  await enqueueSessionOperation(entry, 'end', async () => {
+  const ended = await enqueueSessionOperation(entry, 'end', async () => {
+    // A source tab may close while Compact & Resume commits a different frontend.
+    if (expectedConversationId !== undefined && entry.summary.conversationId !== expectedConversationId) return false;
+    if (entry.metaTimer) {
+      clearTimeout(entry.metaTimer);
+      entry.metaTimer = null;
+    }
     entry.summary.endedAt = Date.now();
+    if (dismissBrowserRecovery) entry.summary.browserRecoveryDismissedAt = entry.summary.endedAt;
     await writeMeta(entry);
     publishClosedSummary(entry.summary);
+    return true;
   });
-  if (open.get(id) === entry) open.delete(id);
+  if (ended && open.get(id) === entry) open.delete(id);
 }
 
 /**
@@ -2345,10 +2388,13 @@ export async function endSession(id: string): Promise<void> {
  * visit. Without this the reopened session kept the `endedAt` from the close, and
  * everything after it was appended to a session the UI still drew as finished.
  */
-export async function reopenSession(id: string): Promise<void> {
+export async function reopenSession(id: string, pageObservedAt?: number): Promise<void> {
   const entry = await ensureOpen(id);
   await enqueueSessionOperation(entry, 'reopen', async () => {
-    if (entry.summary.endedAt === null) return;
+    const dismissedAt = entry.summary.browserRecoveryDismissedAt;
+    const returned = dismissedAt !== undefined && pageObservedAt !== undefined && pageObservedAt > dismissedAt;
+    if (entry.summary.endedAt === null && !returned) return;
+    if (returned) delete entry.summary.browserRecoveryDismissedAt;
     entry.summary.endedAt = null;
     entry.summary.updatedAt = Date.now();
     await writeMeta(entry);
@@ -2479,12 +2525,16 @@ export async function rebindSession(
     const staged: SessionSummary = {
       ...entry.summary,
       conversationId: toConversationId,
+      retiredChatAt: fromConversationId
+        ? { ...entry.summary.retiredChatAt, [fromConversationId]: Date.now() }
+        : entry.summary.retiredChatAt,
       chatIds: entry.summary.chatIds.includes(toConversationId)
         ? [...entry.summary.chatIds]
         : [...entry.summary.chatIds, toConversationId],
       contextTokens: 0,
       activeTurnId: null,
       finishTurn: null,
+      browserRecoveryDismissedAt: undefined,
       ...(committedResumeHandoffId !== undefined
         ? { lastCommittedResumeHandoffId: committedResumeHandoffId }
         : {}),

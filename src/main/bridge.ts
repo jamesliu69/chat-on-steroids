@@ -41,6 +41,7 @@ import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindB
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import type { BridgeStatus } from '../shared/types.js';
+import { recoveryBusyMs } from '../shared/recovery.js';
 import { positionOf } from '../shared/chronology.js';
 import { CHAT_SILENCE_MS, CONTINUATION_MARKER, isReasoningEffort, toolCallSummary, workSequence, type ReasoningEffort, type SessionEvent, type SessionOrigin } from '../shared/session.js';
 import { isChatBlocked, chatBlockedAt } from './session/blocked-chats.js';
@@ -104,6 +105,7 @@ import {
   listUsageSessions,
   readRecentEvents,
   readLatestUserMessage,
+  readRecoveryBoundary,
   turnHasMcpCall,
   readActivityEvents,
   sessionDurableModifiedAt
@@ -1151,7 +1153,7 @@ export async function sessionControlsFor(sessionId: string): Promise<SessionCont
   const live = liveConversations().find(entry => entry.conversationId === id && entry.sessionId === sessionId);
   const activityExpiry = sessionActivityExpiresAt(session);
   const stopping = commands.some(c => c.spec.type === 'stop' && c.spec.sessionId === sessionId && c.spec.turnId === session.activeTurnId);
-  const activeTurnId = session.activeTurnId &&
+  const activeTurnId = session.browserRecoveryDismissedAt === undefined && session.activeTurnId &&
     (stopping || runningToolCalls(id) > 0 || (activityExpiry !== undefined ? activityExpiry !== null && activityExpiry > Date.now() :
       live?.activeTurnId === session.activeTurnId)) ? session.activeTurnId : null;
   const finishHeld = !blocked && await sessionFinishHeld(sessionId, activeTurnId, id);
@@ -1914,6 +1916,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
     const id = conversationId(body['conversationId']);
     if (id) {
+      const manual = body['manual'] === true;
       // Preserve the page's last exact turn verdict before closeConversation removes its live
       // recorder entry. Agent ownership outlives a tab; an open turn is the narrower fact that
       // authorises reopening it.
@@ -1924,7 +1927,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         liveConversations().some(
           (entry) => entry.conversationId === id && (entry.generating || Boolean(entry.activeTurnId))
         ) || (activeUntil.get(id)?.until ?? 0) > Date.now();
-      await closeConversation(id);
+      if (manual) {
+        // A deliberate departure suspends existing automatic recovery. It does not spend
+        // confirmed receipts or manufacture a terminal turn; a genuinely returned page can
+        // restore the unfinished source from durable evidence later.
+        endActivity(id);
+        if (repairsInFlight.get(id)?.state !== 'done') repairsInFlight.delete(id);
+        awaitingReturn.delete(id);
+        compactionWatch.delete(id);
+      }
+      await closeConversation(id, manual);
       // A browser tab closing is not evidence that the server-side ChatGPT turn has stopped.
       // In particular, after a swarm ends the retired-worker lease is the only authority fence
       // that keeps that old worker conversation from immediately becoming an ordinary chat and
@@ -1940,7 +1952,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       else if (workerConversationGone(id)) {
         logInfo(`bridge: worker chat ${id} closed — its slot is detached, not ended, until it also goes quiet`);
       }
-      await queueMissingTab(id, working);
+      if (manual) {
+        const session = await findSessionByConversation(id, { requireUnique: true });
+        if (session) await revokeSilenceInputs(session.id);
+        endActivity(id);
+        if (repairsInFlight.get(id)?.state !== 'done') repairsInFlight.delete(id);
+        logInfo(`bridge: ${id} was closed deliberately; activity and automatic recovery are paused until its page returns`);
+      } else {
+        await queueMissingTab(id, working);
+      }
     }
     return json(res, 200, { ok: true }, origin);
   }
@@ -1949,6 +1969,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   // ever returns summaries of calls this app made — never file contents.
   if (route === '/activity') {
     const id = conversationId(url.searchParams.get('conversationId'));
+    const pageObservedAt = Date.now();
     const since = Number(url.searchParams.get('since') ?? 0);
     const goalClient = (url.searchParams.get('goalClient') ?? '').slice(0, 100);
     if (!id) return json(res, 400, { error: 'bad_conversation_id' }, origin);
@@ -1964,7 +1985,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
      * own sheet, until the recorder happened to attach. One view, both branches: a chat is
      * never told that what is driving it is unknown.
      */
-    const astraSession = await findSessionByConversation(id, { requireUnique: true });
+    let astraSession = await findSessionByConversation(id, { requireUnique: true });
     const finishOnly = !!astraSession && await astraFinishOnly(astraSession.id, id);
     const silenceSuppressed = finishOnly || await suppressProSilence(id);
     const goalView = async () => {
@@ -2022,13 +2043,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     // Every open ChatGPT tab polls this for its own conversation every few seconds, so
     // this is the app's primary first-hand evidence of which chats exist right now.
     let live = liveConversations().find((entry) => entry.conversationId === id);
-    if (!live) {
-      // `/activity` itself proves that this ChatGPT page is still open. After an app restart
-      // the durable session can keep receiving exact MCP calls while the recorder's live map
-      // is empty; returning an empty feed here leaves Overwrite stale forever. Reattach only
-      // when a durable session already exists, so a random poll cannot manufacture history.
-      await restoreRecordedConversation(id);
+    const returningFromDismissal = astraSession?.browserRecoveryDismissedAt !== undefined;
+    if (!live || returningFromDismissal) {
+      // `/activity` itself proves that this ChatGPT page is still open. Capture its arrival time
+      // before any await so an older poll cannot undo a later explicit Close.
+      await restoreRecordedConversation(id, pageObservedAt);
       live = liveConversations().find((entry) => entry.conversationId === id);
+      astraSession = await findSessionByConversation(id, { requireUnique: true });
+      if (returningFromDismissal && live) await restoreReturnedPageActivity(id, live.sessionId);
     }
     if (!live) {
       return json(
@@ -5210,14 +5232,18 @@ export const GOAL_QUIET_MS = 60_000;
 /** Conservative unknown-model lifetime retained for compatibility; known Pro has its own policy. */
 export const PRO_SILENCE_RETIRE_MS = 5 * 60_000;
 export const PRO_SILENCE_MS = 10 * 60_000;
-const SILENCE_RELOAD_LISTEN_MS = 60_000;
 export const PRO_ACTIVITY_MS = 10 * 60_000;
+
+/** Thinking failed shortens Pro silence; failure itself is never fresh model work. */
+function silenceWindowMs(grant: Pick<ActivityGrant, 'model' | 'thinkingFailed'>): number {
+  return grant.model === 'pro' ? (grant.thinkingFailed ? 5 * 60_000 : PRO_SILENCE_MS) : CHAT_SILENCE_MS;
+}
 const activityLifetime = (grant: ActivityGrant): number => grant.model === 'pro' ? PRO_ACTIVITY_MS : PRO_SILENCE_RETIRE_MS;
 
 /** Runtime presentation of the same exact Pro work grant that owns silence recovery. */
 export function sessionInputActivity(summary: SessionSummary): InputActivity {
   const id = summary.conversationId;
-  if (!id) return { possible: false, exact: false };
+  if (!id || summary.browserRecoveryDismissedAt !== undefined) return { possible: false, exact: false };
   const grant = activeUntil.get(id);
   const expiry = sessionActivityExpiresAt(summary);
   const mcpWindow = grant?.sessionId === summary.id && grant.mcpBacked && !grant.thinkingFailed &&
@@ -5230,6 +5256,7 @@ export function sessionInputActivity(summary: SessionSummary): InputActivity {
     (expiry !== undefined && expiry !== null && expiry > Date.now()) };
 }
 export function sessionActivityExpiresAt(summary: SessionSummary): number | null | undefined {
+  if (summary.browserRecoveryDismissedAt !== undefined) return null;
   const id = summary.conversationId;
   const grant = id ? activeUntil.get(id) : undefined;
   // An abandoned open recorder turn is not fresh work, even if a later picker selection
@@ -5381,11 +5408,13 @@ async function considerAutomaticCompaction(conversationId: string, sessionId: st
   compactionFilings.add(conversationId);
   try {
     const summary = await getSession(sessionId).catch(() => null);
-    if (!summary || summary.conversationId !== conversationId || !autoCompactionReady(summary)) return;
+    if (!summary || summary.conversationId !== conversationId || summary.browserRecoveryDismissedAt !== undefined || !autoCompactionReady(summary)) return;
     if (await conversationWasSuperseded(conversationId)) return;
-    // Re-read after the awaits: the turn may have ended, or a page may have filed by hand.
-    if (!chatIsWorking(conversationId) || continuationForSession(sessionId) || goalFencedChat(conversationId) ||
-        !automaticCompactionAllowed(await getSession(sessionId))) return;
+    // Re-read after the awaits: the turn may have ended, a page may have filed by hand,
+    // or the user may have deliberately closed this frontend.
+    const current = await getSession(sessionId);
+    if (!current || !chatIsWorking(conversationId) || continuationForSession(sessionId) || goalFencedChat(conversationId) ||
+        current.browserRecoveryDismissedAt !== undefined || !automaticCompactionAllowed(current)) return;
     const opened = await openContinuationNow(sessionId, conversationId, true);
     rememberToken(sessionId, opened.token);
     changed();
@@ -5471,7 +5500,7 @@ async function fileSilenceTickets(spent: readonly string[], now: number): Promis
 async function fileSilenceInputTicket(conversationId: string, now: number, listenUntil?: number): Promise<boolean> {
   const grant = activeUntil.get(conversationId);
   const repair = repairsInFlight.get(conversationId);
-  if (!grant?.turnId || (!grant.thinkingFailed && now - grant.evidenceAt < (grant.model === 'other' ? CHAT_SILENCE_MS : PRO_SILENCE_MS)) ||
+  if (!grant?.turnId || now - grant.evidenceAt < silenceWindowMs(grant) ||
       repair?.reason !== 'silence' || repair.state !== 'done' || repair.sessionId !== grant.sessionId) return false;
   const current = () => activeUntil.get(conversationId) === grant && repairsInFlight.get(conversationId) === repair &&
     !stopRequestedFor(conversationId) && !isChatBlocked(conversationId) &&
@@ -5481,7 +5510,7 @@ async function fileSilenceInputTicket(conversationId: string, now: number, liste
     // grant identity and the outbox's source/work checks still fence renewed work.
     (observationWritesInFlight === 0 || (grant.thinkingFailed === true && repair.progress?.turnId === grant.turnId));
   return fileSilenceInput(grant.sessionId, conversationId, grant.turnId, current,
-    grant.thinkingFailed || grant.model === 'other' ? grant.until : listenUntil);
+    grant.thinkingFailed || grant.model !== 'pro' ? grant.until : listenUntil);
 }
 
 /**
@@ -5499,6 +5528,26 @@ async function fileSilenceInputTicket(conversationId: string, now: number, liste
 function armResumedChat(sessionId: string, conversationId: string): void {
   grantActivity(conversationId, sessionId);
   logInfo(`bridge: resumed chat ${conversationId} armed — expecting its first attributed call`);
+}
+
+/** A real page return lifts dismissal without treating the poll itself as fresh work. */
+async function restoreReturnedPageActivity(conversationId: string, sessionId: string): Promise<void> {
+  const session = await getSession(sessionId);
+  if (session?.conversationId !== conversationId || session.browserRecoveryDismissedAt !== undefined ||
+      !session.activeTurnId || session.finishTurn?.released || session.lastToolCallAt == null || activeUntil.has(conversationId)) return;
+  if (!await turnHasMcpCall(sessionId, conversationId, session.activeTurnId)) return;
+  const selected = session.selectedModel;
+  const grant: ActivityGrant = {
+    sessionId,
+    turnId: session.activeTurnId,
+    evidenceAt: session.lastToolCallAt,
+    until: session.lastToolCallAt,
+    model: selected?.conversationId === conversationId
+      ? (isProModel(selected.model, selected.reasoningEffort) ? 'pro' : 'other')
+      : 'unknown',
+    mcpBacked: true
+  };
+  grantActivity(conversationId, sessionId, Math.min(Date.now(), grant.evidenceAt), CHAT_SILENCE_MS, grant);
 }
 
 /** A real terminal — stable final answer, explicit stop, worker finish — spends the deadline. */
@@ -5608,9 +5657,10 @@ export function unattributedRepairEta(now = Date.now(), requestId?: string | nul
 async function sessionRecoveryCountdowns(sessionId: string, conversationId: string): Promise<import('../shared/recovery.js').RecoveryCountdown[]> {
   const rows = await listInputs();
   const queuedAfterTurn = await hasQueuedAfterTurnInput(sessionId);
-  const [boundary] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start', 'turn_end', 'user_message'] });
+  const boundary = await readRecoveryBoundary(sessionId, activeUntil.get(conversationId)?.turnId);
   const session = await getSession(sessionId);
-  if (session?.conversationId !== conversationId || isChatBlocked(conversationId) || stopRequestedFor(conversationId) ||
+  if (session?.conversationId !== conversationId || session.browserRecoveryDismissedAt !== undefined ||
+      isChatBlocked(conversationId) || stopRequestedFor(conversationId) ||
       continuationForSession(sessionId) || supersededSourceConversations().includes(conversationId)) return [];
   const result: import('../shared/recovery.js').RecoveryCountdown[] = [];
   if (browserPresent()) {
@@ -5654,7 +5704,7 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
   }
   // A confirmed reload's listening deadline is not fresh work. Real activity
   // replaces the grant and retires the receipt, withdrawing this row immediately.
-  const normalReloadDeadline = confirmed ? (lastBrowserRecoveryAt.get(conversationId) ?? 0) + SILENCE_RELOAD_LISTEN_MS : undefined;
+  const normalReloadDeadline = confirmed ? (lastBrowserRecoveryAt.get(conversationId) ?? 0) + recoveryBusyMs(false) : undefined;
   const postReloadDeadline = owned && confirmed && !grant.thinkingFailed && grant.model === 'other' &&
     grant.until === normalReloadDeadline ? grant.until : undefined;
   if (owned && !grant.thinkingFailed && !postReloadDeadline && grant.until > Date.now()) return result;
@@ -5908,6 +5958,11 @@ async function noteRecoveryObservations(
   // of evidence, not a model choice to pin forever. Resolve it from this exact chat
   // without treating picker/presence updates as new work or changing a known model.
   const recorded = sessionId ? await getSession(sessionId) : null;
+  if (recorded?.browserRecoveryDismissedAt !== undefined) {
+    endActivity(conversationId);
+    if (repairsInFlight.get(conversationId)?.state !== 'done') repairsInFlight.delete(conversationId);
+    return;
+  }
   const ended = observations.findLast(item => item.kind === 'turn_end');
   const thinkingFailed = ended?.outcome === 'failed' && ended.reason === 'thinking_failed' &&
     recorded?.lastTurnOutcome === 'failed' && !recorded.activeTurnId;
@@ -5922,7 +5977,7 @@ async function noteRecoveryObservations(
     repaired.progress.turnId === ended.turnId && confirmedAt !== undefined ? repaired : null;
   const selected = recorded?.selectedModel;
   const provenModel = selected?.conversationId === conversationId
-    ? isProModel(selected.model, selected.reasoningEffort) ? 'pro' as const : 'unknown' as const
+    ? isProModel(selected.model, selected.reasoningEffort) ? 'pro' as const : 'other' as const
     : 'unknown' as const;
   const unresolved = activeUntil.get(conversationId);
   if (!activity.terminal && unresolved?.model === 'unknown' && unresolved.sessionId === sessionId &&
@@ -5981,14 +6036,28 @@ async function noteRecoveryObservations(
   const lastEnd = ended?.outcome ?? null;
   let terminalGrant = activeUntil.get(conversationId);
   if (thinkingFailed && ended.turnId && sessionId && activity.terminal) {
-    // The recorder closes input immediately. The existing silence owner separately
-    // owes one early refresh; real work replaces this grant and cancels the episode.
-    terminalGrant = { sessionId, turnId: ended.turnId, model: terminalGrant?.model ?? provenModel,
-      evidenceAt: Math.min(Date.now(), ended.time),
-      until: sameFailedRepair && repairsInFlight.get(conversationId) === sameFailedRepair
-        ? confirmedAt! + 5 * 60_000 : Date.now(), thinkingFailed: true };
+    // Failure is not new model work. Preserve the exact source grant when possible; otherwise
+    // anchor the recovery window to the newest genuine work event instead of Date.now().
+    const previous = terminalGrant?.sessionId === sessionId && terminalGrant.turnId === ended.turnId
+      ? terminalGrant : undefined;
+    const [work] = previous ? [] : await readRecentEvents(sessionId, 1, {
+      kinds: ['user_message', 'assistant_message', 'tool_call', 'page_tool', 'turn_start']
+    });
+    terminalGrant = previous ?? {
+      sessionId,
+      turnId: ended.turnId,
+      model: provenModel,
+      evidenceAt: Math.min(Date.now(), work?.time ?? ended.time),
+      until: 0
+    };
+    terminalGrant.thinkingFailed = true;
+    if (terminalGrant.model === 'unknown' && provenModel !== 'unknown') terminalGrant.model = provenModel;
+    const confirmed = !!sameFailedRepair && repairsInFlight.get(conversationId) === sameFailedRepair && confirmedAt !== undefined;
+    terminalGrant.until = confirmed
+      ? confirmedAt + recoveryBusyMs(terminalGrant.model === 'pro')
+      : terminalGrant.evidenceAt + silenceWindowMs(terminalGrant);
     activeUntil.set(conversationId, terminalGrant);
-    if (sameFailedRepair) {
+    if (confirmed) {
       const pending = goalPendingReplyFor(conversationId);
       if (pending?.silenceSourceTurnId === ended.turnId)
         await deferSilenceGoalReplyNow(conversationId, pending.turnId, terminalGrant.until);
@@ -7108,14 +7177,14 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | nu
       awaitingReturn.add(conversationId);
       if (repair.reason === 'silence') {
         const failedGrant = activeUntil.get(conversationId);
-        if (failedGrant?.thinkingFailed) failedGrant.until = Date.now() + 5 * 60_000;
-        else if (failedGrant?.model === 'other') failedGrant.until = Date.now() + SILENCE_RELOAD_LISTEN_MS;
+        if (failedGrant?.thinkingFailed) failedGrant.until = Date.now() + recoveryBusyMs(failedGrant.model === 'pro');
+        else if (failedGrant?.model === 'other') failedGrant.until = Date.now() + recoveryBusyMs(false);
         // Persist the next existing instruction as soon as this exact refresh is
         // acknowledged. Native readiness and the normal Send receipt still gate delivery.
         const inputFiled = await fileSilenceInputTicket(conversationId, Date.now());
         if (!inputFiled && (loopAfterTurnFor(conversationId) || failedGrant?.model === 'other')) await fileSilenceTickets([conversationId], Date.now());
         // Ordinary models listen for one minute from the confirmed refresh;
-        // failed views retain five minutes. These reuse the same grant and tickets.
+        // failed views retain one minute for Normal or five minutes for Pro.
         // Worker retirement retains its separate recovery rules below.
         const grant = activeUntil.get(conversationId);
         const pro = await extendedSilenceWindowFor(conversationId, repair.sessionId);

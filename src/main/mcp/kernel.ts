@@ -579,6 +579,7 @@ async function dispatchTracked(
   // the live worker failure that motivated IDENTITY_EVIDENCE_MS arrived ~8 seconds late.
   const identitySensitive = needsWorkspaceIdentity(name, args);
   const allowUnattributed = getConfig().multiAgent.allowUnattributedCalls;
+  context.allowUnattributed = allowUnattributed;
   // update_plan and session_finish consume this exact session, even outside a swarm. Resolve it
   // before the shared blocked/superseded checks rather than guessing from selection.
   // Observation and its dependent input must always resolve the same caller before either
