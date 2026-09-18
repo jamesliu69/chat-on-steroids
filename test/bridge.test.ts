@@ -364,6 +364,7 @@ afterAll(async () => {
 beforeEach(async () => {
   recoveryBrowserWake.mockClear();
   vi.mocked(safeStorage.isAsyncEncryptionAvailable).mockResolvedValue(true);
+  resetGoalStateForTests();
   // A test that writes its own config is not allowed to leak it into the next one.
   await saveConfig(suiteConfig);
   // The swarm goes first: ending a run queues stop notices into the chats of any workers
@@ -5285,6 +5286,8 @@ describe('unattributed activity recovery', () => {
   it('retains the original unattributed cohort with a delayed reveal without requiring another unknown call', async () => {
     vi.useFakeTimers();
     try {
+      // Attribution owns this watch; ordinary silence recovery is covered separately.
+      await saveConfig({ ...getConfig(), multiAgent: { ...getConfig().multiAgent, recoverAgentTabs: false } });
       await pair();
       for (const chat of [PRIME, WORKER, OTHER]) await events(chat, [openTurn('five-minute-cohort')]);
       const ids = await Promise.all([PRIME, WORKER, OTHER].map(async chat => (await findSessionByConversation(chat, { requireUnique: true }))!.id));
@@ -8270,9 +8273,9 @@ describe('unattributed activity recovery', () => {
       await sweepStaleSwarm(Date.now());
 
       // A confirmed reload alone is spent. A new exact call is the sole fact that starts episode 2.
-      // Its replacement page has supplied no new model proof, so recovery is conservative.
+      // Missing replacement-page model proof uses the ordinary silence clock.
       await attributed(OTHER);
-      await vi.advanceTimersByTimeAsync(PRO_SILENCE_MS - 1);
+      await vi.advanceTimersByTimeAsync(CHAT_SILENCE_MS - 1);
       await sweepStaleSwarm(Date.now());
       expect(await maintenance()).toBeNull();
 

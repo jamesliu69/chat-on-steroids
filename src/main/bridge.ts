@@ -2888,26 +2888,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (await goalInputPriority(id, sessionId, turnId))
       return goalJson(res, 409, { error: 'user_input_pending', retryable: true }, origin);
     if (await chatStillWorking(id, turnId, sessionId)) {
-      if (await extendedSilenceWindowFor(id, sessionId)) {
-        return goalJson(res, 409, { error: 'chat_still_working', retryable: true }, origin);
-      }
-      // Owed, but not yet: the turn the page reported ended is still open here, or still
-      // running tools. The
-      // obligation is filed so a replacement page collects it; the draft itself waits for the
-      // quiet minute, and the page asks again on its next pull.
-      try {
-        await acceptGoalReplyNow({
-          conversationId: id,
-          sessionId,
-          replyId: `turn:${turnId}`.slice(0, 200),
-          turnId,
-          eventSeq: 0,
-          blocked: false
-        });
-      } catch (err) {
-        logWarn(`bridge: Goal turn ${turnId} for ${id} is not durable yet — ${err instanceof Error ? err.message : String(err)}`);
-        return goalJson(res, 503, { error: 'goal_reply_not_durable', retryable: true }, origin);
-      }
+      // An unfinished turn cannot create a future Goal/Loop obligation. Canonical
+      // completion is the authority that files one; this request only reports busy.
       return json(
         res,
         409,
@@ -5267,7 +5249,7 @@ export function sessionActivityExpiresAt(summary: SessionSummary): number | null
 
 async function extendedSilenceWindowFor(conversationId: string, sessionId?: string): Promise<boolean> {
   const grant = activeUntil.get(conversationId);
-  return Boolean(grant && (!sessionId || grant.sessionId === sessionId) && grant.model !== 'other');
+  return Boolean(grant && (!sessionId || grant.sessionId === sessionId) && grant.model === 'pro');
 }
 
 /** Silence requires this exact turn's recorded MCP work and eligible model/Loop policy. */
@@ -6349,19 +6331,19 @@ async function inspectSilentChats(now: number): Promise<{ queued: boolean; spent
       spent.push(conversationId);
       continue;
     }
-    // Recovery and queued delivery share the same model clock. Missing selection
-    // is not evidence of a normal model, even when no follow-up input is queued.
-    // Thinking failed keeps its separately proven immediate refresh authority.
-    if ((afterTurn || tabRecoveryWanted(conversationId)) && grant.model !== 'other' && !grant.thinkingFailed && now < grant.evidenceAt + PRO_SILENCE_MS) {
-      grant.until = grant.evidenceAt + PRO_SILENCE_MS;
+    // Only positively identified Pro work earns the longer recovery clock.
+    // Unknown and normal models keep the ordinary silence window.
+    if ((afterTurn || tabRecoveryWanted(conversationId) || grant.thinkingFailed) &&
+        now < grant.evidenceAt + silenceWindowMs(grant)) {
+      grant.until = grant.evidenceAt + silenceWindowMs(grant);
       deferred = true;
       continue;
     }
     // Not a chat the user wants brought back: its silence is spent the same way, without the
     // reload that would otherwise be its one chance.
     if (!grant.thinkingFailed && !tabRecoveryWanted(conversationId) && !afterTurn) {
-      if (pro && now < grant.evidenceAt + activityLifetime(grant)) {
-        grant.until = grant.evidenceAt + activityLifetime(grant);
+      if (pro && now < grant.evidenceAt + PRO_ACTIVITY_MS) {
+        grant.until = grant.evidenceAt + PRO_ACTIVITY_MS;
         deferred = true;
         continue;
       }
@@ -6370,8 +6352,8 @@ async function inspectSilentChats(now: number): Promise<{ queued: boolean; spent
     }
     const held = repairsInFlight.get(conversationId);
     if (held?.state === 'done' && !TURN_SCOPED_REPAIRS.has(held.reason)) {
-      if (!grant.thinkingFailed && pro && now < grant.evidenceAt + activityLifetime(grant)) {
-        grant.until = grant.evidenceAt + activityLifetime(grant);
+      if (!grant.thinkingFailed && pro && now < grant.evidenceAt + PRO_ACTIVITY_MS) {
+        grant.until = grant.evidenceAt + PRO_ACTIVITY_MS;
         deferred = true;
         continue;
       }
