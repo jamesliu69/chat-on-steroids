@@ -239,37 +239,54 @@ describe.runIf(IS_WINDOWS)('desktop helper', () => {
     const shot = state.screenshot!;
     // Different capture, therefore a different region and scale to be mapped against.
     expect(shot.frameId).not.toBe(other.frameId);
-    // A window with no automation tree has no centres to pair. That is a property of the
-    // desktop this happens to run on, not of the mapping under test, so it is a skip rather
-    // than a failure; the checked count below still holds the assertion that matters.
-    if (state.elements.length === 0) return;
+    // Only controls fully contained in a real window capture can safely be projected into
+    // screenshot pixels. A screen fallback can be occluded by another application, and
+    // out-of-region controls do not belong to the returned bitmap, so production correctly
+    // leaves their image coordinates null.
+    const mappable = state.elements.filter((element) =>
+      shot.captureMode !== 'screen_fallback' &&
+      element.bounds.x >= shot.region.x &&
+      element.bounds.y >= shot.region.y &&
+      element.bounds.x + element.bounds.width <= shot.region.x + shot.region.width &&
+      element.bounds.y + element.bounds.height <= shot.region.y + shot.region.height
+    );
+    const unmappable = state.elements.filter((element) => !mappable.includes(element));
+    for (const element of unmappable) {
+      expect(element.imageBounds).toBeNull();
+      expect(element.imageCenter).toBeNull();
+    }
 
-    let checked = 0;
-    for (const element of state.elements) {
-      if (!element.imageBounds || !element.imageCenter) continue;
-      checked++;
+    // Some real desktops expose no UIA controls inside the captured client rectangle. That
+    // environment cannot exercise the projection math, but it can still verify the safe-null
+    // contract above without turning a valid observation into a test failure.
+    if (mappable.length === 0) return;
+
+    for (const element of mappable) {
+      expect(element.imageBounds).not.toBeNull();
+      expect(element.imageCenter).not.toBeNull();
+      const imageBounds = element.imageBounds!;
+      const imageCenter = element.imageCenter!;
       // Recompute every edge from the screenshot returned with these elements. This keeps the
       // assertion independent of both the scalar `scale` and the imageBounds values under test.
       const expectedLeft = Math.round(((element.bounds.x - shot.region.x) * shot.width) / shot.region.width);
       const expectedTop = Math.round(((element.bounds.y - shot.region.y) * shot.height) / shot.region.height);
       const expectedRight = Math.round(((element.bounds.x + element.bounds.width - shot.region.x) * shot.width) / shot.region.width);
       const expectedBottom = Math.round(((element.bounds.y + element.bounds.height - shot.region.y) * shot.height) / shot.region.height);
-      expect(element.imageBounds.x).toBe(expectedLeft);
-      expect(element.imageBounds.y).toBe(expectedTop);
-      expect(element.imageBounds.width).toBe(expectedRight - expectedLeft);
-      expect(element.imageBounds.height).toBe(expectedBottom - expectedTop);
+      expect(imageBounds.x).toBe(expectedLeft);
+      expect(imageBounds.y).toBe(expectedTop);
+      expect(imageBounds.width).toBe(expectedRight - expectedLeft);
+      expect(imageBounds.height).toBe(expectedBottom - expectedTop);
       if (expectedRight > expectedLeft && expectedBottom > expectedTop) {
-        expect(element.imageCenter.x).toBe(
+        expect(imageCenter.x).toBe(
           Math.min(expectedRight - 1, Math.round((expectedLeft + expectedRight) / 2))
         );
-        expect(element.imageCenter.y).toBe(
+        expect(imageCenter.y).toBe(
           Math.min(expectedBottom - 1, Math.round((expectedTop + expectedBottom) / 2))
         );
       }
-      expect(element.imageBounds.x + element.imageBounds.width).toBeLessThanOrEqual(shot.width);
-      expect(element.imageBounds.y + element.imageBounds.height).toBeLessThanOrEqual(shot.height);
+      expect(imageBounds.x + imageBounds.width).toBeLessThanOrEqual(shot.width);
+      expect(imageBounds.y + imageBounds.height).toBeLessThanOrEqual(shot.height);
     }
-    expect(checked).toBeGreaterThan(0);
   });
 
   it('refuses a ref minted before the desktop helper restarted', async () => {
