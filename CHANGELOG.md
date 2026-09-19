@@ -9,6 +9,11 @@ The app and the `extension/` companion are versioned together. **Reload the
 extension after updating the app**. If their bridge protocols are incompatible,
 the app refuses the extension and asks you to reload the matching copy.
 
+## [2.1.14] — Selected upstream reliability fixes
+
+- Improve queued input delivery, attachment ownership, recovery and transcript continuity.
+- Improve browser ownership, response rendering and worker/session continuity.
+
 ## [2.1.13] — Skills and reliability
 
 - Import text skills through **+ → Skills**, select them from the library, or autocomplete their commands with **/**.
