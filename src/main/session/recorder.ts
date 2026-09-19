@@ -29,6 +29,7 @@ import type {
   TurnOutcome
 } from '../../shared/session.js';
 import { estimateTokens, originTitle, workSequence } from '../../shared/session.js';
+import { overlappingRequestTurns, recordedRequestTurn, responseTurnId } from '../../shared/chronology.js';
 import { getConfig } from '../config.js';
 import { logInfo, logWarn } from '../logger.js';
 import { redactCredentialText } from '../redaction.js';
@@ -1287,6 +1288,19 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
     const evidence = input.evidence ?? currentCall()?.evidence ?? emptyEvidence();
     const sessionId = await targetSession(target);
     if (!sessionId) return null;
+    if (target.attribution === 'request_id' && target.conversationId && input.requestId) {
+      const stored = await getSession(sessionId);
+      const owner = recordedRequestTurn(stored?.requestTurns, input.requestId, target.conversationId);
+      // The request keeps its recorded generation after completion, reload, and a
+      // newer user turn. A current live turn is only used for a previously unseen request.
+      // Preserve the second document's observation long enough for the store to
+      // record their exact same-request relation. A later question/ended response
+      // still cannot steal this request from its original owner.
+      if (owner !== undefined && !(owner && target.turnId &&
+          overlappingRequestTurns(stored?.timelineTurns, owner.turnId, target.turnId, stored?.requestTurns, input.requestId))) {
+        target = { ...target, turnId: owner?.turnId ?? null };
+      }
+    }
     // A proven request can outlive the swarm object and even the worker tab that issued it.
     // Request-id correlation still recovers the exact old conversation/session in that case,
     // but the live broker can no longer answer `agentForCaller()`. Worker origin is already
@@ -1406,7 +1420,8 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
       target.conversationId,
       input.requestId ?? null,
       input.startedAt,
-      eventAgent
+      eventAgent,
+      target.turnId
     ));
     notifyChanged();
     try {
@@ -1479,18 +1494,19 @@ async function reopenFalselyEndedTurn(
   conversationId: string | null,
   requestId: string | null,
   startedAt: number,
-  agent: string | null
+  agent: string | null,
+  callTurnId: string | null
 ): Promise<string | null> {
   if (!conversationId || !requestId) return null;
   const live = conversations.get(conversationId);
   if (!live || live.sessionId !== sessionId) return null;
-  const failed = await reopenThinkingFailure(sessionId, live, startedAt);
+  const failed = await reopenThinkingFailure(sessionId, live, startedAt, callTurnId ?? undefined);
   if (failed) {
     live.turnRequestIds.add(requestId);
     return failed;
   }
   if (live.turnStartedAt !== null) {
-    live.turnRequestIds.add(requestId);
+    if (callTurnId === live.turnId) live.turnRequestIds.add(requestId);
     return null;
   }
   const ended = live.endedTurn;
@@ -2053,9 +2069,13 @@ async function recordChatObservationsNow(
         const workingActivity = written.contentChanged && state !== 'final' && item.activeNow === true &&
           (!canonicalTurn || canonicalTurn === live?.turnId || resumedUncertainTurn) &&
           !(live?.turnStartedAt === null && (live.lastTurnOutcome === 'stopped' || live.lastTurnOutcome === 'completed'));
-        if (state === 'final' && written.event.kind === 'assistant_message' && canonicalTurn && recoverableTurns.has(canonicalTurn) &&
-            !explicitEnds.has(canonicalTurn) && live?.turnId === canonicalTurn) {
-          recoveredFinal = { turnId: canonicalTurn, time: item.time,
+        const turns = state === 'final' && canonicalTurn && live?.turnId && live.turnId !== canonicalTurn && written.event.kind === 'assistant_message' &&
+          written.event.providerMessageId ? (await getSession(sessionId))?.timelineTurns : undefined;
+        const finishingTurn = canonicalTurn && live?.turnId && (canonicalTurn === live.turnId ||
+          (turns && responseTurnId(turns, canonicalTurn) === responseTurnId(turns, live.turnId))) ? live.turnId : null;
+        if (state === 'final' && written.event.kind === 'assistant_message' && finishingTurn && recoverableTurns.has(finishingTurn) &&
+            !explicitEnds.has(finishingTurn)) {
+          recoveredFinal = { turnId: finishingTurn, time: item.time,
             seq: written.event.finalContentSeq ?? written.event.origin ?? written.event.seq,
             origin: written.event.origin ?? written.event.seq, native: Boolean(written.event.providerMessageId) };
         }
@@ -2165,6 +2185,8 @@ async function recordChatObservationsNow(
           live.turnRequestIds = new Set<string>();
           live.endedTurn = null;
         }
+        // An accepted start can wake a reported worker; a later first capture of
+        // its old interim cannot. Replayed starts never reach this point.
         activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time);
         activity.working = true;
         break;

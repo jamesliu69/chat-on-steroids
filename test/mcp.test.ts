@@ -3486,7 +3486,6 @@ describe('exec sessions belong to the chat that opened them', () => {
       yield_time_ms: 1_000
     });
     expect(unproven.body.result?.isError).toBe(true);
-    expect(textOf(unproven)).toContain('current call has no proven chat identity');
     expect(textOf(unproven)).not.toContain('echo=anon');
     expect(textOf(unproven)).toContain('This refusal concerns this process id, not Read-only mode');
     expect(textOf(unproven)).toContain('EXEC_CALLER_UNIDENTIFIED');

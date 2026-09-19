@@ -62,7 +62,7 @@ beforeEach(async () => {
   await writeDurableNow('session-input', []);
   await writeDurableNow('plugin-refresh', []);
   goal.resetGoalStateForTests(); input.resetInputForTests(); pushed.mockClear();
-  await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, enabled: false } });
+  await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, autoContinue: false }, goal: { ...defaultConfig().goal, enabled: false } });
 });
 it.each([false, true])('retires Goal only when queued input commits its exact source, including restored aliases (%s)', async alias => {
   const store = await import('../src/main/session/store.js');
@@ -391,7 +391,7 @@ async function refreshFailedView(conversationId: string, advance: (ms: number) =
   const listenMs = session.selectedModel?.model === 'gpt-6-pro' ? 300_000 : 60_000;
   advance(listenMs - 1);
   const pending = await input.pendingBrowserInputs();
-  expect(pending.some(row => row.conversationId === conversationId)).toBe(false);
+  expect(pending.some(row => row.conversationId === conversationId && !row.recovery)).toBe(false);
   advance(1);
 }
 
@@ -574,7 +574,8 @@ describe.each(['input', 'loop'] as const)('MCP admission for %s recovery', desti
           expect(!!(await post('/input/claim', { id: row.id, owner: 'page', conversationId, requiresAuthorization: true })).body.input).toBe(eligible);
         } else {
           goal.restoreGoalReplies(goal.snapshotGoalReplies());
-          expect(goal.goalPendingReplyFor(conversationId) !== null).toBe(eligible);
+          expect(goal.goalPendingReplyFor(conversationId)).toBeNull();
+          expect((await input.listInputs()).some(item => item.sessionId === session.id && item.recovery && item.state === 'queued')).toBe(eligible);
         }
       } finally { clock.mockRestore(); }
     });
@@ -657,20 +658,17 @@ it.each(['gpt-6-pro', 'gpt-5.6-sol'])('preserves failed prime recovery while ano
       { kind: 'turn_end', turnId: 'prime-failed-view', outcome: 'failed', reason: 'thinking_failed', time: now }
     ] });
     await refreshFailedView(conversationId, ms => { now += ms; });
-    const pending = goal.goalPendingReplyFor(conversationId)!;
-    expect(pending).toMatchObject({ silenceSourceTurnId: 'prime-failed-view' });
+    const pending = (await input.listInputs()).find(row => row.conversationId === conversationId && row.recovery)!;
+    expect(pending).toMatchObject({ state: 'queued', silenceBoundary: { turnId: 'prime-failed-view' } });
+    expect(goal.goalPendingReplyFor(conversationId)).toBeNull();
     expect(calls.runningToolCalls(worker)).toBe(1);
     expect(calls.runningToolCalls(conversationId)).toBe(0);
     now += 2 * 60_000;
     await bridge.sweepStaleSwarm(now);
-    goal.restoreGoalReplies(goal.snapshotGoalReplies());
-    expect(goal.goalPendingReplyFor(conversationId)).toEqual(pending);
-    const drafted = await post('/goal/draft', { conversationId, turnId: pending.turnId, terminalRequired: true, clientId: 'prime-page' });
-    expect(drafted.status, JSON.stringify(drafted.body)).toBe(200);
-    expect(goal.goalPendingReplyFor(conversationId)).toEqual(pending);
+    expect((await input.claimBrowserInput(pending.id, 'prime-page', conversationId, true))?.id).toBe(pending.id);
+    expect(await input.authorizeBrowserInput(pending.id, 'prime-page', conversationId)).toBe(true);
     release(); await running;
-    await bridge.sweepStaleSwarm(now);
-    expect(goal.goalPendingReplyFor(conversationId)).toEqual(pending);
+    expect(goal.goalPendingReplyFor(conversationId)).toBeNull();
   } finally { release(); await running; clock.mockRestore(); }
 });
 
@@ -718,7 +716,7 @@ it.each([false, true])('normal queued recovery uses two minutes plus one minute 
   try {
     const conversationId = randomUUID();
     const session = await createSession({ title: 'Normal queued recovery', conversationId });
-    await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, enabled } });
+    await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, autoContinue: false }, goal: { ...defaultConfig().goal, enabled } });
     if (enabled) await goal.setGoalSwitchNow(conversationId, 'goal', true);
     await post('/events', { conversationId, events: [
       { kind: 'model_selection', model: 'gpt-5.6-sol', reasoningEffort: 'high', time: now },

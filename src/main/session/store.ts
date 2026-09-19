@@ -35,8 +35,9 @@ import type {
   SessionSummary,
   StoredText
 } from '../../shared/session.js';
-import { CONTINUATION_MARKER, eventTokens, MAX_TOOL_RESULT_TOKENS, normalizedToolOutcome, storedTextTokens, workSequence } from '../../shared/session.js';
-import { chronological, positionOf } from '../../shared/chronology.js';
+import { continuationMarkerOf, eventTokens, MAX_TOOL_RESULT_TOKENS, normalizedToolOutcome, storedTextTokens, workSequence } from '../../shared/session.js';
+import { applyTurnIdentity, chronological, injectedUserMessage, positionOf, projectTimeline,
+  recordedRequestTurn, responseTurnId, type Chronological, type TimelineTurns } from '../../shared/chronology.js';
 import { automaticTitle, firstTitleMessage, legacyContextTitle, refreshUserTitle } from './title.js';
 import { agentPlanSchema, agentPlanUpdateSchema, MAX_AGENT_PLAN_BYTES, type AgentPlan, type AgentPlanUpdate } from '../../shared/agent-plan.js';
 import { getConfig } from '../config.js';
@@ -258,6 +259,9 @@ function emptySummary(id: string, title: string, conversationId: string | null):
     updatedAt: now,
     endedAt: null,
     events: 0,
+    timelineTurns: {},
+    nativeQuestion: null,
+    requestTurns: {},
     userMessages: 0,
     toolCalls: 0,
     lastToolCallAt: null,
@@ -611,6 +615,17 @@ async function rebuildSummaryFromHistory(
   let sawProjected = false;
   let historicalReturnReduction = 0;
   const canonicalKeys = new Set(messages.keys());
+  // Canonical shards are applied after the journal for token accounting. Response identity
+  // instead follows original authored order; retain only the small identity fields here.
+  const identities: Chronological[] = [];
+  const collectIdentity = (event: SessionEvent): void => {
+    if (!['user_message', 'turn_start', 'turn_end', 'tool_call'].includes(event.kind)) return;
+    identities.push({ seq: event.seq, origin: positionOf(event), time: event.time, kind: event.kind,
+      source: event.source, turnId: event.turnId,
+      ...(event.kind === 'user_message' ? { messageId: event.messageId, inputId: event.inputId } : {}),
+      ...(event.kind === 'tool_call' ? { call: { requestId: event.call.requestId,
+        conversationId: event.call.conversationId, attribution: event.call.attribution } } : {}) });
+  };
   let carry = Buffer.alloc(0);
   const handle = await fs.open(path.join(sessionDir(id), 'events.jsonl'), 'r').catch(() => null);
   const accept = (line: Buffer): void => {
@@ -643,6 +658,7 @@ async function rebuildSummaryFromHistory(
         historicalReturnReduction += Math.max(0, storedTextTokens(event.call.result) - MAX_TOOL_RESULT_TOKENS);
       }
       applyToSummary(rebuilt, event);
+      collectIdentity(event);
       sawProjected = true;
     } catch {
       // A torn or corrupt line costs that line, not the complete session projection.
@@ -678,17 +694,24 @@ async function rebuildSummaryFromHistory(
       rebuilt.updatedAt = message.time;
     }
     applyToSummary(rebuilt, message);
+    collectIdentity(message);
     sawProjected = true;
   }
   if (!sawProjected) {
     throw new Error(`Session ${id} has no recoverable metadata or history`);
   }
 
+  rebuilt.timelineTurns = {}; rebuilt.requestTurns = {}; rebuilt.nativeQuestion = null;
+  for (const event of identities.sort((a, b) => positionOf(a) - positionOf(b))) applyTurnIdentity(rebuilt, event);
+
   const summary = checkpoint
     ? {
         ...checkpoint,
         updatedAt: Math.max(checkpoint.updatedAt, rebuilt.updatedAt),
         events: rebuilt.events,
+        timelineTurns: rebuilt.timelineTurns,
+        requestTurns: rebuilt.requestTurns,
+        nativeQuestion: rebuilt.nativeQuestion,
         userMessages: rebuilt.userMessages,
         toolCalls: rebuilt.toolCalls,
         lastToolCallAt: rebuilt.lastToolCallAt,
@@ -748,6 +771,9 @@ async function readDurableSnapshot(id: string): Promise<DurableSessionSnapshot |
       (!aliasesCollapsed || checkpoint.canonicalProjectionCurrent) &&
       !checkpoint.outcomeCountersMissing &&
       !checkpoint.activityBoundaryMissing &&
+      checkpoint.summary.timelineTurns !== undefined &&
+      checkpoint.summary.requestTurns !== undefined &&
+      checkpoint.summary.nativeQuestion !== undefined &&
       checkpoint.summary.finishTurn !== undefined
     ) {
       // A successful no-op migration is still a completed migration. Without this stamp,
@@ -761,6 +787,9 @@ async function readDurableSnapshot(id: string): Promise<DurableSessionSnapshot |
       const summary = {
         ...checkpoint.summary,
         ...(checkpoint.outcomeCountersMissing ? { errors: 0 } : {}),
+        timelineTurns: {},
+        nativeQuestion: null,
+        requestTurns: {},
         lastToolCallAt: null,
         lastAssistantFinalAt: null,
         lastTurnEndAt: null,
@@ -846,6 +875,7 @@ function noteFinishWork(summary: SessionSummary, event: SessionEvent): void {
 }
 
 function applyToSummary(summary: SessionSummary, event: SessionEvent): void {
+  applyTurnIdentity(summary, event);
   summary.events += 1;
   // Never backwards. A tool call is written once the app knows which chat it belongs to,
   // which can be after the page has already reported the end of the turn it ran in, and
@@ -1280,6 +1310,7 @@ export async function readEvents(sessionId: string, options: ReadOptions = {}): 
   // /activity is an incremental feed. Canonical messages use their latest revision seq for
   // the cursor while preserving their first-appearance time/origin for chronology.
   const active = open.get(sessionId);
+  const timeline = active?.summary ?? (await readDurableSnapshot(sessionId))?.summary;
   if (options.from !== undefined && active) {
     if (from >= active.nextSeq) return [];
     const cacheFloor = active.tailFrom;
@@ -1294,7 +1325,7 @@ export async function readEvents(sessionId: string, options: ReadOptions = {}): 
       // presentation chronology inside that bounded page; otherwise chronology may move a later
       // row ahead of an earlier seq at the slice boundary and advancing the cursor would skip it.
       const page = cached.sort((left, right) => left.seq - right.seq).slice(0, limit);
-      return chronological(page);
+      return chronological(projectTimeline(page, timeline?.timelineTurns, timeline?.requestTurns));
     }
   }
   let raw: string;
@@ -1345,9 +1376,9 @@ export async function readEvents(sessionId: string, options: ReadOptions = {}): 
   // transcript order everywhere.
   if (options.from !== undefined) {
     const page = out.sort((left, right) => left.seq - right.seq).slice(0, limit);
-    return chronological(page);
+    return chronological(projectTimeline(page, timeline?.timelineTurns, timeline?.requestTurns));
   }
-  return chronological(out).slice(0, limit);
+  return chronological(projectTimeline(out, timeline?.timelineTurns, timeline?.requestTurns)).slice(0, limit);
 }
 
 /**
@@ -1371,20 +1402,19 @@ export async function readRecentEvents(
 
 /** The latest authored question. A recovery source excludes its injected corrections,
  * which have no native user bubble and cannot grant another error reload. */
-export async function readLatestUserMessage(sessionId: string, turnId?: string | null): Promise<Extract<SessionEvent, { kind: 'user_message' }> | undefined> {
+export async function readLatestUserMessage(sessionId: string, _turnId?: string | null): Promise<Extract<SessionEvent, { kind: 'user_message' }> | undefined> {
   assertSessionId(sessionId);
   await flushSession(sessionId);
-  const [message] = await readRecentEventsFromDisk(sessionId, 1, {
-    kinds: ['user_message'],
-    orderByOrigin: true,
-    ...(turnId ? { before: Number.POSITIVE_INFINITY, acceptEvent: (event: SessionEvent) => !isTurnCorrection(event, turnId) } : {})
-  });
+  const summary = await readAuthoritativeSummary(sessionId);
+  const [message] = await readRecentEventsFromDisk(sessionId, 1, { kinds: ['user_message'], orderByOrigin: true,
+    before: Number.POSITIVE_INFINITY, acceptEvent: (event: SessionEvent) => !injectedUserMessage(event, summary?.timelineTurns) });
   return message?.kind === 'user_message' ? message : undefined;
 }
 
 /** An injected instruction belongs to its existing generation, even after native reconciliation. */
-function isTurnCorrection(event: SessionEvent, turnId?: string | null): boolean {
-  return event.kind === 'user_message' && !!event.inputId && !!turnId && event.turnId === turnId;
+function isTurnCorrection(event: SessionEvent, turnId?: string | null, turns?: TimelineTurns): boolean {
+  return injectedUserMessage(event, turns) && !!turnId && !!event.turnId &&
+    responseTurnId(turns, event.turnId) === responseTurnId(turns, turnId);
 }
 
 /** Latest lifecycle boundary for one recovery source. Injected same-turn instructions do not replace it. */
@@ -1396,12 +1426,68 @@ export async function readRecoveryBoundary(sessionId: string, turnId?: string | 
       kinds: ['turn_start', 'turn_end', 'user_message'],
       orderByOrigin: true,
       before: Number.POSITIVE_INFINITY,
-      acceptEvent: event => !isTurnCorrection(event, turnId)
+      acceptEvent: event => !isTurnCorrection(event, turnId, entry.summary.timelineTurns)
     });
     return boundary;
   });
 }
 
+/** Canonical completion evidence shared by activity retirement and input eligibility.
+ * No turn is manufactured: an unowned reply must follow the latest recorded question.
+ * Committed history and binding changes invalidate the snapshot. Unrelated reads
+ * replacing a queue promise do not make a known final into an unfinished response. */
+export async function readCompletedFinal(sessionId: string, conversationId: string, turnId?: string | null): Promise<{
+  messageId: string; turnId: string | null; completedAt: number; contentSeq: number; text: string;
+} | null> {
+  const entry = await ensureOpen(sessionId);
+  await flushSession(sessionId);
+  const revision = entry.nextSeq;
+  if (entry.summary.conversationId !== conversationId) return null;
+  const [recent, questions] = await Promise.all([
+    readRecentEventsFromDisk(sessionId, 256, { kinds: ['turn_start', 'turn_end', 'user_message', 'assistant_message', 'tool_call', 'page_tool'] }),
+    readRecentEventsFromDisk(sessionId, 1, { kinds: ['user_message'], orderByOrigin: true,
+      before: Infinity, acceptEvent: event => !injectedUserMessage(event, entry.summary.timelineTurns) })
+  ]);
+  if (entry.nextSeq !== revision || entry.summary.conversationId !== conversationId) return null;
+  const sameTurn = (left: string | null | undefined, right: string | null | undefined) => !!left && !!right &&
+    responseTurnId(entry.summary.timelineTurns, left) === responseTurnId(entry.summary.timelineTurns, right);
+  const final = recent.findLast(event => event.kind === 'assistant_message' && event.final === true &&
+    (!!event.message.text.trim() || !!event.providerMessageId) && !!event.messageId && (!turnId || event.turnId === turnId ||
+      (!!event.providerMessageId && sameTurn(event.turnId, turnId)) ||
+      (turnId.startsWith('reply:') && event.messageId === turnId.slice(6))));
+  if (!final || final.kind !== 'assistant_message' || !final.messageId) return null;
+  const seq = final.finalContentSeq ?? positionOf(final);
+  const completedAt = final.finalObservedAt ?? final.time;
+  const question = questions[0];
+  const correction = (event: SessionEvent) => isTurnCorrection(event, final.turnId, entry.summary.timelineTurns) && positionOf(event) < seq;
+  if (question && positionOf(question) >= positionOf(final) && !correction(question)) return null;
+  // With no generation identity, require an actual preceding authored boundary.
+  if (!final.turnId && (!question || question.time > final.time)) return null;
+  if (entry.summary.activeTurnId && !sameTurn(entry.summary.activeTurnId, final.turnId)) return null;
+  const boundaries = recent.filter(event => event.kind === 'turn_start' || event.kind === 'turn_end').sort((a, b) => a.seq - b.seq);
+  const last = boundaries.at(-1), prior = boundaries.at(-2);
+  const nativeReopen = !!final.providerMessageId && last?.kind === 'turn_start' && last.source === 'app' &&
+    last.turnId === final.turnId && prior?.kind === 'turn_end' && prior.turnId === final.turnId && prior.outcome === 'completed';
+  if (recent.some(event => {
+    if (event === final || workSequence(event) <= seq) return false;
+    if (event.kind === 'tool_call') {
+      if (event.time <= completedAt) return false;
+      // A public native final settles its request even when Pro delivers another
+      // connector call afterwards. Require proof recorded BEFORE that final; a new
+      // request or conflicting generation is fresh work, not a trailing result.
+      const owner = event.source === 'mcp' && event.call.attribution === 'request_id'
+        ? recordedRequestTurn(entry.summary.requestTurns, event.call.requestId, conversationId) : undefined;
+      return !(final.providerMessageId && final.state === 'final' && owner && owner.origin < seq &&
+        sameTurn(owner.turnId, final.turnId) && event.call.conversationId === conversationId &&
+        (!event.turnId || sameTurn(event.turnId, final.turnId)));
+    }
+    if (event.kind === 'turn_end') return !sameTurn(event.turnId, final.turnId) || event.outcome !== 'completed';
+    if (event.kind === 'turn_start') return !(nativeReopen && event === last);
+    if (event.kind === 'user_message') return !correction(event);
+    return event.kind === 'assistant_message' || event.kind === 'page_tool';
+  })) return null;
+  return { messageId: final.messageId, turnId: final.turnId ?? null, completedAt, contentSeq: seq, text: final.message.text };
+}
 /** Recorded local execution, not a native tool label or a request-id sighting alone. */
 export async function turnHasMcpCall(sessionId: string, conversationId: string, turnId: string): Promise<boolean> {
   assertSessionId(sessionId);
@@ -1543,7 +1629,8 @@ async function readRecentEventsFromDisk(
   candidates.sort((left, right) => sequence(left) - sequence(right));
   const selected = candidates.slice(Math.max(0, candidates.length - cap));
   if (damaged > 0) logWarn(`session ${sessionId}: skipped ${damaged} unreadable recent event line(s)`);
-  return chronological(selected);
+  const timeline = active?.summary ?? (await readDurableSnapshot(sessionId))?.summary;
+  return chronological(projectTimeline(selected, timeline?.timelineTurns, timeline?.requestTurns));
 }
 
 /** Browser projection joins committed writes without forcing the debounced metadata to disk.
@@ -1578,11 +1665,11 @@ export async function readActivityEvents(sessionId: string, since: number, limit
       if (event.kind !== 'user_message') continue;
       const position = event.origin ?? event.seq;
       if (!openingUserMessage || position < (openingUserMessage.origin ?? openingUserMessage.seq)) openingUserMessage = event;
-      if (CONTINUATION_MARKER.exec(event.message.text)?.[1] === 'RESUME' &&
+      if (continuationMarkerOf(event.message.text)?.kind === 'RESUME' &&
           (!resumeUserMessage || position > (resumeUserMessage.origin ?? resumeUserMessage.seq))) resumeUserMessage = event;
     }
     const resumeBoundary = resumeUserMessage ? resumeUserMessage.origin ?? resumeUserMessage.seq : 0;
-    return { events: chronological(selected), reset: reset || (cursor === 0 && candidates.length > cap), resumeBoundary,
+    return { events: chronological(projectTimeline(selected, entry.summary.timelineTurns, entry.summary.requestTurns)), reset: reset || (cursor === 0 && candidates.length > cap), resumeBoundary,
       openingUserMessage, resumeUserMessage };
   });
 }
@@ -1664,6 +1751,7 @@ export async function rewriteUnattributedToolCalls(
       ...entry.summary,
       updatedAt: entry.summary.startedAt,
       events: 0,
+      requestTurns: {},
       userMessages: 0,
       toolCalls: 0,
       lastToolCallAt: null,

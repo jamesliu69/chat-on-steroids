@@ -4,20 +4,20 @@ import { REASONING_EFFORTS, workSequence } from '../../shared/session.js';
  * Tool delivery repeats under a stable message id until a later request proves receipt.
  */
 import { z } from 'zod';
-import { browserInputModel, type InputImage } from '../../shared/input.js';
+import { browserInputModel, manualInput, queuedFollowup, MAX_INPUT_IMAGES, type InputImage } from '../../shared/input.js';
 import type { SessionSummary } from '../../shared/session.js';
 import { getConfig } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import { userTitle } from './title.js';
 import { readDurable, writeDurableNow, writeDurableSoon } from '../durable.js';
-import { getSession, findSessionByConversation, createSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, turnHasMcpCall, sessionDirectoryMissing } from './store.js';
+import { getSession, findSessionByConversation, createSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, turnHasMcpCall, sessionDirectoryMissing, readCompletedFinal, readLatestUserMessage } from './store.js';
 import { assignSessionProject, projectWorkspace, getSessionProject } from '../projects.js';
 import { isChatBlocked } from './blocked-chats.js';
 import { wakeBrowserWork } from '../browser-wake.js';
 import { logInfo } from '../logger.js';
 import { noteChatOrigin } from './recorder.js';
 import { isAstraModel, isProModel } from '../../shared/chat-models.js';
-import { recoveryBusyMs } from '../../shared/recovery.js';
+import { recoveryMessage, recoveryBusyMs } from '../../shared/recovery.js';
 import { inFlightToolCalls } from '../mcp/call-context.js';
 import { automaticFinishEnabled, consumeGoalReplyForInputNow } from '../goal.js';
 import { finishInstruction } from '../../shared/finish.js';
@@ -31,7 +31,7 @@ export const inputArgs = z.object({
   loopAfterTurn: z.boolean().optional(),
   objective: z.string().trim().max(16000).optional(),
   stages: z.array(z.string().trim().min(1).max(16000)).max(11).optional(),
-  images: z.array(z.object({ name: z.string().min(1).max(110), dataUrl: z.string().max(512100).regex(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/) })).max(4).optional(),
+  images: z.array(z.object({ name: z.string().min(1).max(110), dataUrl: z.string().max(512100).regex(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/) })).max(MAX_INPUT_IMAGES).optional(),
   attachments: z.array(attachmentSchema).max(20).optional(),
   attachmentDelivery: z.literal('tool').optional(),
   id: z.string().uuid(),
@@ -49,6 +49,8 @@ const entrySchema = inputArgs.extend({
   toolImages: inputArgs.shape.images,
   /** One after-turn pickup earned by confirmed silence or settled Thinking failed. */
   silenceBoundary: z.object({ turnId: z.string().min(1).max(256), conversationId: z.string().min(1).max(256), workSeq: z.number().int().nonnegative(), acceptedAt: z.number().nonnegative().optional(), listenUntil: z.number().nonnegative().optional(), nativeBusy: z.boolean().optional() }).optional(),
+  /** Shared unfinished-response fallback belongs to this question in every mode. */
+  recovery: z.object({ questionId: z.string(), episode: z.string().max(200).optional(), pro: z.boolean(), busyUntil: z.number(), phase: z.enum(['ready', 'stopping', 'reloading', 'resumed']), reloadOwner: z.string().optional() }).optional(),
   /** Exact tool-free turn this explicit browser correction may interrupt. */
   directTurn: z.object({ id: z.string().min(1).max(256), startedAt: z.number() }).optional(),
   finishOwner: z.object({ turnId: z.string().min(1).max(256), periodic: z.boolean(), userRequested: z.boolean().optional() }).optional(),
@@ -91,6 +93,7 @@ export interface ToolInputBatch {
 }
 export interface InputActivity { possible: boolean; exact: boolean; model?: 'pro' | 'other' | 'unknown'; turnId?: string }
 type InputDeliveryHooks = {
+  recoveryAllowed?: (sessionId: string, conversationId: string) => boolean;
   activity?: (session: SessionSummary) => InputActivity;
   wakeDecision?: (entry: Readonly<InputEntry>, signal: AbortSignal) => Promise<void>;
   bindHelper?: (conversationId: string, sourceSessionId: string | null) => Promise<void>;
@@ -125,13 +128,21 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
   const injectionTurnId = canInject ? session.activeTurnId ?? (activity.turnId === end?.turnId ? activity.turnId ?? null : null) : null;
   const astra = session.origin?.kind !== 'worker' && session.origin?.kind !== 'helper' &&
     session.selectedModel?.conversationId === session.conversationId && isAstraModel(session.selectedModel.model, session.selectedModel.reasoningEffort);
+  const completed = !session.activeTurnId
+    ? await readCompletedFinal(sessionId, session.conversationId) : null;
+  const current = await getSession(sessionId);
+  if (current?.conversationId !== session.conversationId || current?.activeTurnId !== session.activeTurnId)
+    return { queueAtFinish: false, canInject: false, injectionTurnId: null, directTurn: null, browserAllowed: false, settled: false };
   const terminal = end?.kind === 'turn_end' && !!end.turnId && end.outcome !== 'unknown';
-  const settled = terminal && ((end.outcome === 'completed' && !activity.possible && !activity.exact) ||
-    (end.outcome === 'failed' && end.reason === 'thinking_failed'));
+  const settled = (terminal && ((end.outcome === 'completed' && !activity.possible && !activity.exact) ||
+    (end.outcome === 'failed' && end.reason === 'thinking_failed'))) ||
+    (!astra && !!completed && !activity.possible && !activity.exact);
   const executing = inFlightToolCalls(session.conversationId) > 0;
   return { canInject, injectionTurnId, directTurn, queueAtFinish: astra && canInject && getConfig().ui.finishTool === true,
     browserAllowed: !session.activeTurnId && !activity.possible && !activity.exact && !executing && (!astra || terminal),
-    settled: settled && !executing && (session.lastToolCallAt ?? 0) <= end.time };
+    // Completion already reconciles trailing same-request calls. A separate time
+    // comparison would leave the composer unsettled after the activity clock stopped.
+    settled: settled && !executing && (!!completed || (session.lastToolCallAt ?? 0) <= (end?.time ?? 0)) };
 }
 async function browserInputAllowed(entry: InputEntry): Promise<boolean> {
   if (entry.attachmentDelivery === 'tool') return false;
@@ -200,9 +211,6 @@ const needsHistory = (row: InputEntry): boolean => row.purpose !== 'decision' &&
 const pendingStages = (row: InputEntry): boolean => row.state === 'sent' && !!row.stages?.length && !row.stagesApplied;
 const ordered = (rows: InputEntry[]): InputEntry[] => [...rows].sort((a, b) =>
   (a.queueOrder ?? a.dueAt) - (b.queueOrder ?? b.dueAt) || a.createdAt - b.createdAt);
-// Native files convert Auto to after-turn for transport, but retain the user's
-// immediate correction intent. They remain browser-only, never tool attachments.
-const manualInput = (row: InputEntry): boolean => (row.requestedMode ?? row.mode) === 'auto' && !row.finishOwner && row.purpose !== 'decision' && row.attachmentDelivery !== 'tool';
 const companionOf = (rows: InputEntry[], row: InputEntry): InputEntry | undefined => rows.find(root => root.companionInputId === row.id);
 const sameDelivery = (root: InputEntry, row: InputEntry): boolean => row.id === root.id || row.id === root.companionInputId;
 function combinedInput(root: InputEntry, companion?: InputEntry): InputEntry {
@@ -287,6 +295,8 @@ async function retireRemovedSessionReceipts(current: InputEntry[], pendingOnly =
 async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
   const next = await Promise.all(current.map(async (row): Promise<InputEntry> => {
     if (companionOf(current, row)) return row;
+    if (row.recovery && !terminal(row) && row.sendAuthorizedAt === undefined && !await recoveryCurrent(row))
+      return { ...row, state: 'cancelled', error: 'Automatic Continue cancelled: the source turn, activity or setting changed.' };
     if (row.finishOwner && !terminal(row) && !(await finishInputCurrent(row)))
       return { ...row, state: 'cancelled', error: 'Automatic follow-up cancelled because its active turn or setting changed.' };
     if (row.purpose === 'decision') return row;
@@ -300,10 +310,12 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // Native preparation bounds include the 60s upload and 15s picker hydration.
     // Once Send is authorized, its 30s receipt + 15s fresh-route wait are the entire tail.
     const companion = current.find(other => other.id === row.companionInputId);
-    if (row.state === 'browser' && Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) >= (row.sendAuthorizedAt === undefined ? (row.attachments?.length || companion?.attachments?.length ? 720_000 : row.images?.length || companion?.images?.length ? 120_000 : 60_000) : 45_000))
+    if (row.state === 'browser' && Date.now() - (row.sendAuthorizedAt ?? row.offeredAt ?? row.createdAt) >= (row.sendAuthorizedAt === undefined ? (row.attachments?.length || companion?.attachments?.length ? 720_000 : row.images?.length || companion?.images?.length ? 120_000 : 60_000) : 45_000)) {
+      if (row.recovery && row.sendAuthorizedAt === undefined) return releaseRecoveryClaim(row);
       return { ...row, state: 'cancelled', error: row.requiresAuthorization && row.sendAuthorizedAt === undefined
         ? 'Not sent: browser preparation timed out. This attempt was cancelled.'
         : 'Stopped waiting for delivery confirmation. The message may already have been sent; it will not be resent.' };
+    }
     return row;
   }));
   for (let i = 0; i < next.length; i++) {
@@ -369,8 +381,6 @@ async function prepare(entry: InputEntry, suffix = ''): Promise<InputEntry> {
     throw new Error('Prepared message exceeds the delivery limit; shorten the request or plan');
   return { ...entry, deliveryText };
 }
-/** Explicit follow-ups spend one verified completed turn; each transport elects its eligible FIFO. */
-const queuedFollowup = (row: InputEntry): boolean => !manualInput(row) && (row.mode === 'finish' || (row.mode === 'after-turn' && !!row.sessionId && row.purpose !== 'decision'));
 function append(current: InputEntry[], entry: InputEntry, stackDirect = false): InputEntry[] {
   if (queuedFollowup(entry)) {
     const positioned = current.filter(row => row.sessionId === entry.sessionId && queuedFollowup(row) && !terminal(row) && row.queueOrder !== undefined);
@@ -441,8 +451,8 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     let imageOwner: { conversationId: string; turnId: string } | undefined;
     if (input.attachmentDelivery === 'tool') {
       if (!input.sessionId || input.mode !== 'auto' || finishOwner || input.stages?.length || !policy?.canInject ||
-          (input.images?.length ?? 0) + (input.attachments?.length ?? 0) > 4)
-        throw new Error('Inject up to four images into an active chat; otherwise use Send or After this turn');
+          (input.images?.length ?? 0) + (input.attachments?.length ?? 0) > MAX_INPUT_IMAGES)
+        throw new Error(`Inject up to ${MAX_INPUT_IMAGES} images into an active chat; otherwise use Send or After this turn`);
       const owner = await getSession(input.sessionId);
       if (!policy.injectionTurnId || !owner?.conversationId) throw new Error('Inject images into an active chat');
       imageOwner = { conversationId: owner.conversationId, turnId: policy.injectionTurnId };
@@ -558,7 +568,7 @@ export function cancelInput(id: string): Promise<boolean> {
 export function reorderQueuedInputs(sessionId: string, ids: string[]): Promise<boolean> {
   return serial(async () => {
     const current = await load();
-    const queue = current.filter(row => row.sessionId === sessionId && queuedFollowup(row) && row.state === 'queued');
+    const queue = current.filter(row => row.sessionId === sessionId && queuedFollowup(row) && !row.recovery && row.state === 'queued');
     // A stale snapshot must not move claimed input or omit newly queued work.
     if (!ids.length || ids.length !== queue.length || new Set(ids).size !== ids.length ||
         queue.some(row => !ids.includes(row.id))) return false;
@@ -586,7 +596,7 @@ export function editQueuedInput(id: string, text: string, afterTurn?: boolean): 
   return serial(async () => {
     const value = inputArgs.shape.text.parse(text);
     const current = await load();
-    const row = current.find(entry => entry.id === id && entry.state === 'queued' && queuedFollowup(entry));
+    const row = current.find(entry => entry.id === id && entry.state === 'queued' && queuedFollowup(entry) && !entry.recovery);
     if (!row) return false;
     if (current.filter(entry => !terminal(entry)).reduce((sum, entry) => sum + Buffer.byteLength(entry === row ? value : entry.text), 0) > 1024000) throw new Error('Queued messages exceed the text limit');
     await commit(current.map(entry => entry === row ? { ...row, text: value, ...(afterTurn === undefined ? {} : { afterTurn }), deliveryText: undefined } : entry));
@@ -651,6 +661,9 @@ export function noteInputStartupError(id: string, error: string | null): Promise
 /** The same exact source boundary must still apply at claim and final Send authorization. */
 async function eligibleStageEnd(entry: InputEntry): Promise<string | null> {
   if (!entry.sessionId) return null;
+  if (entry.recovery) return await recoveryCurrent(entry) &&
+    ['ready', 'resumed'].includes(entry.recovery.phase) && (entry.silenceBoundary?.listenUntil ?? 0) <= Date.now()
+    ? entry.silenceBoundary!.turnId : null;
   const session = await getSession(entry.sessionId);
   if (!session || session.origin?.kind === 'worker') return null;
   const [end] = await readRecentEvents(entry.sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
@@ -758,6 +771,82 @@ export function finishNeedsBrowserInput(sessionId: string): Promise<boolean> {
   });
 }
 
+// Control-only turn_end observations (including our own Stop) are not renewed work.
+const RECOVERY_WORK_KINDS: import('../../shared/session.js').SessionEvent['kind'][] =
+  ['user_message', 'assistant_message', 'tool_call', 'page_tool', 'turn_start'];
+
+function releaseRecoveryClaim(row: InputEntry): InputEntry {
+  return { ...row, state: 'queued', owner: null, offeredAt: undefined, completedTurnId: undefined,
+    recovery: { ...row.recovery!, phase: row.recovery!.phase === 'ready' ? 'ready' : 'resumed' } };
+}
+
+async function recoveryCurrent(row: InputEntry): Promise<boolean> {
+  const boundary = row.silenceBoundary;
+  if (!row.recovery || !row.sessionId || !boundary || Date.now() - row.createdAt >= 12 * 60 * 60_000) return false;
+  const allowed = () => deliveryHooks?.recoveryAllowed?.(row.sessionId!, boundary.conversationId) === true &&
+    !isChatBlocked(boundary.conversationId) && inFlightToolCalls(boundary.conversationId) === 0;
+  if (!allowed()) return false;
+  const session = await getSession(row.sessionId);
+  if (!session || session.browserRecoveryDismissedAt !== undefined || session.conversationId !== boundary.conversationId ||
+      session.origin?.kind === 'worker' || session.origin?.kind === 'helper' ||
+      (session.activeTurnId && session.activeTurnId !== boundary.turnId) || session.finishTurn?.released) return false;
+  const [end] = await readRecentEvents(row.sessionId, 1, { kinds: ['turn_start', 'turn_end'] });
+  if (end?.turnId !== boundary.turnId || (end.kind === 'turn_end' && end.outcome === 'stopped')) return false;
+  if (!await turnHasMcpCall(row.sessionId, boundary.conversationId, boundary.turnId)) return false;
+  if (await readCompletedFinal(row.sessionId, boundary.conversationId)) return false;
+  const question = await readLatestUserMessage(row.sessionId, boundary.turnId);
+  const [work] = await readRecentEvents(row.sessionId, 1, { kinds: RECOVERY_WORK_KINDS });
+  return question?.messageId === row.recovery.questionId && !!work && workSequence(work) === boundary.workSeq &&
+    allowed() && (await getSession(row.sessionId))?.conversationId === boundary.conversationId;
+}
+
+/** Shared unfinished-response ticket; mode policy belongs to the bridge hook. */
+export function fileRecoveryInput(sessionId: string, conversationId: string, turnId: string, pro: boolean,
+  currentOwner: () => boolean, busyUntil = Date.now() + recoveryBusyMs(pro), episode = `turn:${turnId}`): Promise<boolean> {
+  return serial(async () => {
+    const current = await load();
+    // Never overtake authored input, retry an ambiguous send, or reuse a spent source.
+    if (current.some(row => row.sessionId === sessionId && !terminal(row))) return false;
+    const question = await readLatestUserMessage(sessionId, turnId);
+    const [work] = await readRecentEvents(sessionId, 1, { kinds: RECOVERY_WORK_KINDS });
+    if (!question?.messageId || !work || !currentOwner()) return false;
+    if (current.some(row => row.sessionId === sessionId && row.recovery && row.silenceBoundary?.turnId === turnId &&
+        (!row.recovery.episode || row.recovery.episode === episode || row.sendAuthorizedAt !== undefined))) return false;
+    const now = Date.now();
+    const row: InputEntry = { id: randomUUID(), sessionId, conversationId, owner: null, state: 'queued',
+      mode: 'after-turn', dueAt: now, createdAt: now, model: null, reasoningEffort: null,
+      text: recoveryMessage(),
+      recovery: { questionId: question.messageId, episode, pro, busyUntil, phase: 'ready' },
+      silenceBoundary: { turnId, conversationId, workSeq: workSequence(work), acceptedAt: now } };
+    if (!await recoveryCurrent(row) || !currentOwner()) return false;
+    await commit(append(current, row));
+    return true;
+  });
+}
+
+/** Stop consumes an exact durable claim once; the same document then sends.
+ * Only the shared pickup schedule may reload a ticket that remains uncollected. */
+export function advanceRecoveryInput(id: string, owner: string, conversationId: string,
+  action: 'stop' | 'stopped' | 'reloaded'): Promise<boolean> {
+  return serial(async () => {
+    const current = await load();
+    const row = current.find(entry => entry.id === id && entry.state === 'browser' && entry.owner === owner &&
+      entry.conversationId === conversationId && entry.sendAuthorizedAt === undefined);
+    if (!row?.recovery || !await recoveryCurrent(row)) return false;
+    const phase = row.recovery.phase;
+    if (action === 'stop' && (phase !== 'ready' || !row.silenceBoundary?.nativeBusy ||
+        (row.silenceBoundary.listenUntil ?? Infinity) > Date.now())) return false;
+    if (action === 'stopped' && phase !== 'stopping') return false;
+    if (action === 'reloaded' && phase !== 'reloading') return false;
+    const next: InputEntry = action === 'reloaded'
+      ? { ...row, state: 'queued', owner: null, offeredAt: undefined, completedTurnId: undefined,
+          deliveryText: undefined, recovery: { ...row.recovery, phase: 'resumed', reloadOwner: owner } }
+      : { ...row, recovery: { ...row.recovery, phase: action === 'stop' ? 'stopping' : 'resumed' } };
+    await commit(current.map(entry => entry === row ? next : entry));
+    return recoveryCurrent(next);
+  });
+}
+
 /** File on the existing outbox row, never in a parallel retry/ticket ledger. */
 export function fileSilenceInput(sessionId: string, conversationId: string, turnId: string, currentOwner: () => boolean, listenUntil?: number): Promise<boolean> {
   return serial(async () => {
@@ -777,6 +866,7 @@ export function fileSilenceInput(sessionId: string, conversationId: string, turn
     const candidates = ordered(current).filter(row => row.sessionId === sessionId && row.state === 'queued');
     const row = candidates.find(row => manualInput(row) && row.offeredAt === undefined && row.dueAt <= Date.now()) ?? candidates.find(queuedFollowup);
     if (!row || !queuedAfterTurn(row, session)) return false;
+    if (row.recovery) return true;
     const [work] = await readRecentEvents(sessionId, 1, { kinds: INPUT_WORK_KINDS });
     if (!work || !currentOwner()) return false;
     const previous = current.find(entry => entry.sessionId === sessionId && entry.silenceBoundary?.turnId === turnId)?.silenceBoundary;
@@ -809,15 +899,17 @@ export function deferSilenceInput(id: string, conversationId: string, turnId: st
       boundary = { conversationId, turnId, workSeq: workSequence(work), acceptedAt: Date.now() };
     }
     if (boundary.conversationId !== conversationId || boundary.turnId !== turnId) return false;
+    if (row.recovery && boundary.nativeBusy) return false;
     const pro = session?.selectedModel?.conversationId === conversationId &&
       isProModel(session.selectedModel.model, session.selectedModel.reasoningEffort);
     await commit(current.map(entry => entry === row ? { ...row,
-      silenceBoundary: { ...boundary!, listenUntil: Date.now() + recoveryBusyMs(pro), nativeBusy: true } } : entry));
+      silenceBoundary: { ...boundary!, listenUntil: row.recovery ? row.recovery.busyUntil : Date.now() + recoveryBusyMs(pro), nativeBusy: true } } : entry));
     return true;
   });
 }
 
 function withoutSilenceClaim(row: InputEntry, preserveBoundary = false): InputEntry {
+  if (row.recovery) return { ...row, state: 'cancelled', error: 'Automatic Continue cancelled by new activity.' };
   return { ...row, state: 'queued', owner: null, silenceBoundary: preserveBoundary ? row.silenceBoundary : undefined, completedTurnId: undefined,
     ...(manualInput(row) ? { transportIntent: 'tool' } : {}),
     companionInputId: undefined, offeredAt: undefined, sendAuthorizedAt: undefined, requiresAuthorization: undefined, deliveryText: undefined, error: undefined };
@@ -849,9 +941,9 @@ async function completedStageBoundary(entry: InputEntry, current: InputEntry[]):
       row.dueAt <= Date.now() && ['queued', 'browser', 'tool'].includes(row.state))) return null;
   return turnId;
 }
-export function pendingBrowserInputs(): Promise<Array<{ id: string; conversationId: string | null; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner' }>> {
+export function pendingBrowserInputs(): Promise<Array<{ id: string; conversationId: string | null; recovery?: { questionId: string; stop: boolean }; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner' }>> {
   return serial(async () => {
-    const result: Array<{ id: string; conversationId: string | null; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner' }> = [];
+    const result: Array<{ id: string; conversationId: string | null; recovery?: { questionId: string; stop: boolean }; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner' }> = [];
     const current = await load();
     for (const entry of ordered(current)) {
       if (companionOf(current, entry)) continue;
@@ -865,6 +957,7 @@ export function pendingBrowserInputs(): Promise<Array<{ id: string; conversation
         const silenceTurnId = entry.silenceBoundary?.turnId ?? (end?.kind === 'turn_end' && end.outcome === 'failed' &&
           end.reason === 'thinking_failed' && end.turnId && await eligibleStageEnd(entry) === end.turnId ? end.turnId : undefined);
         result.push({ id: entry.id, conversationId,
+          ...(entry.recovery ? { recovery: { questionId: entry.recovery.questionId, stop: entry.silenceBoundary?.nativeBusy === true && entry.recovery.phase === 'ready' } } : {}),
           ...(silenceTurnId ? { silenceTurnId } : {}),
           ...(entry.directTurn ? { directTurn: entry.directTurn } : {}),
           ...(entry.state === 'queued' && entry.purpose !== 'decision' && entry.sessionId && entry.conversationId && entry.conversationId !== conversationId
@@ -880,6 +973,8 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
     const current = await load();
     const entry = current.find((row) => row.id === id);
     if (!entry || !preparable(entry) || (entry.state === 'browser' && !requiresAuthorization) || entry.dueAt > Date.now() || !owner) return null;
+    if (entry.recovery && entry.state === 'browser' && entry.owner !== owner) return null;
+    if (entry.recovery?.reloadOwner === owner) return null;
     if (companionOf(current, entry)) return null;
     const completedTurnId = entry.state === 'browser' ? entry.completedTurnId : queuedFollowup(entry)
       ? await completedStageBoundary(entry, current) : manualInput(entry) ? await eligibleStageEnd(entry) : undefined;
@@ -1073,7 +1168,7 @@ export function offerToolInput(sessionId: string | null | undefined, conversatio
         const messageBytes = Buffer.byteLength(message) + (inputTaken ? 2 : 0);
         const reminderBytes = reminder ? Buffer.byteLength(reminder) + 2 : 0;
         const images = [...entry.images ?? [], ...entry.toolImages ?? []];
-        if (payloadBytes + messageBytes + reminderBytes > TOOL_INPUT_TEXT_BYTES || payloadImages + images.length > 4) { payloadFull = true; return entry; }
+        if (payloadBytes + messageBytes + reminderBytes > TOOL_INPUT_TEXT_BYTES || payloadImages + images.length > MAX_INPUT_IMAGES) { payloadFull = true; return entry; }
         payloadBytes += messageBytes;
         payloadImages += images.length;
         inputTaken = true;
@@ -1138,6 +1233,10 @@ export function failBrowserInput(id: string, owner: string, error: string): Prom
     const current = await load();
     const entry = current.find((row) => row.id === id && row.owner === owner && row.state === 'browser');
     if (!entry || companionOf(current, entry)) return false;
+    if (entry.recovery && entry.requiresAuthorization === true && entry.sendAuthorizedAt === undefined) {
+      await commit(current.map(row => row === entry ? releaseRecoveryClaim(row) : row));
+      return true;
+    }
     const pickupCancelled = !!(entry.silenceBoundary || entry.completedTurnId) && entry.requiresAuthorization === true &&
       entry.sendAuthorizedAt === undefined && error === 'After-turn pickup was withdrawn before Send.';
     // Losing a document before Send does not lose a still-valid refresh ticket.

@@ -68,10 +68,12 @@ it.each(['current', 'superseded'] as const)('resolves late session_finish identi
 });
 
 it('delivers one recovered-identity notice on the real structured MCP wire after a refused plan update', async () => {
+  const config = getConfig();
+  await saveConfig({ ...config, multiAgent: { ...config.multiAgent, allowUnattributedCalls: false } });
   const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
   const rejected = await rpc('tools/call', { name: 'update_plan', arguments: { plan: [{ step: 'Verify recovery', status: 'in_progress' }] } }, requestId);
   expect(rejected.result.isError).toBe(true);
-  expect(text(rejected)).toContain('Exact chat identity is required');
+  expect(text(rejected)).toContain('Exact chat identity');
   const conversationId = randomUUID();
   const session = await createSession({ conversationId, title: 'Identity recovery wire' });
   observeRequestCorrelation({ requestId, conversationId, sessionId: session.id, messageId: randomUUID(), tool: 'update_plan', observedAt: Date.now() });

@@ -1166,5 +1166,10 @@
   "Could not save this acknowledgement. Try again. {0}": "無法儲存這次確認。請再試一次。{0}",
   "A newer permission notice is still pending.": "仍有較新的權限提示待處理。",
   "Illustrative example. ChatGPT’s appearance may vary.": "示意圖。ChatGPT 的實際介面可能有所不同。",
-  "Illustrative ChatGPT tool approval showing Deny, Allow once, and Always allow": "ChatGPT 工具核准示意圖，顯示 Deny、Allow once 與 Always allow"
+  "Illustrative ChatGPT tool approval showing Deny, Allow once, and Always allow": "ChatGPT 工具核准示意圖，顯示 Deny、Allow once 與 Always allow",
+  "Automatic Continue": "自動繼續",
+  "Cancel automatic Continue": "取消自動繼續",
+  "Resumes without a final answer. If ChatGPT is still generating, the silent turn is stopped before Continue is sent.": "無需最終回答即可繼續。如果 ChatGPT 仍在生成，會先停止沒有進展的回合，再傳送繼續訊息。",
+  "Automatically continue interrupted responses": "自動繼續中斷的回覆",
+  "Recover unfinished answers, including in Goal and Loop. Reload after extended silence, then send Continue only while the same unfinished turn still owns recovery.": "恢復未完成的回覆，包括 Goal 與 Loop。長時間沒有進展後重新載入，只有同一個未完成回合仍擁有恢復權時才傳送 Continue。"
 }
