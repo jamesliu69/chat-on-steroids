@@ -56,18 +56,22 @@ async function loadServerConfig(dataDir: string, persist: boolean): Promise<Conf
 
 async function validate(config: Config): Promise<string[]> {
   const failures: string[] = [];
+  const serverRoot = process.cwd();
   if (process.platform !== 'linux') failures.push(`Unsupported OS: ${process.platform}; headless server requires Linux`);
   if (process.arch !== 'arm64') failures.push(`Unsupported architecture: ${process.arch}; headless server requires ARM64`);
   if (config.roots.length === 0) failures.push('No approved roots configured; run server init --root <absolute-path>');
   for (const root of config.roots) {
     if (!(await fs.stat(root.path).catch(() => null))?.isDirectory()) failures.push(`Approved root is unavailable: ${root.path}`);
   }
-  if (!locateRipgrep()) failures.push('ripgrep is unavailable; run npm run rg from the CoS source tree');
+  if (!locateRipgrep(serverRoot)) failures.push('ripgrep is unavailable; run npm run rg from the CoS source tree');
   if (config.tunnel.kind === 'openai') {
     if (!TUNNEL_ID_PATTERN.test(config.tunnel.tunnelId)) failures.push('OpenAI tunnel ID is missing or invalid');
     if (!(await getSecret('openaiApiKey'))) failures.push('OpenAI tunnel API key is unavailable from systemd credentials or OPENAI_API_KEY');
-    if (!locateBinary('tunnel-client', config.tunnel.binaryPath)) failures.push('tunnel-client is unavailable; run npm run tunnel');
-  } else if (config.tunnel.kind === 'cloudflared' && !locateBinary('cloudflared', config.tunnel.binaryPath)) {
+    if (!locateBinary('tunnel-client', config.tunnel.binaryPath, serverRoot)) failures.push('tunnel-client is unavailable; run npm run tunnel');
+  } else if (
+    config.tunnel.kind === 'cloudflared' &&
+    !locateBinary('cloudflared', config.tunnel.binaryPath, serverRoot)
+  ) {
     failures.push('cloudflared is unavailable; configure a valid binary path');
   }
   return failures;
