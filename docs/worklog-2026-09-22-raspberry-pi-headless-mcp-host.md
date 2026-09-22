@@ -1,7 +1,9 @@
 # Raspberry Pi 5 Headless MCP Host Validation
 
-Validation date: 2026-09-23 (Asia/Taipei)  
-Branch: `feat/raspberry-pi-headless-mcp-host`  
+Validation date: 2026-09-23 (Asia/Taipei)
+
+Branch: `feat/raspberry-pi-headless-mcp-host`
+
 Worktree: `D:\Repo\chat-on-steroids-worktrees\raspberry-pi-headless-mcp-host`
 
 ## Source and build evidence
