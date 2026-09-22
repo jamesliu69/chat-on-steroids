@@ -1,41 +1,702 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "打包 Windows 安裝版 (x64)",
-      "type": "shell",
-      "command": "npm",
-      "windows": {
-        "command": "npm.cmd"
-      },
-      "args": ["run", "dist:x64"],
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "打包 Windows 免安裝版 (x64)",
-      "type": "shell",
-      "command": "npm",
-      "windows": {
-        "command": "npm.cmd"
-      },
-      "args": ["run", "dist:win:portable"],
-      "group": "build",
-      "problemMatcher": []
-    },
-    {
-      "label": "打包 Raspberry Pi 5 (Linux ARM64)",
-      "type": "shell",
-      "command": "npm",
-      "windows": {
-        "command": "npm.cmd"
-      },
-      "args": ["run", "dist:linux:arm64"],
-      "group": "build",
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "打包 Windows 安裝版 (x64)",
+			"type": "shell",
+			"command": "npm",
+			"windows": {
+				"command": "npm.cmd"
+			},
+			"args": [
+				"run",
+				"dist:x64"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "打包 Windows 免安裝版 (x64)",
+			"type": "shell",
+			"command": "npm",
+			"windows": {
+				"command": "npm.cmd"
+			},
+			"args": [
+				"run",
+				"dist:win:portable"
+			],
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "打包 Raspberry Pi 5 (Linux ARM64)",
+			"type": "shell",
+			"command": "npm",
+			"windows": {
+				"command": "npm.cmd"
+			},
+			"args": [
+				"run",
+				"dist:linux:arm64"
+			],
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "清理 vitest 殘留行程",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\cleanup-vitest.ps1"
+			]
+		},
+		{
+			"label": "跑 mcp.test.ts",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"Set-Location d:\\Repo\\chat-on-steroids; $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User'); npx vitest run test/mcp.test.ts --reporter=basic 2>&1 | Out-File $env:TEMP\\mcp-run.log -Encoding utf8; Get-Content $env:TEMP\\mcp-run.log -Tail 12"
+			]
+		},
+		{
+			"label": "跑 mcp 測試",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test.ps1"
+			]
+		},
+		{
+			"label": "列出 mcp 失敗",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\list-fail3.ps1"
+			]
+		},
+		{
+			"label": "解析 mcp 失敗",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\list-fail4.ps1"
+			]
+		},
+		{
+			"label": "檢視 mcp 斷言",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\inspect-mcp-assert.ps1"
+			]
+		},
+		{
+			"label": "修復 mcp 測試斷言",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-mcp-test.ps1"
+			]
+		},
+		{
+			"label": "重跑 mcp 測試",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test2.ps1"
+			]
+		},
+		{
+			"label": "解析第二次跑",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\detail2.ps1"
+			]
+		},
+		{
+			"label": "抽取錯誤細節",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\detail3.ps1"
+			]
+		},
+		{
+			"label": "還原 mcp 測試",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\restore-mcp.ps1"
+			]
+		},
+		{
+			"label": "用 node 修補 mcp 測試",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-mcp-test.cjs"
+			]
+		},
+		{
+			"label": "第三次跑 mcp 測試",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test3.ps1"
+			]
+		},
+		{
+			"label": "以 json 報告跑 mcp",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-json.ps1"
+			]
+		},
+		{
+			"label": "解析失敗清單",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\parse-fails.cjs"
+			]
+		},
+		{
+			"label": "修補發現數量斷言",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-mcp-test2.cjs"
+			]
+		},
+		{
+			"label": "盤點其餘斷言",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-mcp-test3.cjs"
+			]
+		},
+		{
+			"label": "修 1606 行斷言",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-mcp-test4.cjs"
+			]
+		},
+		{
+			"label": "第四次跑 mcp",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test4.ps1"
+			]
+		},
+		{
+			"label": "找 SURFACE_LIST",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\find-surfacelist.cjs"
+			]
+		},
+		{
+			"label": "檢視 Core.tools",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-tools.cjs"
+			]
+		},
+		{
+			"label": "檢視關鍵行",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\show-lines.cjs"
+			]
+		},
+		{
+			"label": "清快取重跑 mcp",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test5.ps1"
+			]
+		},
+		{
+			"label": "診斷三個失敗",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag3.cjs"
+			]
+		},
+		{
+			"label": "找 everything 定義",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag4.cjs"
+			]
+		},
+		{
+			"label": "查 saveArtifact 旗標",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag5.cjs"
+			]
+		},
+		{
+			"label": "查 DEFAULT_CAPABILITIES",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag6.cjs"
+			]
+		},
+		{
+			"label": "查 kernel exposedCaps",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag7.cjs"
+			]
+		},
+		{
+			"label": "查 tools-core 註冊閘",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag8.cjs"
+			]
+		},
+		{
+			"label": "查註冊閘位置",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag9.cjs"
+			]
+		},
+		{
+			"label": "列出 tools 陣列",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag10.cjs"
+			]
+		},
+		{
+			"label": "比對 mtime",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag11.cjs"
+			]
+		},
+		{
+			"label": "解析 run5 摘要",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag12.cjs"
+			]
+		},
+		{
+			"label": "解析 run5 失敗區塊",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag13.cjs"
+			]
+		},
+		{
+			"label": "抽取 run5 細節",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag14.cjs"
+			]
+		},
+		{
+			"label": "抽取錯誤訊息",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag15.cjs"
+			]
+		},
+		{
+			"label": "重抽錯誤",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag16.cjs"
+			]
+		},
+		{
+			"label": "取 upstream 測試對照",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\upstream-test-spots.cjs"
+			]
+		},
+		{
+			"label": "取 instructions 測試全文",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\upstream-spot2.cjs"
+			]
+		},
+		{
+			"label": "取 fork 測試對照",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fork-spots.cjs"
+			]
+		},
+		{
+			"label": "看 instructions 測試尾",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fork-instr-tail.cjs"
+			]
+		},
+		{
+			"label": "查 instructions 違規詞",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr.cjs"
+			]
+		},
+		{
+			"label": "查各模組違規詞",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr2.cjs"
+			]
+		},
+		{
+			"label": "查 instructions 的 skill 行",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr3.cjs"
+			]
+		},
+		{
+			"label": "查 skill-library 指引",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr4.cjs"
+			]
+		},
+		{
+			"label": "讀 library 指引全文",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr5.cjs"
+			]
+		},
+		{
+			"label": "查 skill path 組成",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr6.cjs"
+			]
+		},
+		{
+			"label": "讀 catalog 指引",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr7.cjs"
+			]
+		},
+		{
+			"label": "比對 upstream regex",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\check-instr8.cjs"
+			]
+		},
+		{
+			"label": "套用五項斷言修正",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-mcp-test5.cjs"
+			]
+		},
+		{
+			"label": "修 batch 斷言",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-mcp-test6.cjs"
+			]
+		},
+		{
+			"label": "第六次跑 mcp",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test6.ps1"
+			]
+		},
+		{
+			"label": "看最後一個失敗",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag17.cjs"
+			]
+		},
+		{
+			"label": "查 session-tool 閘",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag18.cjs"
+			]
+		},
+		{
+			"label": "看實際清單",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag19.cjs"
+			]
+		},
+		{
+			"label": "印長度錯誤上下文",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag20.cjs"
+			]
+		},
+		{
+			"label": "修正發現數量為 10",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-count.cjs"
+			]
+		},
+		{
+			"label": "修正為 10（含 fs）",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-count2.cjs"
+			]
+		},
+		{
+			"label": "第七次跑 mcp",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test7.ps1"
+			]
+		},
+		{
+			"label": "看 run7 失敗",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag21.cjs"
+			]
+		},
+		{
+			"label": "收集交接狀態",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\handoff-state.ps1"
+			]
+		},
+		{
+			"label": "收集 mcp 失敗細節",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\handoff-mcp.ps1"
+			]
+		},
+		{
+			"label": "修正 desktop 位元組上限",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-ceiling.cjs"
+			]
+		},
+		{
+			"label": "第八次跑 mcp",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test8.ps1"
+			]
+		},
+		{
+			"label": "收集交接狀態",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\collect-handoff.ps1"
+			]
+		},
+		{
+			"label": "收集交接狀態2",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\collect-handoff2.ps1"
+			]
+		},
+		{
+			"label": "取最後失敗細節",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\diag-run7.cjs"
+			]
+		},
+		{
+			"label": "修正 desktop 位元組上限",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\fix-bytes.cjs"
+			]
+		},
+		{
+			"label": "看 820 行原文",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\show-820.cjs"
+			]
+		},
+		{
+			"label": "第八次跑 mcp",
+			"type": "shell",
+			"command": "powershell.exe",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"C:\\Users\\fly20\\AppData\\Local\\Temp\\run-mcp-test8b.ps1"
+			]
+		}
+	]
 }
