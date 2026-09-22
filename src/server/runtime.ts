@@ -10,7 +10,8 @@ const ROOT_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 
 export type ServerArgs =
   | { command: 'init'; dataDir: string; root: string; name: string; tunnel: TunnelKind; tunnelId: string }
-  | { command: 'check' | 'start'; dataDir: string };
+  | { command: 'check'; dataDir: string }
+  | { command: 'start'; dataDir: string };
 
 interface InitialServerConfigOptions {
   root: string;
