@@ -6,6 +6,38 @@ import { readFile } from 'node:fs/promises';
 let dom: JSDOM;
 afterEach(() => { dom?.window.close(); vi.unstubAllGlobals(); vi.resetModules(); });
 const preferEnglish = () => dom.window.localStorage.setItem('cos.ui.language', 'en');
+it('shows pending reasons and failed refresh separately from usable cached choices', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  let receive!: (catalog: any) => void;
+  const models = [{ id: 'future', label: '未来模型', efforts: ['high'] }];
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', models } }),
+    onChatModelsChanged: (listener: typeof receive) => { receive = listener; } } });
+  const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  receive({ state: 'pending', models, waiting: 'ChatGPT is still generating. The running response is left untouched.' });
+  expect(dom.window.document.getElementById('chatModelStatus')!.textContent).toContain('still generating');
+  expect(confirmedComposerModel()).toEqual({ model: 'future', reasoningEffort: 'high' });
+  receive({ state: 'ready', models, error: 'Model discovery timed out.' });
+  for (const id of ['chatModelStatus', 'composerModelStatus']) {
+    const node = dom.window.document.getElementById(id)!;
+    expect(node.textContent).toContain('Refresh failed'); expect(node.textContent).toContain('timed out'); expect(node.hidden).toBe(false);
+  }
+  expect(confirmedComposerModel()).toEqual({ model: 'future', reasoningEffort: 'high' });
+  receive({ state: 'ready', models, observedAt: 10 });
+  expect(dom.window.document.getElementById('composerModelStatus')!.hidden).toBe(true);
+});
+it('keeps an unknown non-Latin saved worker model unverified instead of matching an empty normalized label', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', models: [{ id: 'future', label: '未来模型', efforts: ['high'] }] } }) } });
+  const { initChatModels, applyChatModels } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: { defaultModel: '完全不同', defaultReasoning: 'high' }, goal: {} } as Config); await Promise.resolve();
+  const model = dom.window.document.getElementById('workerModel') as HTMLSelectElement;
+  expect(model.value).toBe('完全不同'); expect(model.selectedOptions[0]!.disabled).toBe(true);
+});
 
 it.each([true, false])('a model-rejection refresh waits beyond cached availability (still available=%s)', async available => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
@@ -154,7 +186,8 @@ it('renders the two observed Pro generations separately and sends their exact se
 
 it('replaces loading with the backend failure reason and an enabled retry control', async () => {
   dom = new JSDOM('<span id="composerModelLabel"></span><p id="composerModelStatus"></p><button id="refreshComposerModels"></button>' +
-    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''), { url: 'https://local.test/' });
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''),
+    { url: 'https://local.test/' });
   preferEnglish();
   const pending = { state: 'pending', requestedAt: 1, observedAt: null, models: [] };
   const failed = { ...pending, state: 'unavailable', error: 'Model discovery timed out. Retry.' };
@@ -176,7 +209,8 @@ it('replaces loading with the backend failure reason and an enabled retry contro
 
 it('uses observed account choices, preserves unverified defaults, and clears incompatible effort on model change', async () => {
   dom = new JSDOM('<span id="composerModelLabel"></span><p id="chatModelStatus"></p>' +
-    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''), { url: 'https://local.test/' });
+    ['composerModel', 'composerReasoning', 'workerModel', 'workerReasoning', 'helperModel', 'helperReasoning'].map(id => `<select id="${id}"><option value="">Default</option></select>`).join(''),
+    { url: 'https://local.test/' });
   preferEnglish();
   const observed = { state: 'ready', requestedAt: 1, observedAt: Date.now(), models: [
     { id: 'first', label: 'GPT-5.6 Sol', efforts: ['high'] }, { id: 'second', label: 'GPT-6', efforts: ['medium'] }
@@ -354,7 +388,7 @@ it('paints catalog pushes immediately and refuses late startup reads without ref
   applyChatModels(config); applyChatModels(config);
   expect(getChatModels).toHaveBeenCalledTimes(1);
 });
-it('maps saved execution slugs to the observed family while preserving Pro reasoning', async () => {
+it('preserves an observed saved execution slug together with its Pro reasoning', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
   preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
@@ -363,8 +397,24 @@ it('maps saved execution slugs to the observed family while preserving Pro reaso
   const { initChatModels, applyChatModels } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: { defaultModel: 'gpt-5-6-pro', defaultReasoning: 'pro' }, goal: {} } as Config); await Promise.resolve();
   const model = dom.window.document.getElementById('workerModel') as HTMLSelectElement;
-  expect(model.value).toBe('5.6'); expect(model.options).toHaveLength(1);
+  expect(model.value).toBe('gpt-5-6-pro'); expect(model.options).toHaveLength(2);
   expect((dom.window.document.getElementById('workerReasoning') as HTMLSelectElement).value).toBe('pro');
+});
+it('preserves worker execution aliases without inferring a different family effort', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', models: [
+    { id: 'family', label: 'Future model', efforts: ['high', 'pro'], aliases: ['future-thinking', 'future-pro'] }
+  ] } }) } });
+  const { initChatModels, applyChatModels } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: { defaultModel: 'future-pro', defaultReasoning: null }, goal: {} } as unknown as Config);
+  await Promise.resolve();
+  const model = dom.window.document.getElementById('workerModel') as HTMLSelectElement;
+  const effort = dom.window.document.getElementById('workerReasoning') as HTMLSelectElement;
+  expect(model.value).toBe('future-pro'); expect(model.selectedOptions[0]!.disabled).toBe(false); expect(effort.value).toBe('');
+  model.value = 'family'; model.dispatchEvent(new dom.window.Event('change'));
+  expect(effort.value).toBe('high');
 });
 it.each(['5.6', 'gpt-5.6-sol', 'GPT-5.6 Sol', 'gpt-5-6-thinking'])('keeps saved Sol High selected across reordered catalogs: %s', async saved => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
@@ -380,7 +430,7 @@ it.each(['5.6', 'gpt-5.6-sol', 'GPT-5.6 Sol', 'gpt-5-6-thinking'])('keeps saved 
   initChatModels(); applyChatModels({ multiAgent: { defaultModel: saved, defaultReasoning: 'high' }, goal: {} } as Config); await Promise.resolve();
   const check = () => {
     const model = dom.window.document.getElementById('workerModel') as HTMLSelectElement;
-    expect(model.value).toBe('5.6'); expect(model.selectedOptions[0]!.disabled).toBe(false);
+    expect(model.value).toBe(saved === 'gpt-5-6-thinking' ? saved : '5.6'); expect(model.selectedOptions[0]!.disabled).toBe(false);
     expect((dom.window.document.getElementById('workerReasoning') as HTMLSelectElement).value).toBe('high');
   };
   check(); receive({ state: 'ready', models: [...models].reverse() }); check();

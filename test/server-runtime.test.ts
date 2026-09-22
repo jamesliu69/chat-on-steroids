@@ -1,5 +1,8 @@
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { defaultConfig } from '../src/main/config.js';
+import { defaultConfig, initConfigPath, loadConfig, saveConfig } from '../src/main/config.js';
 import {
   applyServerEnvironment,
   createInitialServerConfig,
@@ -83,5 +86,29 @@ describe('headless server runtime', () => {
     expect(normalized.multiAgent.allowUnattributedCalls).toBe(true);
     expect(normalized.goal.enabled).toBe(false);
     expect(normalized.ui.finishTool).toBe(false);
+  });
+
+  it('persists disabled recording for the dedicated headless server config', async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cos-server-config-'));
+    try {
+      initConfigPath(dataDir);
+      const config = createInitialServerConfig({
+        root: '/home/pi/github',
+        name: 'repos',
+        tunnel: 'manual',
+        tunnelId: ''
+      });
+
+      await saveConfig(config, { allowDisabledRecording: true });
+
+      const persisted = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8')) as {
+        sessions: { record: boolean; retainDays: number };
+      };
+      expect(persisted.sessions.record).toBe(false);
+      expect(persisted.sessions.retainDays).toBe(0);
+      expect((await loadConfig({ allowDisabledRecording: true })).sessions.record).toBe(false);
+    } finally {
+      await fs.rm(dataDir, { recursive: true, force: true });
+    }
   });
 });

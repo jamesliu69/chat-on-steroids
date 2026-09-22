@@ -25,6 +25,7 @@ export interface CallEvidence {
   /** Free-form qualifier the summariser may use, e.g. "lines 200-420". */
   detail: string | null;
   exitCode: number | null;
+  benignExit?: boolean;
   timedOut: boolean;
   /** Child/process lifetime when the command surface measured it itself. */
   durationMs: number | null;
@@ -61,15 +62,10 @@ export interface CallCaller {
   conversationId: string | null;
   /** Durable local session principal carried by the same exact request proof. */
   sessionId?: string | null;
+  /** Admission deliberately committed this unresolved caller to Unattributed. */
+  unattributedFrozen?: boolean;
   /** Selected agent family. This selects state only after the broker checks its owner. */
   runId?: string;
-  /**
-   * Admission permanently chose the explicit Unattributed principal for this call.
-   *
-   * Late browser evidence may still repair historical correlation globally, but it must not
-   * retroactively move a process/window/file mutation whose authority was already chosen.
-   */
-  unattributedFrozen?: boolean;
 }
 
 export interface CallContext {
@@ -124,14 +120,6 @@ export function emptyEvidence(): CallEvidence {
 
 export function runInCallContext<T>(context: CallContext, fn: () => T): T {
   return storage.run(context, fn);
-}
-
-/** Freeze the current call on the anonymous principal before an irreversible child boundary. */
-export function freezeCurrentCallerUnattributed(): void {
-  const store = storage.getStore();
-  if (!store || store.caller.conversationId) return;
-  store.caller.unattributedFrozen = true;
-  store.caller.sessionId = null;
 }
 
 /**
@@ -260,6 +248,15 @@ export function currentCaller(): CallCaller {
   return storage.getStore()?.caller ?? { transportKey: null, requestId: null, conversationId: null };
 }
 
+/** Prevents late browser proof from reassigning a mutation already admitted as Unattributed. */
+export function freezeCurrentCallerUnattributed(): void {
+  const context = storage.getStore();
+  if (!context) return;
+  context.caller.unattributedFrozen = true;
+  context.caller.conversationId = null;
+  context.caller.sessionId = null;
+}
+
 /** Asks for `agent` to be bound to this call's conversation once it can be identified. */
 export function bindOnAttribution(agent: string): void {
   const context = storage.getStore();
@@ -338,6 +335,7 @@ export function noteExec(result: {
   store.evidence.timedOut = result.timedOut === true;
   // A timeout is our failure and outranks a child status; benign child statuses are exempt.
   const exempt = result.benignExit === true;
+  store.evidence.benignExit = exempt;
   if (result.exitCode !== null && result.exitCode !== 0 && !exempt) {
     noteOutcome('process_exit_nonzero');
   }

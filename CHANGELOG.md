@@ -9,39 +9,47 @@ The app and the `extension/` companion are versioned together. **Reload the
 extension after updating the app**. If their bridge protocols are incompatible,
 the app refuses the extension and asks you to reload the matching copy.
 
-## [2.1.14] — Selected upstream reliability fixes
+## Unreleased
 
-- Improve queued input delivery, attachment ownership, recovery and transcript continuity.
-- Improve browser ownership, response rendering and worker/session continuity.
+- Keep fresh background workers rendering while their editor hydrates, including pending initial navigation and exact document retirement.
+- Read live alternate-shell request metadata and public activity before history hydration; place recorded tools beside native prose without a reload.
+- Restore versioned response observers without duplicate active readers and recognize complete identity in native resume streams.
+- Capture completed alternate-shell handoff briefs using their exact native final-message identity; retain cancellation and conversation guards.
+- Keep background chat preparation rendering through its owned same-document navigation, without changing the selected browser tab.
+- Add Japanese interface translations and compact, keyboard-accessible language flags in Setup.
+- Resume new project chats and worker startup when the alternate shell's account picker finishes loading after its first inspection.
+- Capture early request identity from complete v1 stream messages with omitted format headers, preserving exact conversation ownership for worker status and messages.
+- Preserve prepared text, follow-up sends and worker bootstraps in the alternate ChatGPT Markdown editor; hide verified setup frames in its user bubbles.
+- Read exact selected-message request metadata and connector recipient names in the alternate shell, and prevent an older unfinished exchange from keeping its composer busy.
+- Preserve current activity and recovery deadlines when reload republishes an older final answer.
+- Bind a pending new chat to its project before route binding releases its queued observations.
+- Recover the exact missing tab when a sleeping worker is woken, and stop old prime history from blocking current chat recovery.
+- Restart the page-helper warning grace after a long reporting gap or a backward clock adjustment.
+- Record bounded, accurate Compact & Resume marker outcomes without repeating the same notice on every reload.
+- Give observation-journal deliveries and split retries a 60-second durable-write allowance while preserving unacknowledged observations after timeout.
 
-## [2.1.13] — Skills and reliability
+## [2.1.14] — Death to Anthropic and OpenAI. Join the resistance @dummerspast39 x
 
-- Import text skills through **+ → Skills**, select them from the library, or autocomplete their commands with **/**.
-- Setup now ends with an important ChatGPT tool-approval notice. A one-time reminder appears on the first explicit model-discovery opening and stays pending until acknowledged.
-- Selected skill instructions precede project instructions. The 96,000-character message limit preserves skills and user text while shortening AGENTS.md when necessary.
-- Models can read and install skills in the managed `/skills` directory using the existing Core tools. No skills are preinstalled and no extra MCP tools are required.
-- Includes the updated ChatGPT model-picker support from 2.1.12 for main chats and workers.
-- More reliable request attribution, answer boundaries, recovery, Goal/Loop continuation and worker revival.
-- Clearer plugin, permission and terminal-ownership errors; repeated transport notices stay with their original question.
-- Image injections retain their transcript position and preview when optional asset storage fails; long-turn histories place them after the tool response that carried them.
-- Project openings explicitly name the primary working folder even without AGENTS.md, while permitting task-relevant work elsewhere within current permissions.
-- Setup checks Core's actual Actions list; health checks separate catalog responses from tunnel traffic. Stale calls on the wrong connector no longer imply Core is disabled.
-- Native-source downloads retry bounded transient failures without changing source pins or integrity checks.
+- Add the optional animated Tur Tur Sahur desktop companion.
+- Show normal and unattributed reload warnings only in the last 30 seconds; retain the five-minute Pro warning.
+- Improve automatic Continue, queued-message recovery, native Stop handling and recorded turn ownership.
+- Keep automatic Continue queued while temporary tool activity clears, and repair mismatched browser recorder/helper versions together.
+- Wait for native tool-result receipt before automatic compaction interrupts a response, preserving just-completed work for the handoff.
+- Improve browser snapshots, select controls and safe tab release.
+- Refine the project workspace, Skills picker, appearance, connection controls and worker overview.
+- Preserve completed terminal output and improve tool-permission guidance.
 
-## [2.1.12] — fork integration, model picker and reliability
+Reload the companion extension and refresh all CoS plugins in ChatGPT after updating.
 
-- Integrated the upstream 2.1.11 Goal/Loop, model-specific reasoning, recovery, plugin and renderer-memory improvements.
-- Added complete Traditional Chinese UI coverage for the new setup, recovery and reasoning flows.
-- Preserved Raspberry Pi/Linux ARM64 headless operation, tmux/service support and complete-quit behavior.
-- Fixed setup-profile API-key ownership, stale profile-save locking and late background-process history paging.
-- Kept MCP identity/attribution hardening and lower-latency attribution behavior across the upstream merge.
-- Added Windows portable executables to release packaging and fixed cross-platform CI language assumptions.
-- Model discovery tolerates effort-only labels and missing family prefixes in the refreshed ChatGPT picker.
-- Version-menu retirement captions no longer invalidate discovery or selection.
-- Closed-picker observation supports `6 Pro` and checks any visible version against the provider model id.
-- Account availability, exact model/effort confirmation and restoration of the original selection remain required.
+## [2.1.13] — i am very sad. openai theatend to ban my account for whatever reason. anthropic support blocks me. money tight.
 
-**Reload the companion extension and refresh your ChatGPT tabs after updating.**
+refreh your extension and all CoS plugins in chatgpt
+
+![OpenAI email](docs/images/openai-account-warning-2026-09.png)
+
+![OpenAI email](docs/images/openai-chatgpt-warning-2026-09.png)
+
+![Anthropic support reply](docs/images/anthropic-support-reply-2026-09.png)
 
 ## [2.1.11] — 2 weeks 6 sol
 

@@ -72,7 +72,7 @@ async function initServer(args: Extract<ServerArgs, { command: 'init' }> | Serve
     tunnel: args.tunnel,
     tunnelId: args.tunnelId
   });
-  await saveConfig(config);
+  await saveConfig(config, { allowDisabledRecording: true });
   line(`Initialized CoS server configuration in ${args.dataDir}`);
   line(`Approved root: /${args.name} -> ${args.root}`);
   line(`Tunnel mode: ${args.tunnel}`);
@@ -80,9 +80,11 @@ async function initServer(args: Extract<ServerArgs, { command: 'init' }> | Serve
 
 async function loadServerConfig(dataDir: string, persistNormalization: boolean): Promise<Config> {
   await initializeRuntime(dataDir);
-  const loaded = await loadConfig();
+  const loaded = await loadConfig({ allowDisabledRecording: true });
   const normalized = normalizeServerConfig(loaded);
-  if (persistNormalization && JSON.stringify(normalized) !== JSON.stringify(loaded)) await saveConfig(normalized);
+  if (persistNormalization && JSON.stringify(normalized) !== JSON.stringify(loaded)) {
+    await saveConfig(normalized, { allowDisabledRecording: true });
+  }
   return applyServerEnvironment(normalized);
 }
 
