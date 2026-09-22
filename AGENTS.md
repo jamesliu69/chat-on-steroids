@@ -531,6 +531,10 @@ open at admission; calls sharing a request serialize in admission order and each
 session serializes its writes. Different chats must not wait behind one global grace timer.
 Already-proven calls await their own recording; unresolved recordings may settle after response.
 
+壓縮的全域身分等待條件必須與 `compactingConversation()` 一致：交接要求已進入
+`dispatched-unresolved`／`sent` 或後續階段才適用。僅建立或準備送出的 ticket 不得讓
+其他未識別請求白等；已封鎖對話與已開始交接的 exact-identity 保護仍須保留。
+
 After a local identity refusal, `kernel.ts` appends one **Identity recovered** notice to an
 eligible outer tool result once exact request/conversation/session proof is available. Refusal
 sites mark their result explicitly (`failIdentity` or `IdentityLostError`); arbitrary error
