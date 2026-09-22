@@ -1,15 +1,24 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const fixture = vi.hoisted(() => ({ attachment: vi.fn(), record: vi.fn(), blocked: false }));
+const fixture = vi.hoisted(() => ({
+  attachment: vi.fn(),
+  record: vi.fn(),
+  blocked: false,
+  supersededHazard: false,
+  awaitIdentity: vi.fn()
+}));
 vi.mock('../src/main/session/recorder.js', async original => ({
   ...await original<typeof import('../src/main/session/recorder.js')>(),
   freshCallOrigin: (_tool: string, _at: number, requestId: string) => requestCorrelation(requestId)?.conversationId ?? null,
-  awaitFreshCallOrigin: async (_tool: string, _at: number, _timeout: number, options: { requestId: string }) => requestCorrelation(options.requestId)?.conversationId ?? null,
+  awaitFreshCallOrigin: async (_tool: string, _at: number, _timeout: number, options: { requestId: string }) => {
+    fixture.awaitIdentity(options.requestId);
+    return requestCorrelation(options.requestId)?.conversationId ?? null;
+  },
   recordToolCall: fixture.record
 }));
 vi.mock('../src/main/session/store.js', async original => ({
   ...await original<typeof import('../src/main/session/store.js')>(),
   conversationAttachment: fixture.attachment,
-  hasSupersededConversationAttachments: async () => false
+  hasSupersededConversationAttachments: async () => fixture.supersededHazard
 }));
 vi.mock('../src/main/session/input.js', () => ({ offerToolInput: async () => ({ messages: [], reminder: '' }), acknowledgeToolInput: async () => {}, TOOL_INPUT_HEADER: '' }));
 vi.mock('../src/main/session/blocked-chats.js', () => ({
@@ -26,7 +35,8 @@ import { observeRequestCorrelation, requestCorrelation, resetCorrelationRegistry
 
 beforeEach(() => {
   vi.clearAllMocks(); resetToolClock(); resetCorrelationRegistryForTests();
-  fixture.attachment.mockResolvedValue('current'); fixture.record.mockResolvedValue(null); fixture.blocked = false;
+  fixture.attachment.mockResolvedValue('current'); fixture.record.mockResolvedValue(null);
+  fixture.blocked = false; fixture.supersededHazard = false;
 });
 function prove(requestId = 'request-a', conversationId = 'chat-a', sessionId = 'session-a') {
   return observeRequestCorrelation({ requestId, conversationId, sessionId, messageId: 'message', tool: '', observedAt: Date.now() });
@@ -77,6 +87,34 @@ it.each(['blocked', 'superseded'])('keeps %s restrictions authoritative after la
   if (restriction === 'blocked') fixture.blocked = true;
   else fixture.attachment.mockResolvedValue('superseded');
   expect(notice(await invoke())).toHaveLength(0);
+});
+
+it('resolves a retained superseded mutation owner before entering the handler', async () => {
+  fixture.supersededHazard = true;
+  fixture.attachment.mockResolvedValue('superseded');
+  fixture.awaitIdentity.mockImplementationOnce((requestId: string) => {
+    prove(requestId, 'chat-a', 'session-a');
+  });
+  const mutation = vi.fn(async () => ok('MUTATION_RAN'));
+  const result = await dispatch('apply_patch', {}, null, 'request-a', 'core', mutation);
+  expect(mutation).not.toHaveBeenCalled();
+  expect(JSON.stringify(result)).toContain('CONVERSATION_SUPERSEDED');
+});
+
+it('freezes an admitted unattributed mutation so later proof cannot reassign it', async () => {
+  fixture.supersededHazard = true;
+  const mutation = vi.fn(async () => {
+    prove('request-a', 'chat-a', 'session-a');
+    return ok('MUTATION_RAN');
+  });
+  const result = await dispatch('apply_patch', {}, null, 'request-a', 'core', mutation);
+  expect(result.isError).not.toBe(true);
+  expect(mutation).toHaveBeenCalledOnce();
+  expect(fixture.record).toHaveBeenLastCalledWith(expect.objectContaining({
+    conversationId: null,
+    sessionId: null,
+    attributionFrozen: true
+  }));
 });
 
 it('rechecks a block applied during the final ownership read', async () => {

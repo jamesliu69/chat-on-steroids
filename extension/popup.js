@@ -231,7 +231,6 @@ function paintHeader(status) {
 
   $('retryBtn').hidden = ready || incompatible;
   $('retryBtn').textContent = off ? 'Connect' : 'Try again';
-  $('unpairBtn').hidden = !paired || incompatible;
   return ready;
 }
 
@@ -402,20 +401,10 @@ $('copyBtn').addEventListener('click', (event) => {
 
 $('more').addEventListener('toggle', () => paintDetails(latest.status, latest.tab));
 
-$('reloadBtn').addEventListener('click', () => {
-  // The old worker may be stuck: this explicit action belongs to the popup itself.
-  chrome.runtime.reload();
-});
-
 $('retryBtn').addEventListener('click', async () => {
   $('retryBtn').disabled = true;
   await chrome.runtime.sendMessage({ type: 'pair' });
   $('retryBtn').disabled = false;
-  await refresh();
-});
-
-$('unpairBtn').addEventListener('click', async () => {
-  await chrome.runtime.sendMessage({ type: 'unpair' });
   await refresh();
 });
 

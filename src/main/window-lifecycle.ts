@@ -59,8 +59,11 @@ export function createWindowActivationGate(showWindow: () => void): {
  * supported platform. When it is off, the window close is an application quit; when it is on,
  * the window's close handler has already hidden it and this event must leave the process alive.
  */
-export function shouldQuitOnWindowAllClosed(minimizeToTray: boolean): boolean {
-  return !minimizeToTray;
+export function shouldQuitOnWindowAllClosed(
+  platform: NodeJS.Platform,
+  minimizeToTray: boolean
+): boolean {
+  return platform !== 'darwin' && !minimizeToTray;
 }
 
 /**

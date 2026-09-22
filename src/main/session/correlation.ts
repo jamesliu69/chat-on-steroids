@@ -28,6 +28,7 @@ import { readDurable, writeDurableSnapshotSoon } from '../durable.js';
 import { logWarn } from '../logger.js';
 import { indexedSessions, readRecentEvents } from './store.js';
 import { attachRequestPlan, reconcileRequestPlans } from './request-plans.js';
+import { reconcileAgentRequestOwners } from '../agents.js';
 
 export interface RequestCorrelation {
   requestId: string;
@@ -309,6 +310,9 @@ export function observeRequestCorrelations(
       logWarn(`request plan attachment failed for ${requestId}: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
+  if (attaching.size) void reconcileAgentRequestOwners().catch(error => {
+    logWarn(`request worker ownership reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   return results;
 }
 

@@ -1,4 +1,6 @@
 import { REASONING_EFFORTS } from '../shared/session.js';
+import { appearanceSchema } from './appearance-schema.js';
+import { BROWSER_BRIDGE_PORTS } from '../shared/browser-bridge.js';
 /**
  * Non-secret settings, stored as one small JSON file in the app's userData folder.
  * No database: there are at most a handful of roots and a dozen booleans.
@@ -18,9 +20,9 @@ import {
   GOAL_PROVIDERS,
   GOAL_REASONING_LEVELS,
   WRITE_CAPABILITIES,
+  type ArtifactSettings,
   type Capabilities,
   DESKTOP_CAPABILITIES,
-  type ArtifactSettings,
   type CompactionSettings,
   type Config,
   type GoalSettings,
@@ -42,16 +44,15 @@ import { logError } from './logger.js';
 import { RESERVED_ROOT_NAMES } from './sandbox.js';
 import { capabilitiesForPlatform } from './platform.js';
 
+export const browserBridgePortSchema = z.union([z.literal('auto'), z.literal(BROWSER_BRIDGE_PORTS)]);
+
 /**
  * Defaults for the newer sections, in one place so the schema and defaultConfig()
  * cannot drift apart.
  *
  * Recording starts ON. Everything the app is actually for — the readable timeline, Compact
- * & resume, and agent attribution — reads the recorded history, so an install that starts
- * with it off is an install where the main features silently do nothing. It writes only to
- * this app's own data folder and uploads nothing. Note this changes the default for *new*
- * configs only: an existing config already carries an explicit `record`, and a user who
- * turned it off keeps it off.
+ * & resume, and agent attribution — reads the recorded history. Existing explicit privacy
+ * and retention choices remain authoritative.
  *
  * Existing configs still keep every explicit permission choice. Fresh installs are different:
  * the Home screen is meant to start fully usable, so every tool permission and the agents
@@ -116,17 +117,6 @@ const DEFAULT_COMPACTION: CompactionSettings = {
   auto: true,
   autoTokens: DEFAULT_SESSIONS.advisoryTokens
 };
-/**
- * Default bound for `download_artifact`.
- *
- * 20 MiB covers generated images, PDFs and small archives without letting one call
- * fill the disk or blow the MCP result budget. Enforced before, during and after
- * the stream (see artifact-fetch/artifact-target), so a lying Content-Length helps nothing.
- */
-const DEFAULT_ARTIFACTS: ArtifactSettings = {
-  maxFileBytes: 20 * 1024 * 1024
-};
-
 /**
  * The goal loop's defaults.
  *
@@ -263,6 +253,14 @@ const capabilitiesSchema = z
 export const MAX_MCP_INSTRUCTIONS_CHARS = 4000;
 const DEFAULT_MCP = { instructions: '' } as const;
 
+/**
+ * Per-file ceiling for `download_artifact`. The stream enforces it at every stage
+ * (see artifact-fetch/artifact-target), so a lying Content-Length helps nothing.
+ */
+const DEFAULT_ARTIFACTS: ArtifactSettings = {
+  maxFileBytes: 20 * 1024 * 1024
+};
+
 const configSchema = z.object({
   // A config written by hand — or by a build before `/skills` was reserved — must not be
   // able to claim a reserved virtual root. Renamed rather than rejected: a single bad root
@@ -291,6 +289,7 @@ const configSchema = z.object({
     tunnelId: z.string().max(128), desktopTunnelId: z.string().max(128), pluginsTunnelId: z.string().max(128)
   })).max(11).refine(rows => new Set(rows.map(row => row.id)).size === rows.length, 'Duplicate setup profile').optional(),
   ui: z.object({
+    appearance: appearanceSchema.optional().catch(undefined),
     autoContinue: z.boolean().optional().default(true),
     chatBrowser: z.enum(CHAT_BROWSERS).optional().default('chrome'),
     developerMode: z.boolean().optional(),
@@ -299,6 +298,7 @@ const configSchema = z.object({
     finishAction: z.enum(['notify', 'goal']).optional(),
     finishLeadMinutes: z.number().int().min(3).max(5).optional(),
     backgroundChats: z.boolean().optional().default(true),
+    browserBridgePort: browserBridgePortSchema.optional().default('auto'),
     browserOnly: z.boolean().optional().default(false),
     autoRefreshPlugins: z.boolean().optional().default(false),
     tabsToKeepOpen: z.number().int().min(1).max(50).optional(),
@@ -481,7 +481,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     capabilities: firstLaunchCapabilities(platform, release),
     readOnly: false,
     tunnel: { kind: 'openai', tunnelId: '', desktopTunnelId: '', binaryPath: '' },
-    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, backgroundChats: true, autoContinue: true },
+    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, backgroundChats: true, browserBridgePort: 'auto', autoContinue: true },
     sessions: { ...DEFAULT_SESSIONS },
     compaction: { ...DEFAULT_COMPACTION },
     multiAgent: { ...FIRST_LAUNCH_MULTI_AGENT },
@@ -513,13 +513,8 @@ function conservativeRecoveryConfig(): Config {
 }
 
 /**
- * Repairs feature combinations that cannot work, without silently widening privacy settings.
- *
- * Goal Mode reads the local session transcript to decide whether another user turn is needed;
- * `/goal/draft` explicitly refuses a chat with no recorded session. Enabling recording behind
- * the user's back would be a privacy surprise, so the only safe repair is to keep recording off
- * and turn Goal off with it. Keeping this at the config boundary covers renderer, extension and
- * hand-edited/older config writers alike.
+ * Goal reads the local recorded transcript. Preserve an explicit recording-off choice and
+ * disable the dependent feature instead of silently widening the user's privacy setting.
  */
 function enforceFeatureDependencies(config: Config): Config {
   if (config.sessions.record || !config.goal.enabled) return config;
@@ -555,20 +550,53 @@ let current: Config = defaultConfig();
 // cannot race on config.json.tmp or overwrite each other's newer state.
 let mutationQueue: Promise<void> = Promise.resolve();
 
+export interface ConfigIoOptions {
+  /**
+   * The dedicated headless server has no browser companion, so its normalized config
+   * deliberately disables browser-dependent session recording.
+   */
+  allowDisabledRecording?: boolean;
+}
+
+function requestedDisabledRecording(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const sessions = (value as Record<string, unknown>)['sessions'];
+  if (typeof sessions !== 'object' || sessions === null) return false;
+  return (sessions as Record<string, unknown>)['record'] === false;
+}
+
+function preserveDisabledRecording(
+  parsed: Config,
+  source: unknown,
+  options: ConfigIoOptions
+): Config {
+  if (!options.allowDisabledRecording || !requestedDisabledRecording(source)) return parsed;
+  return {
+    ...parsed,
+    sessions: {
+      ...parsed.sessions,
+      record: false,
+      retainDays: 0
+    }
+  };
+}
+
 export function initConfigPath(userDataDir: string): void {
   configPath = path.join(userDataDir, 'config.json');
 }
 
-export async function loadConfig(): Promise<Config> {
+export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config> {
   try {
     const raw = await fs.readFile(configPath, 'utf8');
-    const parsed = configSchema.safeParse(JSON.parse(raw));
+    const source = JSON.parse(raw) as unknown;
+    const parsed = configSchema.safeParse(source);
     if (!parsed.success) {
       logError('Settings file was invalid and has been reset to defaults');
       current = conservativeRecoveryConfig();
     } else {
+      const loaded = preserveDisabledRecording(parsed.data, source, options);
       current = enforceFeatureDependencies(
-        adoptCurrentGoalPrompt(adoptWiderWindow(adoptAutoCompaction(recalibrateTokens(parsed.data))))
+        adoptCurrentGoalPrompt(adoptWiderWindow(adoptAutoCompaction(recalibrateTokens(loaded))))
       );
       // Duplicate root names would make a virtual path ambiguous.
       const seen = new Set<string>();
@@ -677,8 +705,7 @@ export function effectiveCapabilities(
   return capped;
 }
 
-async function persistConfig(next: Config): Promise<Config> {
-  const parsed = enforceFeatureDependencies(configSchema.parse(next));
+async function persistConfig(parsed: Config): Promise<Config> {
   const tmp = `${configPath}.tmp`;
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(tmp, JSON.stringify(parsed, null, 2), 'utf8');
@@ -699,11 +726,19 @@ async function persistConfig(next: Config): Promise<Config> {
  */
 export function updateConfig(
   update: (latest: Config) => Config | Promise<Config>,
-  afterPublish?: (next: Config, previous: Config) => void | Promise<void>
+  afterPublish?: (next: Config, previous: Config) => void | Promise<void>,
+  publish?: (next: Config, previous: Config, persist: () => Promise<Config>) => Promise<Config>,
+  options: ConfigIoOptions = {}
 ): Promise<Config> {
   const operation = mutationQueue.then(async () => {
     const previous = current;
-    const next = await persistConfig(await update(previous));
+    // Validate before reserving external resources. The optional publisher owns their rollback.
+    const requested = await update(previous);
+    const proposed = enforceFeatureDependencies(
+      preserveDisabledRecording(configSchema.parse(requested), requested, options)
+    );
+    const persist = () => persistConfig(proposed);
+    const next = await (publish ? publish(proposed, previous, persist) : persist());
     // Keep dependent durable retirement inside the same settings transaction;
     // the next On cannot overtake a published Off's cancellation work.
     await afterPublish?.(next, previous);
@@ -717,6 +752,6 @@ export function updateConfig(
 }
 
 /** Replaces the complete config. Prefer updateConfig for read-modify-write changes. */
-export function saveConfig(next: Config): Promise<Config> {
-  return updateConfig(() => next);
+export function saveConfig(next: Config, options: ConfigIoOptions = {}): Promise<Config> {
+  return updateConfig(() => next, undefined, undefined, options);
 }

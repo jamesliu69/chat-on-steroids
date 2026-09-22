@@ -26,7 +26,7 @@ import { serverInstructions } from './instructions.js';
 import { APP_VERSION } from './../version.js';
 import { toVirtualPath } from '../sandbox.js';
 import { logWarn } from '../logger.js';
-import { withSkillsRoot } from '../skill-context.js';
+import { withManagedSkills } from '../skill-access.js';
 
 export function buildServer(
   ctx: ToolContext,
@@ -35,7 +35,7 @@ export function buildServer(
   liveContext: () => ToolContext = () => ctx,
   serverName = surfaceDefinition(surface).serverName
 ): McpServer {
-  if (surface === 'core') ctx = withSkillsRoot(ctx);
+  if (surface === 'core') ctx = withManagedSkills(ctx);
   const definition = surfaceDefinition(surface);
   const instructions = serverInstructions(ctx, surface);
   const server = new McpServer(
@@ -60,7 +60,7 @@ export function buildServer(
     // Reuse the same registration/validation/handler authority, refreshed for every child
     // so a permission or approved-root change during an awaited script takes effect.
     const live = liveContext();
-    const nested = createRegistrar(null, surface === 'core' ? withSkillsRoot(live) : live, surface);
+    const nested = createRegistrar(null, surface === 'core' ? withManagedSkills(live) : live, surface);
     if (surface === 'core') registerCoreTools(nested);
     else registerDesktopTools(nested);
     return nested.invokeNested(name, args, parent);

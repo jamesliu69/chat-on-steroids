@@ -13,6 +13,21 @@ import {
 } from '../src/main/window-lifecycle.js';
 
 describe('native window activation', () => {
+  it.each(['darwin', 'win32', 'linux'])('keeps native fullscreen available on macOS (%s)', (platform) => {
+    const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8');
+    const constructor = source.slice(source.indexOf('  window = new BrowserWindow({'), source.indexOf("  if (process.platform === 'win32') window.removeMenu();"))
+      .replace(' as const', '');
+    let options: Record<string, unknown> | undefined;
+    vm.runInNewContext(constructor, {
+      BrowserWindow: function (value: Record<string, unknown>) { options = value; },
+      layout: {}, icon: null, process: { platform },
+      titleBarOverlayForTheme: () => ({}), windowBackgroundForTheme: () => '#181818', getConfig: () => ({ ui: { theme: 'dark' } }),
+      UI_BASE_ZOOM: 1, path: { join: () => 'preload.js' }, __dirname: '/app'
+    });
+    expect(options?.fullscreenable).toBe(platform === 'darwin');
+    expect(options?.webPreferences).toMatchObject({ sandbox: true, contextIsolation: true, nodeIntegration: false });
+  });
+
   it('maximizes only on initial presentation and preserves user-sized geometry on reopen', () => {
     const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8');
     const present = source.slice(source.indexOf('function showWindow()'), source.indexOf('\nsetFinishNotifier(', source.indexOf('function showWindow()'))).replace('function showWindow(): void', 'function showWindow()');
@@ -53,7 +68,7 @@ describe('native window activation', () => {
     ready();
     expect(showWindow).toHaveBeenCalledTimes(2);
   });
-  it('discovers on first visible use only when there is no saved catalog, never on repeat show or quit', async () => {
+  it('passively observes on first visible use without opening a browser, never on repeat show or quit', async () => {
     const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8');
     const listener = source.slice(source.indexOf("  window.on('show'"), source.indexOf("  window.once('ready-to-show'"));
     let show!: () => void;
@@ -68,8 +83,6 @@ describe('native window activation', () => {
     show(); await Promise.resolve();
     show(); await Promise.resolve();
     expect(start).toHaveBeenCalledTimes(1);
-    // Showing the app is passive startup behavior. Only explicit renderer requests may
-    // trigger the one-time ChatGPT permission reminder.
     expect(start).toHaveBeenCalledWith(false);
     state = 'unavailable';
     show(); await Promise.resolve();
@@ -135,9 +148,14 @@ describe('native window activation', () => {
     expect(source.on).not.toHaveBeenCalled();
   });
 
-  it('honors close-to-tray semantics on every supported platform', () => {
-    expect(shouldQuitOnWindowAllClosed(true)).toBe(false);
-    expect(shouldQuitOnWindowAllClosed(false)).toBe(true);
+  it('keeps a macOS app alive after its last window closes, regardless of close-to-tray preference', () => {
+    expect(shouldQuitOnWindowAllClosed('darwin', true)).toBe(false);
+    expect(shouldQuitOnWindowAllClosed('darwin', false)).toBe(false);
+  });
+
+  it.each(['win32', 'linux'] as const)('keeps close-to-tray semantics on %s', (platform) => {
+    expect(shouldQuitOnWindowAllClosed(platform, true)).toBe(false);
+    expect(shouldQuitOnWindowAllClosed(platform, false)).toBe(true);
   });
 });
 

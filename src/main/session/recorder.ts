@@ -14,6 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { userTitle } from './title.js';
 import type {
   ActivitySummary,
@@ -28,7 +29,8 @@ import type {
   ToolOutcome,
   TurnOutcome
 } from '../../shared/session.js';
-import { estimateTokens, originTitle, workSequence } from '../../shared/session.js';
+import { estimateTokens, originTitle } from '../../shared/session.js';
+import { chatErrorMessageKey } from '../../shared/chat-error.js';
 import { overlappingRequestTurns, recordedRequestTurn, responseTurnId } from '../../shared/chronology.js';
 import { getConfig } from '../config.js';
 import { logInfo, logWarn } from '../logger.js';
@@ -54,12 +56,14 @@ import {
   readEvents,
   readRecentEvents,
   readLatestUserMessage,
+  readCompletedFinal,
   indexedSessions,
   renameSession,
   reopenSession,
   rewriteUnattributedToolCalls,
   setSessionOrigin,
   upsertMessageEvent,
+  upsertNativeImageEvent,
   writeAsset,
   writeOverflowText
 } from './store.js';
@@ -98,14 +102,14 @@ interface LiveConversation {
   /** ChatGPT request ids — one per server turn — that called tools while the open turn ran. */
   turnRequestIds: Set<string>;
   /**
-   * The newest turn the page reported completed, with the server turns it was calling under.
+   * The newest turn the page reported ended, with the server requests it was calling under.
    *
    * A request id is minted per server turn and outlives anything the page does: a reload,
    * a lost stream, a Stop click. So a call under one of these ids that *starts* after the
    * reported end is proof the end was the page's mistake — ChatGPT is still working that
    * turn — and the recorder reopens it rather than let Goal answer a turn that has not
-   * finished. See reopenFalselyEndedTurn. In-memory only: an app restart inside such a turn
-   * loses the proof, and the turn stays closed as the page reported it.
+   * finished. See reopenFalselyEndedTurn. After restart the durable request-turn index can
+   * restore this proof only from calls recorded before the reported end.
    */
   endedTurn: { turnId: string; startedAt: number | null; endedAt: number; requestIds: Set<string> } | null;
   /** Visible ChatGPT-native activity rows, updated by the page's stable row identity. */
@@ -122,6 +126,8 @@ interface ProgressRecord {
   text: string;
   /** The turn it belongs to, so a re-stamp is only ever matched within its own turn. */
   turnId?: string;
+  /** Semantic work stamp; zero is a historical native row first seen on reload. */
+  contentSeq?: number;
 }
 
 const conversations = new Map<string, LiveConversation>();
@@ -469,6 +475,7 @@ async function applyOrigin(sessionId: string, conversationId: string): Promise<v
     if (summary.origin.kind === 'worker' && origin.kind === 'worker' &&
         summary.origin.agentId === origin.agentId && !summary.origin.fromSessionId && origin.fromSessionId) {
       await setSessionOrigin(sessionId, { ...summary.origin, fromSessionId: origin.fromSessionId }, summary.title);
+      notifyChanged();
     }
     return;
   }
@@ -559,6 +566,7 @@ async function storedHistory(sessionId: string): Promise<StoredHistory> {
             time: event.time,
             updatedAt: event.time,
             text: event.label,
+            contentSeq: event.contentSeq,
             ...(event.turnId ? { turnId: event.turnId } : {})
           });
         } else {
@@ -1134,6 +1142,8 @@ export interface ToolContentPart {
 }
 
 export interface ToolCallInput {
+  /** Proven by dispatcher nesting, never inferred from request ids or timing. */
+  nested?: boolean;
   tool: string;
   args: unknown;
   content: readonly ToolContentPart[];
@@ -1371,6 +1381,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
     }
 
     const call: ToolCallRecord = {
+      ...(input.nested === true ? { nested: true } : {}),
       ...(target.attribution === 'request_id' && target.conversationId && evidence.processCompletion && evidence.processSessionId && input.tool === 'exec_command'
         ? { process: { sessionId: evidence.processSessionId } } : {}),
       ...callModel,
@@ -1415,7 +1426,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
         void work.then(() => pendingRecordings.delete(work));
       });
     }
-    const reopenedTurnId = await serializeObservations(target.conversationId ?? sessionId, () => reopenFalselyEndedTurn(
+    const reopenedTurnId = input.endsActivity === true ? null : await serializeObservations(target.conversationId ?? sessionId, () => reopenFalselyEndedTurn(
       sessionId,
       target.conversationId,
       input.requestId ?? null,
@@ -1425,6 +1436,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
     ));
     notifyChanged();
     try {
+      const completed = target.conversationId ? await readCompletedFinal(sessionId, target.conversationId) : null;
       const filed = await getSession(sessionId);
       const currentConversation =
         target.conversationId !== null &&
@@ -1436,7 +1448,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
         currentConversation,
         input.startedAt,
         input.endsActivity === true,
-        filed?.lastAssistantFinalAt ?? null,
+        completed?.completedAt ?? null,
         // The one thing an unattributed call still carries: the server turn it belongs to.
         input.requestId ?? null,
         reopenedTurnId,
@@ -1509,22 +1521,35 @@ async function reopenFalselyEndedTurn(
     if (callTurnId === live.turnId) live.turnRequestIds.add(requestId);
     return null;
   }
-  const ended = live.endedTurn;
+  const previousEnd = live.endedTurn;
+  let ended = previousEnd;
+  const current = (): boolean => conversations.get(conversationId) === live &&
+    live.endedTurn === previousEnd && live.turnStartedAt === null;
+  if (!ended) {
+    // A returned/restarted page may already have forgotten this ended turn.
+    // Recover only request ownership recorded before the end; the new call
+    // itself cannot manufacture that predecessor proof or reopen a closed tab.
+    const [boundary] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start', 'turn_end', 'user_message'] });
+    const summary = await getSession(sessionId);
+    const owner = recordedRequestTurn(summary?.requestTurns, requestId, conversationId);
+    if (!current() || summary?.conversationId !== conversationId || boundary?.kind !== 'turn_end' ||
+        !boundary.turnId || !owner || owner.origin >= boundary.seq ||
+        responseTurnId(summary.timelineTurns, owner.turnId) !== responseTurnId(summary.timelineTurns, boundary.turnId)) return null;
+    ended = { turnId: boundary.turnId, startedAt: live.lastTurnStartedAt,
+      endedAt: boundary.time, requestIds: new Set([requestId]) };
+  }
   if (!ended || !ended.requestIds.has(requestId) || startedAt <= ended.endedAt) return null;
   // A request id proves conversation ownership, not that the selected native
   // answer is still generating. Pro can issue same-request work after its public
   // terminal message. Only a completion inferred without that native final is
   // contradicted by the late call.
-  const [answer] = await readRecentEvents(sessionId, 1, { kinds: ['assistant_message'] });
-  if (live.endedTurn !== ended || live.turnStartedAt !== null) return null;
-  if (answer?.kind === 'assistant_message' && answer.turnId === ended.turnId &&
-      answer.state === 'final' && answer.final === true && answer.providerMessageId) return null;
+  if (await readCompletedFinal(sessionId, conversationId, ended.turnId) || !current()) return null;
   await appendEvent(sessionId, {
     time: startedAt,
     source: 'app',
     kind: 'turn_start',
     turnId: ended.turnId,
-    detail: 'the same ChatGPT request kept calling tools after the page reported this turn completed',
+    detail: 'the same ChatGPT request kept calling tools after the page reported this turn ended',
     ...(agent ? { agent } : {})
   });
   live.endedTurn = null;
@@ -1535,7 +1560,7 @@ async function reopenFalselyEndedTurn(
   live.lastTurnOutcome = null;
   live.turnRequestIds = new Set(ended.requestIds);
   logInfo(
-    `session ${sessionId} reopened turn ${ended.turnId} — request ${requestId} kept calling tools after the page reported it completed`
+    `session ${sessionId} reopened turn ${ended.turnId} — request ${requestId} kept calling tools after the page reported it ended`
   );
   return ended.turnId;
 }
@@ -1572,7 +1597,7 @@ let attributionListener:
       currentConversation: boolean,
       startedAt: number,
       endsActivity: boolean,
-      lastAssistantFinalAt: number | null,
+      completedFinalAt: number | null,
       requestId: string | null,
       reopenedTurnId: string | null,
       filedSession: SessionSummary | null
@@ -1587,7 +1612,7 @@ export function setCallAttributionListener(
         currentConversation: boolean,
         startedAt: number,
         endsActivity: boolean,
-        lastAssistantFinalAt: number | null,
+        completedFinalAt: number | null,
         requestId: string | null,
         /** The turn this call reopened, when it proved the page's completed end false. */
         reopenedTurnId: string | null,
@@ -1668,6 +1693,7 @@ export interface ChatObservation {
     | 'conversation_title'
     | 'user_message'
     | 'assistant_message'
+    | 'native_image'
     | 'page_tool'
     | 'turn_start'
     | 'turn_end'
@@ -1679,6 +1705,8 @@ export interface ChatObservation {
   reasoningEffort?: import('../../shared/session.js').ReasoningEffort;
   /** True when `time` is ChatGPT's own authored create_time, not local observation time. */
   authoredTime?: boolean;
+  /** Provider time retained for display without changing local recovery clocks. */
+  authoredAt?: number;
   /** True only for the newest DOM user row that this document proved was just sent. */
   authoredNow?: boolean;
   /** True only when the current page generation owns this assistant revision now. */
@@ -1686,11 +1714,24 @@ export interface ChatObservation {
   text?: string;
   /** Exact native user-message attachment metadata; no remote URL or image bytes. */
   attachments?: import('../../shared/input.js').InputAttachment[];
+  reaction?: string | null;
   /** ChatGPT's already-rendered authored markup for this same logical message. */
   renderedHtml?: string;
   messageId?: string;
   /** Raw public provider message UUID, retained as evidence, never used to guess ownership. */
   providerMessageId?: string;
+  /** Exact non-secret provider asset id for a native generated image. */
+  providerAssetId?: string;
+  providerRole?: 'tool' | 'assistant';
+  providerChannel?: 'final';
+  providerStatus?: 'in_progress' | 'finished_successfully';
+  width?: number;
+  height?: number;
+  previewWidth?: number;
+  previewHeight?: number;
+  previewStatus?: 'pending' | 'available' | 'unavailable';
+  previewError?: 'not_loaded' | 'ambiguous' | 'tainted' | 'oversized' | 'invalid' | 'quota';
+  previewDataUrl?: string;
   turnId?: string;
   final?: boolean;
   state?: 'streaming' | 'final';
@@ -1736,6 +1777,82 @@ export interface PageCallEvidence {
   createTime?: number | null;
 }
 
+/** Metadata-first persistence for one exact ChatGPT-native generated image. */
+async function recordNativeImage(
+  sessionId: string,
+  item: ChatObservation,
+  base: { time: number; source: 'extension'; turnId?: string; agent?: string }
+): Promise<number> {
+  if (!item.messageId || !item.providerAssetId || !item.providerRole) return 0;
+  const metadata = await upsertNativeImageEvent(sessionId, {
+    ...base,
+    kind: 'native_image',
+    messageId: item.messageId,
+    providerAssetId: item.providerAssetId,
+    providerRole: item.providerRole,
+    ...(item.providerChannel ? { providerChannel: item.providerChannel } : {}),
+    ...(item.providerStatus ? { providerStatus: item.providerStatus } : {}),
+    ...(item.width ? { width: item.width } : {}),
+    ...(item.height ? { height: item.height } : {}),
+    previewStatus: item.previewDataUrl ? 'pending' : item.previewStatus ?? 'pending',
+    ...(item.previewError ? { previewError: item.previewError } : {})
+  });
+  // A false `changed` can mean either an idempotent same-owner replay or an explicit
+  // role/agent refusal. Only the store's canonical-owner verdict may admit preview bytes.
+  if (!metadata.accepted) return 0;
+  let changed = metadata.changed ? 1 : 0;
+  if (!item.previewDataUrl || metadata.event.asset) return changed;
+  try {
+    if (!/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/.test(item.previewDataUrl) || item.previewDataUrl.length > 512_100) {
+      throw new Error('invalid native image preview');
+    }
+    const data = Buffer.from(item.previewDataUrl.slice(item.previewDataUrl.indexOf(',') + 1), 'base64');
+    if (data.length === 0 || data.length > 384_000) throw new Error('invalid native image preview');
+    const decoded = sharp(data, { limitInputPixels: 2_560_000, animated: false });
+    const info = await decoded.metadata();
+    if (info.format !== 'webp' || !info.width || !info.height || info.width > 1600 || info.height > 1600 ||
+        info.width * info.height > 2_560_000 || info.width !== item.previewWidth || info.height !== item.previewHeight) {
+      throw new Error('invalid native image preview');
+    }
+    await decoded.stats();
+    const asset = await writeAsset(sessionId, data, 'image/webp');
+    const enriched = await upsertNativeImageEvent(sessionId, {
+      ...base,
+      kind: 'native_image',
+      messageId: item.messageId,
+      providerAssetId: item.providerAssetId,
+      providerRole: item.providerRole,
+      ...(item.providerChannel ? { providerChannel: item.providerChannel } : {}),
+      ...(item.providerStatus ? { providerStatus: item.providerStatus } : {}),
+      ...(item.width ? { width: item.width } : {}),
+      ...(item.height ? { height: item.height } : {}),
+      previewStatus: 'available',
+      previewWidth: info.width,
+      previewHeight: info.height,
+      asset
+    });
+    if (enriched.changed) changed += 1;
+  } catch (error) {
+    const reason = /quota/i.test((error as Error).message) ? 'quota' : 'invalid';
+    logWarn(`native generated image preview unavailable: ${(error as Error).message}`);
+    const unavailable = await upsertNativeImageEvent(sessionId, {
+      ...base,
+      kind: 'native_image',
+      messageId: item.messageId,
+      providerAssetId: item.providerAssetId,
+      providerRole: item.providerRole,
+      ...(item.providerChannel ? { providerChannel: item.providerChannel } : {}),
+      ...(item.providerStatus ? { providerStatus: item.providerStatus } : {}),
+      ...(item.width ? { width: item.width } : {}),
+      ...(item.height ? { height: item.height } : {}),
+      previewStatus: 'unavailable',
+      previewError: reason
+    });
+    if (unavailable.changed) changed += 1;
+  }
+  return changed;
+}
+
 /**
  * Stores one visible ChatGPT-native activity row, superseding the record it already has.
  *
@@ -1765,17 +1882,21 @@ async function recordPageTool(
 
   const event = await appendEvent(sessionId, {
     ...base,
+    ...(held?.turnId ? { turnId: held.turnId } : {}),
     time: held ? held.time : base.time,
     kind: 'page_tool',
     messageId: id,
     label,
+    ...(held?.contentSeq !== undefined ? { contentSeq: held.contentSeq } : item.activeNow === false && !held ? { contentSeq: 0 } : {}),
     ...(held ? { origin: held.seq } : {})
   });
   live.pageTools.set(id, {
     seq: held ? held.seq : event.seq,
     time: held ? held.time : base.time,
     updatedAt: base.time,
-    text: label
+    text: label,
+    turnId: held?.turnId ?? base.turnId,
+    contentSeq: event.kind === 'page_tool' ? event.contentSeq : undefined
   });
   return true;
 }
@@ -1820,7 +1941,7 @@ export function recordChatObservations(
 ): Promise<{
   sessionId: string | null;
   stored: number;
-  activity: { meaningful: boolean; working: boolean; terminal: boolean; at?: number; toolStartedAt?: number; endedTurnId?: string };
+  activity: { meaningful: boolean; working: boolean; terminal: boolean; at?: number; startedAt?: number; endedTurnId?: string };
   goalCandidates: Array<{ replyId: string; turnId: string; eventSeq: number }>;
 }> {
   const hasEvidence = observations.some((item) => item.kind === 'tool_evidence');
@@ -1881,6 +2002,7 @@ async function recordSupersededMessages(
     if (!item.messageId) continue;
     const base = {
       time: item.time,
+      ...(item.authoredAt !== undefined ? { authoredAt: item.authoredAt } : {}),
       source: 'extension' as const,
       ...(item.turnId ? { turnId: item.turnId } : {})
     };
@@ -1893,9 +2015,10 @@ async function recordSupersededMessages(
           kind: 'user_message',
           message: await storeText(sessionId, item.text ?? '', MAX_USER_MESSAGE_CHARS),
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+          ...(item.reaction !== undefined ? { reaction: item.reaction } : {}),
           messageId: item.messageId
         },
-        { preferTime: item.authoredTime === true }
+        { preferTime: item.authoredTime === true, work: false }
       );
     } else if (item.kind === 'assistant_message') {
       const state = item.state ?? (item.final === true ? 'final' : 'streaming');
@@ -1915,6 +2038,9 @@ async function recordSupersededMessages(
         },
         { preferTime: item.authoredTime === true }
       );
+    } else if (item.kind === 'native_image') {
+      stored += await recordNativeImage(sessionId, item, base);
+      continue;
     }
     if (written?.changed) stored++;
   }
@@ -1929,10 +2055,10 @@ async function recordChatObservationsNow(
 ): Promise<{
   sessionId: string | null;
   stored: number;
-  activity: { meaningful: boolean; working: boolean; terminal: boolean; at?: number; toolStartedAt?: number; endedTurnId?: string };
+  activity: { meaningful: boolean; working: boolean; terminal: boolean; at?: number; startedAt?: number; endedTurnId?: string };
   goalCandidates: Array<{ replyId: string; turnId: string; eventSeq: number }>;
 }> {
-  const activity: { meaningful: boolean; working: boolean; terminal: boolean; at?: number; toolStartedAt?: number; endedTurnId?: string } = { meaningful: false, working: false, terminal: false };
+  const activity: { meaningful: boolean; working: boolean; terminal: boolean; at?: number; startedAt?: number; endedTurnId?: string } = { meaningful: false, working: false, terminal: false };
   if (!recordingEnabled()) return { sessionId: null, stored: 0, activity, goalCandidates: [] };
   if (!conversations.has(conversationId)) {
     const lineage = await supersededLineage(conversationId);
@@ -1974,11 +2100,13 @@ async function recordChatObservationsNow(
   // observations so a newer turn or an explicit verdict cannot be overwritten.
   const recoverableTurns = new Set(live?.openTurns);
   let recoveredFinal: { turnId: string; time: number; seq: number; origin: number; native: boolean } | undefined;
+  let terminalFinalAt: number | undefined;
 
   for (const item of observations) {
     const base = {
       time: item.time,
       source: 'extension' as const,
+      ...(item.authoredAt !== undefined ? { authoredAt: item.authoredAt } : {}),
       ...(item.turnId ? { turnId: item.turnId } : {}),
       ...(agent ? { agent } : {})
     };
@@ -1998,8 +2126,9 @@ async function recordChatObservationsNow(
           kind: 'user_message',
           message: await storeText(sessionId, item.text ?? '', MAX_USER_MESSAGE_CHARS),
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+          ...(item.reaction !== undefined ? { reaction: item.reaction } : {}),
           messageId: item.messageId
-        }, { preferTime: item.authoredTime === true });
+        }, { preferTime: item.authoredTime === true, work: item.authoredNow === true });
         if (!written.changed) continue;
         if (item.authoredNow === true) {
           activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time);
@@ -2052,7 +2181,7 @@ async function recordChatObservationsNow(
           final: state === 'final',
           ...(item.providerMessageId ? { providerMessageId: item.providerMessageId } : {}),
           ...(goalEligible && state === 'final' ? { goalEligible: true } : {})
-        }, { preferTime: item.authoredTime === true });
+        }, { preferTime: item.authoredTime === true, work: item.activeNow === true });
         const canonicalTurn = written.event.turnId;
         // A stopped partial answer stays streaming in history. Re-observing its
         // DOM after restart cannot renew work, nor can an old message borrow a
@@ -2113,23 +2242,33 @@ async function recordChatObservationsNow(
             await reopenThinkingFailure(sessionId, live, item.time, canonicalTurn)) {
           activity.terminal = false;
         }
-        if (terminalActivity || workingActivity) { activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time); }
-        if (terminalActivity) activity.terminal = true;
+        if (terminalActivity) terminalFinalAt = Math.max(terminalFinalAt ?? 0, item.time);
+        if (workingActivity) { activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time); }
         if (workingActivity) activity.working = true;
         break;
+      }
+      case 'native_image': {
+        // Native media is transcript content only. It does not renew activity, close a turn,
+        // create a Goal candidate, or masquerade as a locally executed tool call.
+        stored += await recordNativeImage(sessionId, item, base);
+        continue;
       }
       case 'page_tool': {
         const newlyObserved = !!live && !!item.messageId && !live.pageTools.has(item.messageId);
         const written = await recordPageTool(sessionId, live, item, base);
         if (!written) continue;
-        if (item.turnId && await reopenThinkingFailure(sessionId, live, item.time, item.turnId)) {
+        if (newlyObserved && item.activeNow !== false && item.turnId && await reopenThinkingFailure(sessionId, live, item.time, item.turnId)) {
           activity.terminal = false;
           activity.working = true;
           activity.meaningful = true;
           activity.at = Math.max(activity.at ?? 0, item.time);
         }
-        if (newlyObserved && item.turnId === live?.turnId && live.turnStartedAt !== null && item.time >= live.turnStartedAt) {
-          activity.toolStartedAt = Math.max(activity.toolStartedAt ?? 0, item.time);
+        if (newlyObserved && item.activeNow !== false && item.turnId === live?.turnId && live.turnStartedAt !== null && item.time >= live.turnStartedAt) {
+          // A new exact native thought/tool row is work for every model. A label
+          // revision or a replay of its stable identity remains presentation only.
+          activity.meaningful = true;
+          activity.working = true;
+          activity.at = Math.max(activity.at ?? 0, item.time);
         }
         break;
       }
@@ -2138,7 +2277,7 @@ async function recordChatObservationsNow(
         // Reloads lose/remint document turn ids. A recoverable notice belongs to the
         // canonical question, not that document. Keep the original notice throughout
         // recovery; a genuinely new question gives the same error a new owner.
-        const text = (item.text ?? '').replace(/\s+/g, ' ').trim();
+        const text = chatErrorMessageKey(item.text ?? '', item.recoverable === true);
         const question = item.recoverable === true ? await readLatestUserMessage(sessionId) : undefined;
         const recent = await readRecentEvents(sessionId, 32, { kinds: ['chat_error'], maxBytes: 256 * 1024 });
         if (recent.some(event => event.kind === 'chat_error' &&
@@ -2147,7 +2286,7 @@ async function recordChatObservationsNow(
               (item.reason === 'thinking_failed' && event.reason === item.reason && event.turnId === item.turnId)) &&
             (item.blocking === true || (event.turnId ?? '') === (item.turnId ?? '')) &&
             (!question || event.seq > (question.origin ?? question.seq)))) &&
-            event.message.text.replace(/\s+/g, ' ').trim() === text)) continue;
+            chatErrorMessageKey(event.message.text, event.recoverable === true) === text)) continue;
         await appendEvent(sessionId, {
           ...base,
           kind: 'chat_error',
@@ -2156,7 +2295,7 @@ async function recordChatObservationsNow(
           ...(typeof item.blocking === 'boolean' ? { blocking: item.blocking } : {}),
           message: await storeText(sessionId, item.text ?? '', 2000)
         });
-        activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time);
+        activity.meaningful = true;
         break;
       }
       case 'turn_start':
@@ -2187,6 +2326,7 @@ async function recordChatObservationsNow(
         }
         // An accepted start can wake a reported worker; a later first capture of
         // its old interim cannot. Replayed starts never reach this point.
+        activity.startedAt = Math.max(activity.startedAt ?? 0, item.time);
         activity.meaningful = true; activity.at = Math.max(activity.at ?? 0, item.time);
         activity.working = true;
         break;
@@ -2197,8 +2337,9 @@ async function recordChatObservationsNow(
         if (!item.turnId) continue;
         const stopOverride = live?.knownTurnEnds.has(item.turnId) && item.outcome === 'stopped';
         if (live?.knownTurnEnds.has(item.turnId)) {
-          // Native Stop may arrive after an interrupted/failed terminal observation. Allow
-          // this exact latest turn to strengthen once to stopped, but never an older turn.
+          // An explicit Stop can arrive after automation's interrupted end or a
+          // failed view. The latest exact source may strengthen to stopped once;
+          // an old stop must never close a new question or generation.
           if (!stopOverride || (live.turnId && live.turnId !== item.turnId)) continue;
           const [latest] = await readRecentEvents(sessionId, 1, { kinds: ['turn_start', 'turn_end', 'user_message'] });
           if (latest?.kind !== 'turn_end' || latest.turnId !== item.turnId ||
@@ -2225,11 +2366,11 @@ async function recordChatObservationsNow(
           live.openTurns.delete(item.turnId);
           live.lastTurnOutcome = item.outcome ?? 'unknown';
           live.lastTurnStartedAt = endedStartedAt;
-          // Only a completed end can be proven false by a later call: it is the one verdict
-          // Goal acts on, and the one a reloaded page fabricates. A stop is the user's own
-          // decision and the failure outcomes already belong to recovery.
+          // A Stop request is not proof that the provider obeyed it. Preserve
+          // exact request ownership through every page-local end; a canonical
+          // final is checked separately before later work can reopen the turn.
           live.endedTurn =
-            live.turnId === item.turnId && item.outcome === 'completed'
+            live.turnId === item.turnId
               ? { turnId: item.turnId, startedAt: endedStartedAt, endedAt: item.time, requestIds: live.turnRequestIds }
               : null;
           live.turnRequestIds = new Set<string>();
@@ -2249,24 +2390,19 @@ async function recordChatObservationsNow(
     stored++;
   }
   if (pageTitle) await promoteConversationTitle(sessionId, pageTitle.text, conversationId);
-  // An old final cannot finish a turn reopened for later tool work. Sequence proves
-  // revision order even when ChatGPT keeps its original message creation timestamp.
-  // Read only the bounded newest work boundary, not the whole conversation history.
-  const [[latestWork], [latestUser]] = recoveredFinal
-    ? await Promise.all([
-        readRecentEvents(sessionId, 1, { kinds: ['turn_start', 'turn_end', 'tool_call', 'user_message'] }),
-        readRecentEvents(sessionId, 1, { kinds: ['user_message'] })
-      ]) : [[], []];
-  // Repair a previously recorded false reopen only from its durable A/end/A
-  // lineage and an exact native final. A page-authored new start is new work.
-  const [lastBoundary, priorBoundary] = recoveredFinal?.native && latestWork && workSequence(latestWork) >= recoveredFinal.seq
-    ? await readRecentEvents(sessionId, 2, { kinds: ['turn_start', 'turn_end'] }) : [];
-  const nativeReopen = recoveredFinal?.native && lastBoundary?.kind === 'turn_start' && lastBoundary.source === 'app' &&
-    lastBoundary.turnId === recoveredFinal.turnId && priorBoundary?.kind === 'turn_end' &&
-    priorBoundary.turnId === recoveredFinal.turnId && priorBoundary.outcome === 'completed';
-  if (recoveredFinal && latestWork && (workSequence(latestWork) < recoveredFinal.seq || nativeReopen) &&
-      (!latestUser || (latestUser.kind === 'user_message' && (latestUser.origin ?? latestUser.seq) < recoveredFinal.origin)) &&
-      runningToolCalls(conversationId) === 0 && live?.turnId === recoveredFinal.turnId && live.openTurns.has(recoveredFinal.turnId)) {
+  // Completion and delivery readiness are separate: retain the exact native final
+  // while a tool drains. The input owner keeps its in-flight fence until sending is safe.
+  // Reload republishes historical request-owned finals as activeNow, including HTML-only
+  // revisions. They cannot retire current activity or its recovery deadline. Use the same
+  // canonical completion verdict after the whole batch, including any newer question/work.
+  const completion = recoveredFinal || terminalFinalAt !== undefined
+    ? await readCompletedFinal(sessionId, conversationId, live?.turnId ?? recoveredFinal?.turnId) : null;
+  if (terminalFinalAt !== undefined && completion) {
+    activity.meaningful = true;
+    activity.at = Math.max(activity.at ?? 0, terminalFinalAt);
+    activity.terminal = true;
+  }
+  if (recoveredFinal && completion && live?.turnId === recoveredFinal.turnId && live.openTurns.has(recoveredFinal.turnId)) {
     const { turnId, time } = recoveredFinal;
     await appendEvent(sessionId, {
       time, source: 'extension', kind: 'turn_end', turnId, outcome: 'completed',
@@ -2369,7 +2505,10 @@ export async function recordAgentMessage(
     // from an exact MCP caller must carry that conversation through instead of resolving the
     // same friendly id against whichever other prime happens to be active now.
     const conversationId = ownerConversationId ?? agentConversation(owner);
-    const sessionId = conversationId ? await sessionForConversation(conversationId) : await ensureUnattributedSession();
+    // Broker reports are history, not evidence that a closed browser page returned.
+    const sessionId = conversationId
+      ? (await findSessionByConversation(conversationId, { includeHistorical: true }))?.id ?? await sessionForConversation(conversationId)
+      : await ensureUnattributedSession();
     if (!sessionId) return;
     await appendEvent(sessionId, {
       time: delivery === 'sent' ? message.time : Date.now(),
@@ -2459,7 +2598,7 @@ export async function closeConversation(conversationId: string, dismissBrowserRe
     }).catch(() => undefined);
   }
   conversations.delete(conversationId);
-  await endSession(live.sessionId, dismissBrowserRecovery, conversationId).catch(() => undefined);
+  await endSession(live.sessionId, dismissBrowserRecovery, conversationId);
   notifyChanged();
 }
 

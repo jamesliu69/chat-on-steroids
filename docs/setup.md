@@ -2,6 +2,10 @@
 
 [Back to the overview](../README.md)
 
+## Before connecting
+
+Read the [responsible-use notice and provider rules](../README.md#responsible-use-and-provider-rules). CoS is an independent beta, used at your own risk. Its companion observes and automates the ChatGPT browser UI and records conversation content locally; this is not a public ChatGPT automation API. MCP/tunnel access does not establish permission for every automated workflow. Your account's terms, usage limits, safety decisions and workspace rules still apply.
+
 ## Quick start
 
 1. **Install and open CoS.** Choose the download for your operating system and CPU.
@@ -31,89 +35,21 @@ Core, Desktop and Plugins are separate connectors. Configure each surface you en
 
 **Your own HTTPS tunnel:** forward to the loopback URL shown by CoS and preserve its secret path. Treat the resulting URL like a password.
 
-## Headless Linux ARM64 server
+## Browser bridge port
 
-A Raspberry Pi or other Linux ARM64 host can run Core without Electron, X11, Wayland or a desktop session. The headless runtime reuses the normal MCP, approved-root sandbox, command runner, plugins and tunnel implementation, but disables features that require the companion browser: Desktop control, session recording, Compact & Resume, Goal/Loop, finish injection and browser workers.
+In **Settings → Browser & history → Browser bridge port**, choose **Auto** (default) or
+**8765**, **8766**, **8767**, **8768**, **8769**. Auto uses the first available port in that
+order. A fixed choice uses exactly that port. The companion discovers the same supported range.
 
-Build the server on the ARM64 host:
+If the selected port is occupied, the save is rejected and the previous choice and working
+bridge remain active. If a saved port is occupied when CoS starts, the app stays open with the
+bridge stopped and an error in **Setup**. Choose a free port or Auto in Settings to recover.
+The saved fixed choice never silently falls back to another port. Pairing survives a successful switch.
 
-```sh
-npm ci
-npm run rg
-npm run tunnel
-npm run build
-```
-
-Initialize a dedicated server configuration. This example exposes the repository parent as `/repos` and uses a local/manual tunnel:
-
-```sh
-npm run server:init -- --root /home/pi/github --name repos --tunnel manual
-npm run server:check
-npm run server -- start
-```
-
-If you want to keep the server in a detachable tmux session so leaving SSH does not stop it:
-
-```sh
-npm run server:tmux
-tmux attach -t chat-on-steroids
-```
-
-To force a clean restart in the background later:
-
-```sh
-npm run server:tmux:restart
-```
-
-To start that detached session at boot, add this to the same user's crontab (`crontab -e`), using the absolute Node path from `command -v node`:
-
-```cron
-@reboot cd /home/pi/github/chat-on-steroids && /usr/bin/node scripts/run-server-tmux.mjs --restart
-```
-
-The launcher is idempotent: if `chat-on-steroids` already exists, it does not start a second server. Use `tmux attach -t chat-on-steroids` whenever you want to inspect its output. The existing systemd setup below remains the better choice when automatic restart and service supervision are more important than tmux access.
-
-The MCP listener always binds to `127.0.0.1` and uses a new random secret path on each process start. Manual and Cloudflare modes write the current connector endpoint to `~/.config/chat-on-steroids-server/endpoint.json` with mode `0600`; the URL is deliberately not printed into long-lived service logs. Treat that file like a credential.
-
-For a Cloudflare quick tunnel, initialize with `--tunnel cloudflared`. The bundled, checksum-verified `cloudflared` is prepared by `npm run tunnel`; after the server connects, read `endpoint.json` for the current public URL.
-
-For OpenAI Secure MCP Tunnel, keep the machine-specific tunnel id in the repository-local `.env` file. The server automatically loads it for `init`, `check` and `start`; `.env` is ignored by Git:
-
-```sh
-cat > .env <<'EOF'
-COS_TUNNEL_ID=tunnel_0123456789abcdef0123456789abcdef
-EOF
-npm run server:init -- --root /home/pi/github --name repos
-```
-
-`COS_TUNNEL_ID` switches the headless runtime to the OpenAI transport and overrides a tunnel id previously persisted in the server config. An explicit `--tunnel-id` supplied to `server:init` still wins for that initialization command.
-
-For an interactive development run, `OPENAI_API_KEY` may be supplied in the server process environment. For systemd, use a systemd credential instead so the key is not stored in the unit or CoS config:
-
-```sh
-mkdir -p ~/.config/chat-on-steroids-server
-systemd-ask-password "OpenAI tunnel API key" | \
-  systemd-creds encrypt --name=openai-api-key - ~/.config/chat-on-steroids-server/openai-api-key.cred
-
-mkdir -p ~/.config/systemd/user/chat-on-steroids-server.service.d
-cat > ~/.config/systemd/user/chat-on-steroids-server.service.d/credentials.conf <<'EOF'
-[Service]
-LoadCredentialEncrypted=openai-api-key:%h/.config/chat-on-steroids-server/openai-api-key.cred
-EOF
-```
-
-Install the user service after `npm run build`:
-
-```sh
-npm run server:install-service
-systemctl --user daemon-reload
-systemctl --user enable --now chat-on-steroids-server
-systemctl --user status chat-on-steroids-server
-```
-
-Use `journalctl --user-unit chat-on-steroids-server -f` for service logs. If the service must remain up after the account logs out, enable user lingering for that account with `loginctl enable-linger`. The installer also accepts `--data-dir <path>`, `--print`, and `--enable-now`; it never writes an API key.
-
-The server data directory defaults to `~/.config/chat-on-steroids-server`. Set `COS_SERVER_DATA_DIR` or pass `--data-dir` to use another location. Run `node out/main/server.js check --data-dir <path>` before service startup when using manual or Cloudflare mode; OpenAI credentials loaded by `LoadCredentialEncrypted` exist only inside the systemd service process.
+An effective `CLF_BRIDGE_PORTS` environment override takes precedence over the saved choice.
+The dropdown is disabled and explains the override; unrelated Settings changes remain available.
+Remove the override from the launch environment and restart CoS to use this selector. The existing
+comma-separated override and port `0` remain available for isolated development/tests.
 
 ## Permissions and connectors
 
@@ -129,12 +65,6 @@ History is stored locally, with recording on and 30-day retention by default. Cr
 
 [Security policy](../SECURITY.md) · [Tool reference](tool-surface.md) · [Architecture](../AGENTS.md)
 
-## Skills
-
-Open **+ → Skills** to import a `.md` or `.txt` instruction file, browse installed skills or open their folder. Type **/** in the composer to autocomplete a skill command. Skills start empty and use existing Core file tools; they do not install additional tools. See the [skills guide](skills.md) for the file format and model-assisted installation.
-
-Opening a chat in a project includes its exact virtual folder in the model's main instructions, even without an AGENTS.md file. It is the default working folder; the model can work elsewhere when your task needs it and existing permissions allow it. Selected skills remain complete ahead of optional AGENTS.md content.
-
 ## Sessions, workers and Astra
 
 **Session history** belongs to the local session, not a particular ChatGPT tab. The companion records messages and the actual local tool results so the app and the model can read earlier work.
@@ -147,24 +77,21 @@ Opening a chat in a project includes its exact virtual folder in the model's mai
 
 **Astra's finish boundary** can receive queued instructions, plan checkpoints and automatic follow-ups through tools within the same working turn when Session finish is enabled. You can end the turn from the composer. This does not remove provider usage or context limits.
 
+These continuity features do not grant additional quota or access. Do not use new chats, workers, Goal/Loop or compaction to evade a provider restriction. Supervise automated work and stop a restricted workflow instead of asking another chat or tool to continue it.
+
 ## Troubleshooting
 
-- **Connected tunnel, empty Core Actions:** open the Core plugin's Actions list in ChatGPT and check for `read` (and `exec_command` when local command access is enabled). Check the saved Core Tunnel ID and matching ChatGPT workspace, then refresh that plugin's actions. If the list remains empty, reconnect the affected tunnel in CoS when no task is running, refresh the plugin again, and use **Home → Run checks**. Each of Core, Desktop and Plugins uses its own tunnel ID. Extension pairing, tunnel health, a received HTTP request, and a nonempty tools/list response are separate checks.
-- **Missing or stale tools:** refresh the relevant CoS app in ChatGPT. Reloading the Chrome extension is a separate action. Workspace-published apps can retain a reviewed tool snapshot until an administrator updates it; see [OpenAI's MCP app guidance](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt).
+- **Missing or stale tools:** refresh the relevant CoS app in ChatGPT. Reloading the Chrome extension is a separate action.
+- **Provider usage limit or policy warning:** stop the affected workflow and disable its Goal/Loop automation. Follow the provider's stated reset or support/appeal process. Do not switch accounts, chats, models, connectors or tunnels to evade the restriction. A local retry or reconnection is not evidence that a policy restriction has been lifted. Keep account notices and appeal details private; a GitHub issue cannot resolve an account enforcement decision.
 - **Tunnel rejects the API key or tunnel ID:** check the saved tunnel ID, the selected setup profile, and that its key has Tunnels Read + Use for that tunnel. Extension pairing does not authenticate the tunnel. If Platform offers no matching ChatGPT workspace, retain the exact error for an access investigation; a different tunnel does not establish account eligibility.
 - **ChatGPT blocks a tool for safety:** local permission alone does not prove that ChatGPT accepted or dispatched the call. Inspect the local tool history for the exact request. If no result exists, execution is unconfirmed; do not replay a potentially executed operation or route it through another connector. Keep the task's progress and report the provider's error, selected Chat/Work surface, and app/extension versions without credentials or private content. A plan label alone does not diagnose a provider refusal.
 - **CoS returns `TOOL_DISABLED`:** check Read-only and the named local capability. `CALLER_IDENTITY_REQUIRED` or `WORKER_IDENTITY_LOST` instead concerns exact caller ownership; neither proves that command execution is globally disabled.
-- **A single `read` reports `PLUGIN_DISABLED` or `PLUGIN_TOOL_UNAVAILABLE`:** check which connector received it. Core's built-in file reader belongs to **Chat On Steroids Core**. A stale request on **Plugins** can name `read` even though no installed external plugin currently provides it. CoS refuses the call and explains the correct surface; it does not forward it or change permissions. A real disabled external plugin named `read` still requires that plugin to be enabled.
 - **Extension version mismatch:** reload the unpacked companion after updating CoS, then reload the ChatGPT page.
 - **Models missing:** use **Reload ChatGPT models**. The picker reflects availability in your signed-in account.
 - **`UNIDENTIFIED_CALLER`:** use that conversation in the paired browser so the extension can prove its request identity. CoS does not guess from the active tab.
 - **`COMPACTION_IN_PROGRESS`:** let the source chat finish its handoff. Work continues in the replacement conversation.
 - **Linux credential storage unavailable:** unlock GNOME Keyring or KWallet, then restart CoS.
 - **A chat will not stop:** **Block** revokes local tools for that exact conversation. It does not claim to cancel the provider's generation.
-
-Image injections travel as image blocks in the active tool response. The local transcript distinguishes an offered response from a later confirmed receipt. A failure to save an optional image preview does not prevent delivery or leave its message permanently in the composer dock; CoS retains the preview for a history retry. The actual tool result remains the evidence of what was sent.
-
-The MCP connector uses ChatGPT's Developer mode and tunnel interfaces. The companion also observes and automates the browser UI; this is not a public ChatGPT automation API. Your account's [terms and policies](https://openai.com/policies/) apply. Do not use it to evade limits or safety controls.
 
 ## Build from source and contribute
 
@@ -194,11 +121,3 @@ Build on the target OS. The release workflow uses native runners for all six tar
 ---
 
 [MIT licensed](../LICENSE). Not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.
-
-## Important: ChatGPT may be waiting for approval
-
-After your first Chat On Steroids tool call, open the ChatGPT window created by CoS. A tool approval prompt may be waiting there, with choices such as **Allow once**, **Always allow** or **Deny**. Goal, Loop and agents can appear stuck while ChatGPT is waiting for your decision. Review the requested action and choose in ChatGPT.
-
-If tools disappear, try disconnecting and reconnecting the affected Chat On Steroids plugin in ChatGPT. Then make one tool call and check the opened window for approval again. This is a troubleshooting step, not a guarantee that permissions caused the missing tools.
-
-CoS shows this reminder on the first explicit model-discovery opening and retains it until you acknowledge it. **Understood** dismisses the reminder; it does not grant tool access or answer the ChatGPT approval prompt. The setup notice stays available afterward.

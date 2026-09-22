@@ -90,7 +90,7 @@ describe('Chinese app interface', () => {
       expect([...document.querySelectorAll('svg')]).toEqual(icons);
       expect(strong!.outerHTML).toBe(savedHTML);
       const text = document.getElementById('newChat')!.textContent!.trim();
-      expect(text).toBe(locale === 'zh-TW' ? '新建聊天' : 'New chat');
+      expect(text).toBe(locale === 'zh-TW' ? '新增聊天' : 'New chat');
       const shell = document.querySelector('.plugin-refresh-guide')!.textContent!;
       if (snapshots.has(locale)) expect(shell).toBe(snapshots.get(locale));
       else snapshots.set(locale, shell);
@@ -153,7 +153,7 @@ describe('Chinese app interface', () => {
     renderAgentPlan(host, 'session-one', { plan: [{ step: 'Plan', status: 'in_progress', details: 'Keep "Save" exactly as written.' }], explanation: 'Save', updatedAt: 1 } as any);
     const headline = host.querySelector('.agent-plan-step-title');
     setLanguage('zh-TW');
-    expect(host.querySelector('.agent-plan-title')!.textContent).toBe('計劃');
+    expect(host.querySelector('.agent-plan-title')!.textContent).toBe('計畫');
     expect(host.querySelector('.agent-plan-marker')!.getAttribute('aria-label')).toBe('進行中');
     expect(host.querySelector('.agent-plan-step-title')).toBe(headline);
     expect(headline!.textContent).toBe('Plan');
@@ -195,6 +195,7 @@ describe('Chinese app interface', () => {
       if (/[a-zA-Z]{2}/.test(text) && !catalog[text]) missing.push(text);
     }
     for (const node of document.querySelectorAll('[title], [placeholder], [aria-label]')) {
+      if (node.closest('[translate="no"]')) continue;
       for (const attr of ['title', 'placeholder', 'aria-label']) {
         const text = node.getAttribute(attr);
         if (text && /[a-zA-Z]{2}/.test(text) && !catalog[text]) missing.push(text);
