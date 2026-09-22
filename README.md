@@ -62,6 +62,8 @@ Windows 10/11, **macOS 13 Ventura or newer**, or a current desktop Linux. Chrome
 
 </details>
 
+**Need a screenless Raspberry Pi 5 host?** An optional plain-Node server runs on 64-bit Linux ARM64 and exposes the Core MCP tools without Electron or a browser companion. See the [headless server setup](docs/setup.md#headless-raspberry-pi-5-server) for its limits and deployment steps.
+
 <details>
 <summary>More screenshots</summary>
 

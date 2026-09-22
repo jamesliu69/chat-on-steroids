@@ -118,6 +118,62 @@ npm run dist:linux:arm64  # Linux ARM64
 
 Build on the target OS. The release workflow uses native runners for all six targets, checks the packaged runtimes and assembles the complete artifact set with checksums and corresponding native library sources.
 
+## Headless Raspberry Pi 5 server
+
+The optional plain-Node host targets **64-bit Linux on ARM64**. It runs the existing Core MCP surface without Electron, a display server or the browser companion. Browser control, native Desktop, session recording, Goal/Loop, Compact & Resume, finish injection and browser workers are unavailable in this mode. It does not change the desktop app's runtime or data directory.
+
+Use Node.js 22 on the Pi. From the CoS source directory, prepare the target binaries and build the server bundle:
+
+```sh
+npm ci
+npm run rg -- --platform linux --arch arm64
+npm run tunnel -- --platform linux --arch arm64
+npm run build
+```
+
+Choose an existing root and an OpenAI tunnel ID, then initialize the dedicated server data directory. Set `COS_TUNNEL_ID` to the tunnel ID before running the command. Use absolute Linux paths; the systemd and tmux launchers accept normalized POSIX paths containing only ASCII letters, digits, slash, dot, dash, underscore and plus.
+
+```sh
+SERVER_DATA="$HOME/.config/chat-on-steroids-server"
+npm run server:init -- --data-dir "$SERVER_DATA" --root /srv/repos --name repos --tunnel openai --tunnel-id "$COS_TUNNEL_ID"
+npm run server:check -- --data-dir "$SERVER_DATA"
+npm run server -- --data-dir "$SERVER_DATA"
+```
+
+The server key is not saved in its configuration. For an OpenAI tunnel, provide it as the `openai-api-key` systemd credential or as `OPENAI_API_KEY` in the process environment. A credential source file can live at `$SERVER_DATA/openai-api-key`; restrict it to the service user (`chmod 600`) and the data directory (`chmod 700`). Manual and Cloudflare tunnel modes retain their existing connection requirements. Optional external Plugins still need their own installation and connector configuration; `server:init` only prepares Core. `server:check` reports missing roots, tunnel IDs, credentials or target binaries.
+
+The server writes `server.log` and the non-secret `endpoint.json` in `$SERVER_DATA`. A successful source build does not prove the host's provider connection; inspect these files and the actual Core endpoint on the Pi.
+
+### systemd user service
+
+Install a unit for the current user. The command writes it atomically under `~/.config/systemd/user` and reloads systemd. It does not enable or start the unit unless `--enable` is supplied.
+
+```sh
+npm run server:service:install -- --project-dir "$PWD" --node "$(command -v node)" --data-dir "$SERVER_DATA"
+```
+
+For an OpenAI tunnel, store the credential source file at `$SERVER_DATA/openai-api-key` with mode `600`, then add this drop-in with `systemctl --user edit chat-on-steroids.service` (replace the source path if you chose a custom data directory):
+
+```ini
+[Service]
+LoadCredential=openai-api-key:%h/.config/chat-on-steroids-server/openai-api-key
+```
+
+Reload and start the service with `systemctl --user enable --now chat-on-steroids.service`. Check it with `systemctl --user status chat-on-steroids.service` and `journalctl --user -u chat-on-steroids.service -f`; stop it with `systemctl --user stop chat-on-steroids.service`. To keep a user service running after logout and start it at boot, enable lingering for that account with `loginctl enable-linger "$USER"` where the system permits it.
+
+### tmux alternative
+
+Run one named session instead of systemd:
+
+```sh
+npm run server:tmux -- --session cos-pi --project-dir "$PWD" --node "$(command -v node)" --data-dir "$SERVER_DATA"
+tmux attach -t cos-pi
+```
+
+The launcher passes literal arguments to `tmux`, rejects unsafe session names and refuses to duplicate an existing session. Pass `--restart` only when you want it to stop and replace that exact validated session. Stop the host with `tmux kill-session -t cos-pi`.
+
+For OpenAI tunnel mode, the tmux process reads `OPENAI_API_KEY` from the launcher's environment; systemd credentials are available only to the systemd service. Use a protected secret source for the environment and never put the key in command-line arguments.
+
 ---
 
 [MIT licensed](../LICENSE). Not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.

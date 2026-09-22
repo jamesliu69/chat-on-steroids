@@ -63,6 +63,8 @@ describe('headless server build contract', () => {
     );
     expect(packageJson.scripts['server:check']).toBe('node out/main/server.js check');
     expect(packageJson.scripts.server).toBe('node out/main/server.js start');
+    expect(packageJson.scripts['server:service:install']).toBe('node scripts/install-server-service.mjs');
+    expect(packageJson.scripts['server:tmux']).toBe('node scripts/run-server-tmux.mjs');
   });
 
   it('locates ripgrep from the server working directory before PATH', async () => {
