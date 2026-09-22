@@ -93,7 +93,7 @@ import {
 } from '../session/recorder.js';
 import { requestCorrelation } from '../session/correlation.js';
 import { BLOCKED_CHAT_REFUSAL, anyChatBlocked, isChatBlocked } from '../session/blocked-chats.js';
-import { anyContinuationOpen, compactingConversation } from '../session/continuation.js';
+import { anyCompactingConversation, compactingConversation } from '../session/continuation.js';
 import {
   acknowledgeBackgroundExecOutput,
   backgroundExecRecoveryNotices,
@@ -663,7 +663,7 @@ async function dispatchTracked(
     requestId &&
     !context.caller.unattributedFrozen &&
     !anyChatBlocked() &&
-    !anyContinuationOpen()
+    !anyCompactingConversation()
   ) {
     const mutationRisk = mutationNeedsHistoricalIdentity(name, surface);
     const staleIdentityRisk =
@@ -698,7 +698,7 @@ async function dispatchTracked(
   // now means the page never proved it, not that the page had not proved it yet.
   //
   // A chat being compacted is refused on the same terms, so it waits on the same terms.
-  if (!context.caller.conversationId && (anyChatBlocked() || anyContinuationOpen()) && requestId) {
+  if (!context.caller.conversationId && (anyChatBlocked() || anyCompactingConversation()) && requestId) {
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, identityWindow(REQUEST_ID_GRACE_MS), { requestId })
@@ -791,7 +791,7 @@ async function dispatchTracked(
   // 2026-09-01 that is exactly what happened — the "stopped" turn kept calling tools, the
   // handoff prompt was typed into it, and the model spent eleven more minutes on its task,
   // applying patches, before it got round to the brief. So the refusal lives here, where
-  // every call passes: from the moment the continuation is filed until its commit hands the
+  // every call passes: from handoff dispatch until the continuation commit hands the
   // chat over to `superseded`, chat A gets no tool at all, and each refusal tells the model
   // the only thing it can usefully do is write the brief.
   const compacting = !blockedChat && compactingConversation(context.caller.conversationId) !== null;

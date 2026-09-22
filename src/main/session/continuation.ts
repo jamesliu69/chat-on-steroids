@@ -553,10 +553,10 @@ export function compactingConversation(conversationId: string | null | undefined
   return null;
 }
 
-/** Whether any chat is currently being compacted — the cheap gate in front of the above. */
-export function anyContinuationOpen(): boolean {
+/** Whether any source chat has crossed the handoff-send fence. */
+export function anyCompactingConversation(): boolean {
   for (const entry of byToken.values()) {
-    if (isOpen(entry)) return true;
+    if (isOpen(entry) && handoffAsked(entry)) return true;
   }
   return false;
 }
