@@ -59,7 +59,7 @@
 - Consumes: `SecretKey`, `getSecret`, `setSecret`, `clearSecret`, `deleteAllSecrets`, and Electron `safeStorage`.
 - Produces: `SecretProvider`, `configureSecretProvider(provider: SecretProvider | null): void`, and `createServerSecretProvider(options?: { env?: NodeJS.ProcessEnv }): SecretProvider`.
 
-- [ ] **Step 1: Write the failing secret tests**
+- [x] **Step 1: Write the failing secret tests**
 
 ~~~ts
 it('prefers a trimmed systemd credential to OPENAI_API_KEY', async () => {
@@ -76,13 +76,13 @@ it('rejects mutation through a configured read-only provider', async () => {
 });
 ~~~
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/server-secrets.test.ts`
 
 Expected: FAIL because the provider module and configuration seam do not exist.
 
-- [ ] **Step 3: Implement the minimum provider boundary**
+- [x] **Step 3: Implement the minimum provider boundary**
 
 ~~~ts
 export interface SecretProvider {
@@ -103,13 +103,13 @@ export function createServerSecretProvider(
 
 Replace the static Electron import with lazy `import('electron')` used only for desktop encrypted storage. Provider reads take priority; provider writes/deletes reject. Keep existing cache-generation race protections.
 
-- [ ] **Step 4: Run focused secret regression tests**
+- [x] **Step 4: Run focused secret regression tests**
 
 Run: `npx vitest run test/secrets.test.ts test/server-secrets.test.ts`
 
 Expected: PASS, including desktop encryption tests and server precedence, empty-value, unsupported-key, and mutation-refusal cases.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ~~~bash
 git add src/main/secrets.ts src/server/secrets.ts test/secrets.test.ts test/server-secrets.test.ts
@@ -128,7 +128,7 @@ git commit -m "feat: add read-only headless secret provider"
 - Consumes: `defaultConfig('linux')`, `RESERVED_ROOT_NAMES`, `DESKTOP_CAPABILITIES`, `Config`, and `TunnelKind`.
 - Produces: `parseServerArgs(argv, env): ServerArgs`, `defaultServerDataDir(env): string`, `createInitialServerConfig(options): Config`, `normalizeServerConfig(config): Config`, and `applyServerEnvironment(config, env): Config`.
 
-- [ ] **Step 1: Write failing CLI and normalization tests**
+- [x] **Step 1: Write failing CLI and normalization tests**
 
 ~~~ts
 it('creates a Core-capable config while disabling browser-dependent features', () => {
@@ -150,13 +150,13 @@ it('rejects relative roots, reserved names, and inappropriate options', () => {
 });
 ~~~
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/server-runtime.test.ts`
 
 Expected: FAIL because `src/server/runtime.ts` does not exist.
 
-- [ ] **Step 3: Implement bounded parsing and immutable normalization**
+- [x] **Step 3: Implement bounded parsing and immutable normalization**
 
 ~~~ts
 export type ServerArgs =
@@ -180,13 +180,13 @@ export function normalizeServerConfig(source: Config): Config {
 
 Require an absolute root, a 1–32 character lower-case non-reserved name, exact existing tunnel kinds, and command-specific option admission. Apply `COS_SERVER_DATA_DIR` and `COS_TUNNEL_ID` without rewriting config. An explicit `init` tunnel choice wins over the environment default.
 
-- [ ] **Step 4: Run focused runtime tests**
+- [x] **Step 4: Run focused runtime tests**
 
 Run: `npx vitest run test/server-runtime.test.ts`
 
 Expected: PASS for parsing, default data dir, environment override, root/Core-permission preservation, and every forced server setting.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ~~~bash
 git add src/server/runtime.ts test/server-runtime.test.ts
@@ -206,7 +206,7 @@ git commit -m "feat: define headless server configuration"
 - Consumes: Task 1 providers, Task 2 runtime functions, and existing connection/plugin/terminal/recorder/session/durable/logger/resource APIs.
 - Produces: `createHeadlessHost(dependencies)`, `validateServerConfig(config, host): Promise<string[]>`, and `writeEndpointSnapshot(dataDir, status, tunnelKind): Promise<void>`.
 
-- [ ] **Step 1: Write failing injected-lifecycle tests**
+- [x] **Step 1: Write failing injected-lifecycle tests**
 
 ~~~ts
 it('stops admission before processes, plugins, and durable flush after SIGTERM', async () => {
@@ -231,13 +231,13 @@ it('writes endpoint state without credentials or private configuration', async (
 });
 ~~~
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/server-host.test.ts`
 
 Expected: FAIL because `src/server/host.ts` does not exist.
 
-- [ ] **Step 3: Implement initialization, validation, and ordered shutdown**
+- [x] **Step 3: Implement initialization, validation, and ordered shutdown**
 
 ~~~ts
 export function createHeadlessHost(deps: HeadlessHostDependencies) {
@@ -253,13 +253,13 @@ Initialize a restrictive data directory, install the server provider before secr
 
 `src/server/index.ts` wires production dependencies, optional environment-file loading, redacted stderr errors, `process.exitCode`, and `SIGINT`/`SIGTERM`. It must not import Electron.
 
-- [ ] **Step 4: Run server and adjacent connection tests**
+- [x] **Step 4: Run server and adjacent connection tests**
 
 Run: `npx vitest run test/server-host.test.ts test/server-runtime.test.ts test/server-secrets.test.ts test/connection.test.ts test/tunnel-lifecycle.test.ts`
 
 Expected: PASS; `check` never connects, startup failure cleans up identically, and snapshots exclude secrets.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ~~~bash
 git add src/server/host.ts src/server/index.ts test/server-host.test.ts
@@ -282,7 +282,7 @@ git commit -m "feat: add headless MCP host lifecycle"
 - Consumes: Task 3 server entrypoint and existing package/resource APIs.
 - Produces: `out/main/server.js`, `npm run server`, `npm run server:init`, `npm run server:check`, and resource lookup from packaged bytes or the explicit server working directory.
 
-- [ ] **Step 1: Write failing build and resource tests**
+- [x] **Step 1: Write failing build and resource tests**
 
 ~~~ts
 it('declares a second server output and Node scripts', () => {
@@ -300,13 +300,13 @@ it('uses the explicit server working directory before PATH fallback', () => {
 });
 ~~~
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/server-build.test.ts test/packaging.test.ts`
 
 Expected: FAIL because server build output/scripts and working-directory resource anchor do not exist.
 
-- [ ] **Step 3: Implement bundle and resource path**
+- [x] **Step 3: Implement bundle and resource path**
 
 ~~~ts
 rollupOptions: {
@@ -319,13 +319,13 @@ rollupOptions: {
 
 Add Node-only server scripts. Search `process.resourcesPath`, then `process.cwd()/resources/<name>`, then existing development/PATH fallbacks. Keep an explicit invalid binary hint as a failure.
 
-- [ ] **Step 4: Run tests, typecheck, build, and Node smoke**
+- [x] **Step 4: Run tests, typecheck, build, and Node smoke**
 
 Run: `npx vitest run test/server-build.test.ts test/packaging.test.ts && npm run typecheck && npm run build && node out/main/server.js check --data-dir .codex-server-check-fixture`
 
 Expected: tests/typecheck/build pass; Node runs without Electron resolution and reports a clear platform/config prerequisite failure on this non-Pi host.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ~~~bash
 git add electron.vite.config.ts package.json src/main/ripgrep.ts src/main/tunnel/locate.ts test/server-build.test.ts test/packaging.test.ts
@@ -349,7 +349,7 @@ git commit -m "build: emit the headless MCP server"
 - Consumes: Task 2 data-dir policy and Task 4 bundle/scripts.
 - Produces: `renderServerUserService(options): string`, `buildTmuxArgs(options): string[]`, `parseTmuxArgs(argv): TmuxOptions`, and server service/tmux npm commands.
 
-- [ ] **Step 1: Write failing deployment tests**
+- [x] **Step 1: Write failing deployment tests**
 
 ~~~ts
 it('renders a credential-safe unit with a fixed working directory', () => {
@@ -373,13 +373,13 @@ it('uses literal tmux argv and rejects unsafe session names', () => {
 });
 ~~~
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/server-service.test.ts test/server-tmux.test.ts`
 
 Expected: FAIL because deployment helpers do not exist.
 
-- [ ] **Step 3: Implement systemd and tmux helpers**
+- [x] **Step 3: Implement systemd and tmux helpers**
 
 ~~~js
 export function buildTmuxArgs({ session, nodePath, entryPath, dataDir }) {
@@ -395,21 +395,21 @@ export function renderServerUserService({ projectDir, nodePath, dataDir }) {
 
 Write an atomic user unit below `~/.config/systemd/user`, then run `systemctl --user daemon-reload`. Enable/start only when requested. Use `execFileSync` for tmux, validate sessions, avoid duplicates, and allow restart only for the validated named session. Document `LoadCredential=` or a permission-restricted environment file, never a credential value.
 
-- [ ] **Step 4: Update product and agent-facing docs**
+- [x] **Step 4: Update product and agent-facing docs**
 
 Document `npm ci`, ARM64 resource preparation, `server init`, `server check`, credentials, systemd, logs, and tmux. Update `AGENTS.md` with the server entrypoint/data/secret owners, Core-only limits, and source-vs-Pi evidence boundary. State browser recording, Goal/Loop, Compact & Resume, native Desktop, and browser workers are unavailable.
 
-- [ ] **Step 5: Run deployment/documentation tests**
+- [x] **Step 5: Run deployment/documentation tests**
 
 Run: `npx vitest run test/server-service.test.ts test/server-tmux.test.ts test/server-build.test.ts && npm run typecheck`
 
 Expected: PASS; generated units and tmux arguments contain no unvalidated session text or secret values.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ~~~bash
 git add scripts/install-server-service.mjs scripts/run-server-tmux.mjs test/server-service.test.ts test/server-tmux.test.ts README.md docs/setup.md AGENTS.md package.json
-git commit -m "docs: add headless MCP host deployment"
+git commit -m "feat: add headless server deployment"
 ~~~
 
 ### Task 6: Run layered validation and record Pi evidence
@@ -424,13 +424,13 @@ git commit -m "docs: add headless MCP host deployment"
 - Consumes: Tasks 1–5 source, tests, scripts, and build output.
 - Produces: a worklog that separates local source/build evidence from Raspberry Pi live acceptance.
 
-- [ ] **Step 1: Run server and adjacent regression suites**
+- [x] **Step 1: Run server and adjacent regression suites**
 
 Run: `npx vitest run test/server-secrets.test.ts test/server-runtime.test.ts test/server-host.test.ts test/server-build.test.ts test/server-service.test.ts test/server-tmux.test.ts test/secrets.test.ts test/connection.test.ts test/tunnel-lifecycle.test.ts test/packaging.test.ts`
 
 Expected: PASS with no test failures.
 
-- [ ] **Step 2: Run repository validation**
+- [x] **Step 2: Run repository validation**
 
 Run: `npm run typecheck && npm run build && npm test && npm run verify`
 
@@ -450,11 +450,13 @@ npm run server -- --data-dir ~/.config/chat-on-steroids-server
 
 In another terminal send `SIGTERM`; verify exit, endpoint snapshot, redacted logs, no Electron/Chrome started by the host, and Core reachability through the local/manual or authenticated tunnel path. Install/start/stop the user unit and verify restart policy by terminating only the service process.
 
-- [ ] **Step 4: Record actual evidence**
+**Native acceptance status:** Not run on this Windows/x64 host; the Raspberry Pi 5/ARM64 service, tunnel, and SIGTERM checks remain outstanding.
+
+- [x] **Step 4: Record actual evidence**
 
 Write exact commands, OS/architecture, pass/fail results, and unavailable Pi-only checks in the worklog. Mark only completed checkboxes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ~~~bash
 git add docs/superpowers/plans/2026-09-22-raspberry-pi-headless-mcp-host.md docs/worklog-2026-09-22-raspberry-pi-headless-mcp-host.md
