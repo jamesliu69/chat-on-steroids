@@ -277,20 +277,21 @@
       // Request order fences late responses, not accounts. No account identity is inferred.
       const observedAt = Date.now(), order = ++requestOrder;
       const result = downstreamFetch.apply(this, args);
-      if (!active) return result;
-      void result.then((response) => {
-        if (!active) return;
-        if (inspectedResponses.has(response)) return;
-        inspectedResponses.add(response);
-        void inspect(response, observedAt, order).catch(() => {});
-        let method = 'GET';
-        try {
-          const explicit = args[1] && typeof args[1].method === 'string' ? args[1].method : null;
-          const inherited = args[0] && typeof args[0] === 'object' && typeof args[0].method === 'string' ? args[0].method : null;
-          method = String(explicit || inherited || 'GET').toUpperCase();
-        } catch { return; }
-        if (method === 'POST') void inspectRequestOrigins(response, observedAt).catch(() => {});
-      }).catch(() => {});
+      if (active) {
+        void result.then((response) => {
+          if (!active) return;
+          if (inspectedResponses.has(response)) return;
+          inspectedResponses.add(response);
+          void inspect(response, observedAt, order).catch(() => {});
+          let method = 'GET';
+          try {
+            const explicit = args[1] && typeof args[1].method === 'string' ? args[1].method : null;
+            const inherited = args[0] && typeof args[0] === 'object' && typeof args[0].method === 'string' ? args[0].method : null;
+            method = String(explicit || inherited || 'GET').toUpperCase();
+          } catch { return; }
+          if (method === 'POST') void inspectRequestOrigins(response, observedAt).catch(() => {});
+        }).catch(() => {});
+      }
       return result;
     };
     // ChatGPT installs its own fetch instrumentation after document_start. Keep that owner in

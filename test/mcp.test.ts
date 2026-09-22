@@ -692,7 +692,7 @@ describe('surface boundaries', () => {
   it('advertises exactly Desktop’s tools on Desktop, with nothing from Core', async () => {
     everything();
     const names = toolNames(await desktop('tools/list'));
-    expect(names).toEqual(IS_WINDOWS ? [...BROWSER_TOOLS, ...WINDOWS_COMPUTER_METHODS, 'read_clipboard', 'write_clipboard', 'exec'].sort() : ['browser_evaluate', 'computer', 'exec', 'observe']);
+    expect(names).toEqual([...BROWSER_TOOLS, ...(IS_WINDOWS ? [...WINDOWS_COMPUTER_METHODS, 'read_clipboard', 'write_clipboard', 'exec'] : process.platform === 'darwin' ? ['computer', 'exec', 'observe'] : ['exec'])].sort());
     for (const name of surfaceDefinition('core').tools.filter(name => name !== 'exec')) expect(names, name).not.toContain(name);
   });
 
@@ -701,7 +701,7 @@ describe('surface boundaries', () => {
     // snapshot, because ChatGPT caches these two connectors independently.
     ctx.readOnly = false;
     ctx.caps = withCaps({ search: true, screen: true });
-    expect(toolNames(await desktop('tools/list'))).toEqual(IS_WINDOWS ? [...BROWSER_READ_TOOLS, ...WINDOWS_COMPUTER_READ_METHODS, 'exec'].sort() : ['browser_tabs', 'exec', 'observe']);
+    expect(toolNames(await desktop('tools/list'))).toEqual([...BROWSER_READ_TOOLS, ...(IS_WINDOWS ? [...WINDOWS_COMPUTER_READ_METHODS, 'exec'] : process.platform === 'darwin' ? ['exec', 'observe'] : ['exec'])].sort());
 
     // Before Core's first discovery the user enables command execution. Core should make
     // its one-time find-vs-exec choice from *this* state, not the state Desktop happened to
@@ -807,7 +807,7 @@ describe('surface boundaries', () => {
 
     // Each populated surface includes code mode; find and the shell exec pair remain exclusive.
     expect(coreTools).toHaveLength(10);
-    expect(desktopTools).toHaveLength(IS_WINDOWS ? 24 : 3);
+    expect(desktopTools).toHaveLength(BROWSER_TOOLS.length + (IS_WINDOWS ? 16 : process.platform === 'darwin' ? 3 : 1));
 
     // And the size, which is what a discovery pull actually costs the model on every
     // conversation that touches the connector. The ceilings sit just above what the
@@ -963,11 +963,7 @@ describe('2025-era clients', () => {
       capabilities: {},
       clientInfo: { name: 'test-client', version: '1.0.0' }
     });
-    if (IS_WINDOWS || process.platform === 'darwin') {
-      expect(coreReply.body.result.instructions).toContain(surfaceDefinition('desktop').connectorName);
-    } else {
-      expect(coreReply.body.result.instructions).not.toContain(surfaceDefinition('desktop').connectorName);
-    }
+    expect(coreReply.body.result.instructions).toContain(surfaceDefinition('desktop').connectorName);
 
     const desktopReply = await desktop('initialize', {
       protocolVersion: '2025-06-18',
@@ -978,10 +974,14 @@ describe('2025-era clients', () => {
     if (IS_WINDOWS) {
       expect(desktopReply.body.result.instructions).toContain('get_window_state');
       expect(desktopReply.body.result.instructions).toContain('sky');
-    } else {
+    } else if (process.platform === 'darwin') {
       expect(desktopReply.body.result.instructions).toContain('observe');
       expect(desktopReply.body.result.instructions).toContain('Do not poll with a batch that only waits');
       expect(desktopReply.body.result.instructions).toContain('verify');
+    } else {
+      expect(desktopReply.body.result.instructions).toContain('browser_snapshot');
+      expect(toolNames(await desktop('tools/list'))).not.toContain('observe');
+      expect(toolNames(await desktop('tools/list'))).not.toContain('computer');
     }
   });
 
@@ -1610,7 +1610,7 @@ describe('desktop capabilities', () => {
   it('offers looking at the screen without offering control of it', async () => {
     ctx.caps = withCaps({ screen: true });
     const names = toolNames(await desktop('tools/list'));
-    expect(names).toEqual(IS_WINDOWS ? [...BROWSER_READ_TOOLS, ...WINDOWS_COMPUTER_READ_METHODS, 'exec'].sort() : ['browser_tabs', 'exec', 'observe']);
+    expect(names).toEqual([...BROWSER_READ_TOOLS, ...(IS_WINDOWS ? [...WINDOWS_COMPUTER_READ_METHODS, 'exec'] : process.platform === 'darwin' ? ['exec', 'observe'] : ['exec'])].sort());
   });
 
   // Seeing the screen changes nothing, so it survives read-only mode; driving the
@@ -1624,11 +1624,11 @@ describe('desktop capabilities', () => {
     ctx.caps = effectiveCapabilities({ ...config, readOnly: true }, 'win32');
     expect(ctx.caps.screen).toBe(true);
     expect(ctx.caps.control).toBe(false);
-    expect(toolNames(await desktop('tools/list'))).toEqual(IS_WINDOWS ? [...BROWSER_READ_TOOLS, ...WINDOWS_COMPUTER_READ_METHODS, 'exec'].sort() : ['browser_tabs', 'exec', 'observe']);
+    expect(toolNames(await desktop('tools/list'))).toEqual([...BROWSER_READ_TOOLS, ...(IS_WINDOWS ? [...WINDOWS_COMPUTER_READ_METHODS, 'exec'] : process.platform === 'darwin' ? ['exec', 'observe'] : ['exec'])].sort());
 
     ctx.readOnly = false;
     ctx.caps = effectiveCapabilities({ ...config, readOnly: false }, 'win32');
-    expect(toolNames(await desktop('tools/list'))).toContain(IS_WINDOWS ? 'click' : 'computer');
+    expect(toolNames(await desktop('tools/list'))).toContain(IS_WINDOWS ? 'click' : process.platform === 'darwin' ? 'computer' : 'browser_action');
   });
 
   it('offers clipboard access alone and refuses operations whose permission is revoked', async () => {
@@ -1642,6 +1642,12 @@ describe('desktop capabilities', () => {
       name: IS_WINDOWS ? 'click' : 'computer',
       arguments: IS_WINDOWS ? { window: { app: 'fixture.exe', id: 1 }, x: 5, y: 5 } : { actions: [{ type: 'click', x: 5, y: 5 }] }
     });
+    if (!IS_WINDOWS && process.platform !== 'darwin') {
+      expect(failed(clicked)).toBe(true);
+      expect(clicked.body.error?.message).toMatch(/unknown|not found/i);
+      expect(toolNames(await desktop('tools/list'))).not.toContain('computer');
+      return;
+    }
     expect(clicked.body.result?.isError).toBe(true);
     expect(textOf(clicked)).toContain(IS_WINDOWS ? 'TOOL_DISABLED' : 'mouse and keyboard control is disabled');
 
@@ -1656,15 +1662,15 @@ describe('desktop capabilities', () => {
   it('publishes only the clipboard read tool and composition with clipboard-read permission alone', async () => {
     ctx.readOnly = false;
     ctx.caps = withCaps({ clipboardRead: true });
-    expect(toolNames(await desktop('tools/list'))).toEqual(IS_WINDOWS ? ['exec', 'read_clipboard'] : ['computer', 'exec']);
+    expect(toolNames(await desktop('tools/list'))).toEqual(IS_WINDOWS ? ['exec', 'read_clipboard'] : process.platform === 'darwin' ? ['computer', 'exec'] : []);
   });
 
   it('marks observing read-only and control destructive', async () => {
     ctx.caps = withCaps({ screen: true, control: true });
     ctx.readOnly = false;
     const tools = toolList(await desktop('tools/list'));
-    const observe = tools.find((t) => t.name === (IS_WINDOWS ? 'get_window_state' : 'observe'));
-    const computer = tools.find((t) => t.name === (IS_WINDOWS ? 'click' : 'computer'));
+    const observe = tools.find((t) => t.name === (IS_WINDOWS ? 'get_window_state' : process.platform === 'darwin' ? 'observe' : 'browser_snapshot'));
+    const computer = tools.find((t) => t.name === (IS_WINDOWS ? 'click' : process.platform === 'darwin' ? 'computer' : 'browser_action'));
     expect(observe?.annotations?.readOnlyHint).toBe(true);
     expect(computer?.annotations?.readOnlyHint).toBe(false);
     expect(computer?.annotations?.destructiveHint).toBe(true);

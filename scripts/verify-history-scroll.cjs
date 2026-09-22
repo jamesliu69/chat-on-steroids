@@ -288,8 +288,17 @@ app.whenReady().then(async () => {
       row && Number.isFinite(row.seq) && typeof row.kind === 'string'), 'Recording must contain stored events');
     const compiled = require('esbuild').transformSync(fs.readFileSync(path.join(root, 'src/shared/chronology.ts'), 'utf8'),
       { loader: 'ts', format: 'cjs' }).code;
-    const module = { exports: {} }; new Function('module', 'exports', compiled)(module, module.exports);
-    const { chronological, projectTimeline, positionOf } = module.exports;
+    const os = require('node:os');
+    const compiledDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cos-chronology-'));
+    const compiledPath = path.join(compiledDir, 'chronology.cjs');
+    let chronology;
+    try {
+      fs.writeFileSync(compiledPath, compiled, 'utf8');
+      chronology = require(compiledPath);
+    } finally {
+      fs.rmSync(compiledDir, { recursive: true, force: true });
+    }
+    const { chronological, projectTimeline, positionOf } = chronology;
     const turns = {};
     for (const row of [...source].sort((a,b)=>a.seq-b.seq)) {
       if (row.kind === 'turn_start' && row.turnId && !turns[row.turnId]) turns[row.turnId] = {origin:positionOf(row),time:row.time};

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
-const output = process.argv[2] ? path.resolve(root, process.argv[2]) : path.join(root, '.tmp/message-send-20260918/ui');
+const output = path.join(root, '.tmp/message-send-20260918/ui');
 app.setPath('userData', path.join(output, 'runtime'));
 
 app.whenReady().then(async () => {

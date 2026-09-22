@@ -3245,7 +3245,9 @@ async function deleteSelectedImage(file: StoredImageFile): Promise<number> {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') await fs.rename(quarantine, target);
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error instanceof Error ? error : new Error(String(error));
+      }
     }
   }
 }

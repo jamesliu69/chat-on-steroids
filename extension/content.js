@@ -5917,7 +5917,7 @@
         : streamEntries.filter(
             (entry) => localId !== null && entry.turnId === localId
           );
-      const rendered = visibleStream(raw, group ? group.id : localId || turn.id);
+      const rendered = visibleStream(raw);
       // The reconstruction this section is about to show, named by what it reconstructs
       // rather than by the section showing it. Deliberately not `turn.id`: a section with no
       // id of its own still reconstructs a specific response, and that is the thing that
