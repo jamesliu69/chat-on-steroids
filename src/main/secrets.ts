@@ -10,7 +10,6 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { safeStorage } from 'electron';
 import type { SecureStorageInfo } from '../shared/types.js';
 import { logError, logWarn } from './logger.js';
 
@@ -20,6 +19,8 @@ const LINUX_STORAGE_PROBE = 'chat-on-steroids-safe-storage-probe';
 
 let secretsPath = '';
 let cache: Record<string, string> | null = null;
+let safeStoragePromise: Promise<typeof import('electron').safeStorage> | null = null;
+let externalProvider: SecretProvider | null = null;
 /** A successful decrypt asked us to reseal the blob with the current async key. */
 let rotationPending = false;
 /** Invalidates a decrypt that started before an explicit store reset/delete boundary. */
@@ -64,6 +65,31 @@ function enqueue<T>(operation: () => Promise<T>): Promise<T> {
  */
 export type SecretKey = 'openaiApiKey' | 'bridgeToken' | 'openRouterApiKey' | 'customProviderApiKey' | `plugin:${string}` | `setup:${string}`;
 
+export interface SecretProvider {
+  get(key: SecretKey): Promise<string | null>;
+}
+
+async function electronSafeStorage(): Promise<typeof import('electron').safeStorage> {
+  safeStoragePromise ??= import('electron').then(({ safeStorage }) => safeStorage);
+  return safeStoragePromise;
+}
+
+function clearCachedSecretState(): void {
+  loadGeneration += 1;
+  cache = null;
+  rotationPending = false;
+  loadInFlight = null;
+}
+
+export function configureSecretProvider(provider: SecretProvider | null): void {
+  externalProvider = provider;
+  clearCachedSecretState();
+}
+
+function readOnlyProviderError(): Error {
+  return new Error('Secrets are read-only while the headless server provider is configured');
+}
+
 export function initSecretsPath(userDataDir: string): void {
   secretsPath = path.join(userDataDir, FILE_NAME);
 }
@@ -85,6 +111,7 @@ export function secureStorageCiphertextIsProtected(
 
 export async function secureStorageStatus(platform: NodeJS.Platform = process.platform): Promise<SecureStorageInfo> {
   try {
+    const safeStorage = await electronSafeStorage();
     if (!(await safeStorage.isAsyncEncryptionAvailable())) {
       return {
         available: false,
@@ -157,7 +184,7 @@ async function loadAll(): Promise<Record<string, string>> {
       rotationPending = false;
       return {};
     }
-    const decrypted = await safeStorage.decryptStringAsync(blob);
+    const decrypted = await (await electronSafeStorage()).decryptStringAsync(blob);
     const parsed = parseSecretStore(decrypted.result);
     // `deleteAllSecrets()` is allowed to race a Keychain decrypt without waiting for a prompt or
     // unavailable provider. Once deletion starts, plaintext from the older generation must never
@@ -208,7 +235,7 @@ async function writeAll(values: Record<string, string>): Promise<void> {
   if (!(await isEncryptionAvailable())) {
     throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
   }
-  const blob = await safeStorage.encryptStringAsync(JSON.stringify(values));
+  const blob = await (await electronSafeStorage()).encryptStringAsync(JSON.stringify(values));
   if (!secureStorageCiphertextIsProtected(blob)) {
     throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
   }
@@ -249,6 +276,8 @@ async function rotateIfNeeded(): Promise<void> {
 }
 
 export async function getSecret(key: SecretKey): Promise<string | null> {
+  const provider = externalProvider;
+  if (provider) return provider.get(key);
   const all = await readAll();
   const value = all[key];
   await rotateIfNeeded();
@@ -260,7 +289,9 @@ export async function hasSecret(key: SecretKey): Promise<boolean> {
 }
 
 export function setSecret(key: SecretKey, value: string): Promise<void> {
+  if (externalProvider) return Promise.reject(readOnlyProviderError());
   return enqueue(async () => {
+    if (externalProvider) throw readOnlyProviderError();
     if (!(await isEncryptionAvailable())) {
       throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
     }
@@ -290,7 +321,9 @@ export function clearSecret(key: SecretKey): Promise<void> {
 }
 
 export function deleteAllSecrets(): Promise<void> {
+  if (externalProvider) return Promise.reject(readOnlyProviderError());
   return enqueue(async () => {
+    if (externalProvider) throw readOnlyProviderError();
     // Invalidate first, before touching disk. A decrypt may already hold the old ciphertext in
     // memory and can complete after rm(); its generation check above then returns the new empty
     // view instead of resurrecting the deleted credentials into cache.
@@ -309,8 +342,5 @@ export function deleteAllSecrets(): Promise<void> {
 
 /** Test seam: forgets the decrypted blob so the next read comes from disk. */
 export function resetSecretsCacheForTests(): void {
-  loadGeneration += 1;
-  cache = null;
-  rotationPending = false;
-  loadInFlight = null;
+  clearCachedSecretState();
 }
