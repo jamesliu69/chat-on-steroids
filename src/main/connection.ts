@@ -65,6 +65,7 @@ let connectionGeneration = 0;
  * briefly bringing a connector online while the app is already leaving.
  */
 let shutdownRequested = false;
+let planToolsOverride: boolean | null = null;
 
 function enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
   const run = lifecycleQueue.then(operation, operation);
@@ -160,7 +161,7 @@ function toolsFor(id: SurfaceId): string[] {
   if (!caps.command && caps.search) tools.push('find');
   if (caps.create || caps.edit || caps.move || caps.deleteFile) tools.push('apply_patch');
   if (caps.command) tools.push('exec_command', 'write_stdin');
-  if (config.sessions.record) tools.push('update_plan');
+  if (planToolsOverride ?? config.sessions.record) tools.push('update_plan');
   if (config.multiAgent.enabled) tools.push('agents');
   return tools;
 }
@@ -267,7 +268,10 @@ async function connectImpl(): Promise<void> {
         roots: live.roots,
         caps: effectiveCapabilities(live),
         readOnly: live.readOnly,
-        privacyScreenshots: live.ui.privacyScreenshots
+        privacyScreenshots: live.ui.privacyScreenshots,
+        sessionTools: live.sessions.record,
+        planTools: planToolsOverride ?? live.sessions.record,
+        ...(planToolsOverride === null ? {} : { planToolsDisabledSetting: 'Headless server task plans' })
       };
     });
     if (shutdownRequested) {
@@ -525,8 +529,11 @@ async function disconnectResources(endpointForceAfterMs?: number): Promise<void>
   });
 }
 
-export function connect(): Promise<void> {
+export function connect(options?: { planTools?: boolean }): Promise<void> {
   if (shutdownRequested) return Promise.resolve();
+  // Headless mode sets this once for the lifetime of its process. Unspecified reconnects
+  // retain it; ordinary desktop callers keep following the persisted recording setting.
+  if (options?.planTools !== undefined) planToolsOverride = options.planTools;
   return enqueueLifecycle(connectImpl);
 }
 

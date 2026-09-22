@@ -123,6 +123,10 @@ export interface ToolContext {
   privacyScreenshots?: boolean;
   /** Whether session recording is live right now. Defaults to the live setting. */
   sessionTools?: boolean;
+  /** Whether task-plan storage is live, independently from conversation recording. */
+  planTools?: boolean;
+  /** The setting label to show if an already-exposed plan tool is now disabled. */
+  planToolsDisabledSetting?: string;
   /** Whether multi-agent mode is live right now. Defaults to the live setting. */
   agentTools?: boolean;
   /**
@@ -132,6 +136,7 @@ export interface ToolContext {
    * failure rather than a tidy error. Default to the live values.
    */
   exposedSessionTools?: boolean;
+  exposedPlanTools?: boolean;
   exposedAgentTools?: boolean;
   /**
    * Whether `find` must stay registered for the lifetime of the endpoint.
@@ -1167,6 +1172,8 @@ export interface SurfaceRegistrar {
   exposedCaps: Capabilities;
   sessionToolsLive: boolean;
   sessionToolsExposed: boolean;
+  planToolsLive: boolean;
+  planToolsExposed: boolean;
   agentToolsLive: boolean;
   agentToolsExposed: boolean;
   /** Whether `find` is part of this endpoint's surface. See ToolContext.exposedFind. */
@@ -1201,13 +1208,15 @@ export interface SurfaceRegistrar {
 export function createRegistrar(server: McpServer | null, ctx: ToolContext, surface: SurfaceId, observe?: (name: string, config: { description: string; inputSchema: z.ZodType; annotations?: ToolAnnotations }) => void): SurfaceRegistrar {
   const caps = ctx.caps;
   const exposedCaps = ctx.exposedCaps ?? caps;
-  // These two do not follow a capability checkbox: they are whole features the user
-  // switches on in the app, and neither touches the filesystem. Like the capability
-  // tools they are exposed monotonically and disabled at the handler, so switching a
-  // feature off does not delete a tool a cached ChatGPT snapshot still believes in.
+  // Session recording and multi-agent are app-level features. Plans normally follow
+  // recording but the headless host can enable them independently. Feature tools are
+  // exposed monotonically and disabled at the handler, so switching one off does not
+  // delete a tool a cached ChatGPT snapshot still believes in.
   const sessionToolsLive = ctx.sessionTools ?? getConfig().sessions.record;
+  const planToolsLive = ctx.planTools ?? sessionToolsLive;
   const agentToolsLive = ctx.agentTools ?? getConfig().multiAgent.enabled;
   const sessionToolsExposed = ctx.exposedSessionTools ?? sessionToolsLive;
+  const planToolsExposed = ctx.exposedPlanTools ?? planToolsLive;
   const agentToolsExposed = ctx.exposedAgentTools ?? agentToolsLive;
   const findExposed = ctx.exposedFind ?? (!exposedCaps.command && exposedCaps.search);
   const names: string[] = [];
@@ -1219,6 +1228,8 @@ export function createRegistrar(server: McpServer | null, ctx: ToolContext, surf
     exposedCaps,
     sessionToolsLive,
     sessionToolsExposed,
+    planToolsLive,
+    planToolsExposed,
     agentToolsLive,
     agentToolsExposed,
     findExposed,

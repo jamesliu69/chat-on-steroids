@@ -140,9 +140,9 @@ npm run server:check -- --data-dir "$SERVER_DATA"
 npm run server -- --data-dir "$SERVER_DATA"
 ```
 
-The server key is not saved in its configuration. For an OpenAI tunnel, provide it as the `openai-api-key` systemd credential or as `OPENAI_API_KEY` in the process environment. A credential source file can live at `$SERVER_DATA/openai-api-key`; restrict it to the service user (`chmod 600`) and the data directory (`chmod 700`). Manual and Cloudflare tunnel modes retain their existing connection requirements. Optional external Plugins still need their own installation and connector configuration; `server:init` only prepares Core. `server:check` reports missing roots, tunnel IDs, credentials or target binaries.
+The server key is not saved in its configuration. For a direct `npm run server` or tmux launch, provide `OPENAI_API_KEY` in the process environment. For systemd, a credential source file can live at `$SERVER_DATA/openai-api-key`; restrict it to the service user (`chmod 600`) and the data directory (`chmod 700`), then map it with `LoadCredential=` below. The server reads the service-private file exposed through `$CREDENTIALS_DIRECTORY`; it does not read the source file directly. Manual and Cloudflare tunnel modes retain their existing connection requirements. Optional external Plugins still need their own installation and connector configuration; `server:init` only prepares Core. `server:check` reports missing roots, tunnel IDs, credentials or target binaries.
 
-The server writes `server.log` and the non-secret `endpoint.json` in `$SERVER_DATA`. A successful source build does not prove the host's provider connection; inspect these files and the actual Core endpoint on the Pi.
+The server writes `server.log` and the non-secret `endpoint.json` in `$SERVER_DATA`. The snapshot contains connection state and applicable endpoint origins; it omits the token-bearing MCP paths. In manual or Cloudflare tunnel mode, retrieve the full Core URL from another trusted terminal with `npm run server:endpoint -- --data-dir "$HOME/.config/chat-on-steroids-server"` (substitute your data directory) when configuring a client that needs the URL. OpenAI Secure Tunnel handles its provider connection directly; its `server:endpoint` output may contain only the local diagnostic URL. This explicit command prints any available bearer URLs to stdout. The companion `endpoint-private.json` is mode `600`, is cleared on shutdown, and is removed before each new start; do not redirect the output into general logs or share it as ordinary status information. A successful source build does not prove the host's provider connection; inspect the snapshots and validate the actual Core endpoint on the Pi.
 
 ### systemd user service
 
@@ -170,7 +170,7 @@ npm run server:tmux -- --session cos-pi --project-dir "$PWD" --node "$(command -
 tmux attach -t cos-pi
 ```
 
-The launcher passes literal arguments to `tmux`, rejects unsafe session names and refuses to duplicate an existing session. Pass `--restart` only when you want it to stop and replace that exact validated session. Stop the host with `tmux kill-session -t cos-pi`.
+The launcher passes literal arguments to `tmux`, uses `--project-dir` as the pane working directory, rejects unsafe session names and refuses to duplicate an existing session. Pass `--restart` only when you want it to stop and replace that exact validated session. Stop the host with `tmux kill-session -t cos-pi`.
 
 For OpenAI tunnel mode, the tmux process reads `OPENAI_API_KEY` from the launcher's environment; systemd credentials are available only to the systemd service. Use a protected secret source for the environment and never put the key in command-line arguments.
 

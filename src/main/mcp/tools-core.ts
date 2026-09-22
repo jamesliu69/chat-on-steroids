@@ -991,7 +991,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
 
   // ------------------------------------------------------- plan and finish
 
-  if (reg.sessionToolsExposed) {
+  if (reg.planToolsExposed) {
     registerPlanTool(reg);
   }
   if (reg.ctx.exposedFinishTool ?? getConfig().ui.finishTool === true) {

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { connect, getStatus, onStatusChange, shutdownConnection } from '../main/connection.js';
-import { initConfigPath, loadConfig, saveConfig } from '../main/config.js';
+import { initConfigPath, loadConfig, saveConfig, setRuntimeConfigOverride } from '../main/config.js';
 import { unifiedExecManager } from '../main/codex/manager.js';
 import { flushDurable, initDurableStore } from '../main/durable.js';
 import { flushLogBeforeExit, initLogFile } from '../main/logger.js';
@@ -13,7 +13,8 @@ import { flushSessions, initSessionStore } from '../main/session/store.js';
 import { locateBinary } from '../main/tunnel/locate.js';
 import { TUNNEL_ID_PATTERN } from '../main/tunnel/index.js';
 import type { Config } from '../shared/types.js';
-import { createHeadlessHost } from './host.js';
+import { clearEndpointSnapshots, createHeadlessHost, readPrivateEndpoint } from './host.js';
+import { createSignalLatch } from './signals.js';
 import {
   applyServerEnvironment,
   createInitialServerConfig,
@@ -38,7 +39,7 @@ async function initializeRuntime(dataDir: string): Promise<void> {
   if (initializedDataDir !== null) throw new Error('Server runtime cannot switch data directories in one process');
   await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
   initLogFile(path.join(dataDir, 'server.log'));
-  initConfigPath(dataDir);
+  initConfigPath(dataDir, { preserveSessionRecordingOff: true });
   initSecretsPath(dataDir);
   initSessionStore(dataDir);
   initDurableStore(dataDir);
@@ -51,7 +52,9 @@ async function loadServerConfig(dataDir: string, persist: boolean): Promise<Conf
   const loaded = await loadConfig();
   const normalized = normalizeServerConfig(loaded);
   if (persist && JSON.stringify(loaded) !== JSON.stringify(normalized)) await saveConfig(normalized);
-  return applyServerEnvironment(normalized);
+  const effective = applyServerEnvironment(normalized);
+  if (persist) setRuntimeConfigOverride(effective);
+  return effective;
 }
 
 async function validate(config: Config): Promise<string[]> {
@@ -93,23 +96,20 @@ async function runCheck(args: Extract<ServerArgs, { command: 'check' }>): Promis
   output('Server check: ready');
 }
 
-function waitForSignal(): Promise<NodeJS.Signals> {
-  return new Promise((resolve) => {
-    process.once('SIGINT', () => resolve('SIGINT'));
-    process.once('SIGTERM', () => resolve('SIGTERM'));
-  });
+async function runEndpoint(args: Extract<ServerArgs, { command: 'endpoint' }>): Promise<void> {
+  const endpoint = await readPrivateEndpoint(args.dataDir);
+  if (!endpoint) throw new Error(`No active Core endpoint is available in ${args.dataDir}; start the server first`);
+  output(JSON.stringify(endpoint, null, 2));
 }
 
 async function runStart(args: Extract<ServerArgs, { command: 'start' }>): Promise<void> {
-  const config = await loadServerConfig(args.dataDir, true);
-  const failures = await validate(config);
-  if (failures.length > 0) throw new Error(failures.join('; '));
-  await pluginManager.initialize(args.dataDir);
+  const signals = createSignalLatch();
+  let tunnelKind: Config['tunnel']['kind'] = 'manual';
   const host = createHeadlessHost({
-    connect,
+    connect: () => connect({ planTools: true }),
     getStatus,
     subscribeStatus: onStatusChange,
-    waitForSignal,
+    waitForSignal: signals.wait,
     shutdownConnection,
     terminateProcesses: () => unifiedExecManager.terminateAllProcesses(),
     closePlugins: () => pluginManager.close(),
@@ -117,15 +117,34 @@ async function runStart(args: Extract<ServerArgs, { command: 'start' }>): Promis
     flushSessions,
     flushDurable,
     flushLogs: () => flushLogBeforeExit(),
-    tunnelKind: config.tunnel.kind
+    tunnelKind: () => tunnelKind,
+    reportState: (state) => output(`Connection state: ${state}`)
   });
-  await host.start(args);
+  try {
+    await initializeRuntime(args.dataDir);
+    await clearEndpointSnapshots(args.dataDir);
+    const config = await loadServerConfig(args.dataDir, true);
+    if (signals.requested()) { await host.shutdown(); return; }
+    const failures = await validate(config);
+    if (signals.requested()) { await host.shutdown(); return; }
+    if (failures.length > 0) throw new Error(failures.join('; '));
+    tunnelKind = config.tunnel.kind;
+    await pluginManager.initialize(args.dataDir);
+    if (signals.requested()) { await host.shutdown(); return; }
+    await host.start(args);
+  } catch (error) {
+    if (signals.requested()) { await host.shutdown(); return; }
+    throw error;
+  } finally {
+    signals.dispose();
+  }
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseServerArgs(argv);
   if (args.command === 'init') return runInit(args);
   if (args.command === 'check') return runCheck(args);
+  if (args.command === 'endpoint') return runEndpoint(args);
   return runStart(args);
 }
 

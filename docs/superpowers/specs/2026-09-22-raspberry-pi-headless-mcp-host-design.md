@@ -24,7 +24,7 @@ The headless host must:
 - expose clear status and failure evidence through stdout, stderr, logs, and an endpoint snapshot;
 - fail closed when the host is not Linux ARM64, an approved root is missing, the bundled search binary is unavailable, or the configured tunnel credential/binary is unavailable.
 
-The first release does not need to provide a browser, native screen/input control, session recording, Goal/Loop, Compact & Resume, browser recovery, or browser-backed multi-agent workers on the Pi.
+The first release does not need to provide a browser, native screen/input control, session recording, Goal/Loop, Compact & Resume, browser recovery, or browser-backed multi-agent workers on the Pi. Core task plans remain available as a separate tool; disabling conversation recording must not disable plan storage.
 
 ## Non-goals
 
@@ -68,6 +68,7 @@ server init --root <absolute-path> [--name <virtual-name>]
              [--tunnel-id <id>]
 server check [--data-dir <path>]
 server start [--data-dir <path>]
+server endpoint [--data-dir <path>]
 ```
 
 `init` validates the absolute approved root, bounded virtual name, tunnel kind, and data directory; creates the existing config schema with a Core-oriented capability set; and never writes an API key.
@@ -84,6 +85,7 @@ Server normalization must preserve approved roots and Core permissions while for
 - browser-only mode on;
 - Electron/browser startup, tray, login startup and background browser chats off;
 - session recording and automatic compaction off;
+- Core task-plan tools enabled independently from conversation recording;
 - Goal/Loop and finish injection off;
 - multi-agent browser workers off;
 - unattributed Core calls explicitly allowed because there is no browser conversation identity to prove, while known blocked/retired ownership rules remain enforced by the existing kernel;
@@ -102,7 +104,7 @@ The OpenAI tunnel credential is supplied through `openai-api-key` or `OPENAI_API
 
 ## Transport and endpoint evidence
 
-The server reuses `connection.ts` and the existing MCP server. A manual tunnel mode remains local-only and is intended for validation. Cloudflared/OpenAI modes use their existing verified binaries and credentials. The server writes an atomic `endpoint.json` in the server data directory containing only non-secret state: connection state, Core connector name, tunnel kind, and applicable local/public URL.
+The server reuses `connection.ts` and the existing MCP server. A manual tunnel mode remains local-only and is intended for validation. Cloudflared/OpenAI modes use their existing verified binaries and credentials. The server writes an atomic `endpoint.json` in the server data directory containing only non-secret state: connection state, Core connector name, tunnel kind, and applicable local/public endpoint origins. It omits the token-bearing MCP path segments. Full Core URLs are held separately in mode-`0600` `endpoint-private.json`, omitted from logs, cleared on graceful shutdown and removed before each start. The explicit `server endpoint` command reveals those bearer URLs on stdout for an operator who needs to configure a client.
 
 The listener remains bound according to the existing connection owner and is not widened to an arbitrary LAN address. Public reachability is provided only by the configured tunnel/authentication path. A successful process start or tunnel spawn is not reported as connected; the existing status transition remains the source of truth.
 
@@ -117,7 +119,7 @@ The generated systemd user unit must use:
 - no secret values embedded in the unit text;
 - a documented systemd credential setup path.
 
-The tmux launcher is an optional interactive fallback. It must pass arguments through `execFileSync` without a shell, refuse invalid session names, avoid duplicate sessions, and support an explicit restart operation.
+The tmux launcher is an optional interactive fallback. It must pass arguments through `execFileSync` without a shell, set the pane working directory to the validated project/install directory, refuse invalid session names, avoid duplicate sessions, and support an explicit restart operation.
 
 ## Build and packaging
 

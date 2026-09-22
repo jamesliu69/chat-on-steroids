@@ -215,6 +215,7 @@ interface SurfaceExposure {
   finishTool: boolean;
   caps: ToolContext['caps'] | null;
   sessionTools: boolean;
+  planTools: boolean;
   agentTools: boolean;
   find: boolean | null;
 }
@@ -233,7 +234,7 @@ const surfaceExposure = new Map<SurfaceId, SurfaceExposure>();
 function exposureFor(surface: SurfaceId): SurfaceExposure {
   let state = surfaceExposure.get(surface);
   if (!state) {
-    state = { finishTool: false, caps: null, sessionTools: false, agentTools: false, find: null };
+    state = { finishTool: false, caps: null, sessionTools: false, planTools: false, agentTools: false, find: null };
     surfaceExposure.set(surface, state);
   }
   return state;
@@ -298,16 +299,20 @@ export async function startMcpServer(getContext: () => ToolContext): Promise<Mcp
     }
     const config = getConfig();
     const sessionTools = live.sessionTools ?? config.sessions.record;
+    const planTools = live.planTools ?? sessionTools;
     const agentTools = live.agentTools ?? config.multiAgent.enabled;
     exposed.finishTool = exposed.finishTool || config.ui.finishTool === true;
     exposed.sessionTools = exposed.sessionTools || sessionTools;
+    exposed.planTools = exposed.planTools || planTools;
     exposed.agentTools = exposed.agentTools || agentTools;
     return {
       ...live,
       sessionTools,
+      planTools,
       agentTools,
       exposedCaps: { ...exposed.caps },
       exposedSessionTools: exposed.sessionTools,
+      exposedPlanTools: exposed.planTools,
       exposedFinishTool: exposed.finishTool,
       exposedAgentTools: exposed.agentTools,
       exposedFind: exposed.find

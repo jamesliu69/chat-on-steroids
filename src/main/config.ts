@@ -319,9 +319,9 @@ const configSchema = z.object({
         .default(DEFAULT_SESSIONS.advisoryTokens),
       limitTokens: z.number().int().min(10_000).max(4_000_000).optional().default(DEFAULT_SESSIONS.limitTokens)
     })
-    // `record` and `retainDays` remain readable for old configs and wire compatibility, but
-    // they are no longer user choices. Normalizing here covers disk load, renderer saves,
-    // extension/config writers and direct updateConfig callers at one boundary.
+    // `record` and `retainDays` remain readable for old desktop configs and wire
+    // compatibility, but they are no longer desktop user choices. The headless server has
+    // a separate explicit privacy policy that preserves record=false after validation.
     .transform((sessions) => ({ ...sessions, record: true, retainDays: 0 }))
     .optional()
     .default({ ...DEFAULT_SESSIONS }),
@@ -519,24 +519,43 @@ function adoptCurrentGoalPrompt(config: Config): Config {
 
 let configPath = '';
 let current: Config = defaultConfig();
+let runtimeConfigOverride: Config | null = null;
+let preserveSessionRecordingOff = false;
 // Every UI mutation ultimately lands in the same tiny JSON file. Keep those
 // read-modify-write transactions strictly ordered so two fast checkbox/root changes
 // cannot race on config.json.tmp or overwrite each other's newer state.
 let mutationQueue: Promise<void> = Promise.resolve();
 
-export function initConfigPath(userDataDir: string): void {
+export function initConfigPath(
+  userDataDir: string,
+  options: { preserveSessionRecordingOff?: boolean } = {}
+): void {
   configPath = path.join(userDataDir, 'config.json');
+  runtimeConfigOverride = null;
+  preserveSessionRecordingOff = options.preserveSessionRecordingOff === true;
+}
+
+function preserveServerSessionPolicy(config: Config, source: unknown): Config {
+  if (!preserveSessionRecordingOff || typeof source !== 'object' || source === null || Array.isArray(source)) {
+    return config;
+  }
+  const sessions = (source as { sessions?: unknown }).sessions;
+  if (typeof sessions !== 'object' || sessions === null || Array.isArray(sessions)) return config;
+  if ((sessions as { record?: unknown }).record !== false) return config;
+  return { ...config, sessions: { ...config.sessions, record: false } };
 }
 
 export async function loadConfig(): Promise<Config> {
   try {
     const raw = await fs.readFile(configPath, 'utf8');
-    const parsed = configSchema.safeParse(JSON.parse(raw));
+    const source: unknown = JSON.parse(raw);
+    const parsed = configSchema.safeParse(source);
     if (!parsed.success) {
       logError('Settings file was invalid and has been reset to defaults');
       current = conservativeRecoveryConfig();
     } else {
-      current = adoptCurrentGoalPrompt(adoptWiderWindow(adoptAutoCompaction(recalibrateTokens(parsed.data))));
+      const preserved = preserveServerSessionPolicy(parsed.data, source);
+      current = adoptCurrentGoalPrompt(adoptWiderWindow(adoptAutoCompaction(recalibrateTokens(preserved))));
       // Duplicate root names would make a virtual path ambiguous.
       const seen = new Set<string>();
       current.roots = current.roots.filter((r) => {
@@ -623,7 +642,17 @@ function adoptWiderWindow(config: Config): Config {
 }
 
 export function getConfig(): Config {
-  return current;
+  return runtimeConfigOverride ?? current;
+}
+
+/**
+ * Publishes validated, process-local settings such as server environment overrides.
+ * The persisted config remains owned by `current` and is never rewritten by this view.
+ */
+export function setRuntimeConfigOverride(config: Config | null): void {
+  runtimeConfigOverride = config === null
+    ? null
+    : preserveServerSessionPolicy(configSchema.parse(config), config);
 }
 
 /**
@@ -671,7 +700,8 @@ export function updateConfig(
   const operation = mutationQueue.then(async () => {
     const previous = current;
     // Validate before reserving external resources. The optional publisher owns their rollback.
-    const proposed = configSchema.parse(await update(previous));
+    const source = await update(previous);
+    const proposed = preserveServerSessionPolicy(configSchema.parse(source), source);
     const persist = () => persistConfig(proposed);
     const next = await (publish ? publish(proposed, previous, persist) : persist());
     // Keep dependent durable retirement inside the same settings transaction;

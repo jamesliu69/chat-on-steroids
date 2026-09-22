@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     config,
     report: null as null | ((report: Record<string, unknown>) => void),
     starts: 0,
+    contextProvider: null as null | (() => { planTools?: boolean; sessionTools?: boolean; planToolsDisabledSetting?: string }),
     prewarm: vi.fn(async () => undefined),
     endpointStop: vi.fn(async (_options?: { forceAfterMs?: number }): Promise<void> => undefined),
     publication: vi.fn((surface: string, observe: (name: string, version: string, instructions: string, tools: unknown[]) => void) => observe(`Chat On Steroids ${surface}`, '1', 'instructions', [])),
@@ -57,7 +58,8 @@ vi.mock('../src/main/logger.js', () => ({ logError: vi.fn(), logInfo: vi.fn(), l
 vi.mock('../src/main/mcp/server.js', () => ({
   lastRequestAt: () => null,
   tunnelProbeHeaders: () => ({}),
-  startMcpServer: vi.fn(async () => {
+  startMcpServer: vi.fn(async (getContext?: () => { planTools?: boolean; sessionTools?: boolean; planToolsDisabledSetting?: string }) => {
+    mocks.contextProvider = getContext ?? null;
     mocks.endpointStartReached();
     if (mocks.endpointStartGate) await mocks.endpointStartGate;
     return {
@@ -102,9 +104,25 @@ vi.mock('../src/main/tunnel/index.js', () => ({
 }));
 
 describe('connection surface state', () => {
+  it('publishes headless plans without enabling session recording', async () => {
+    const connection = await import('../src/main/connection.js');
+    await connection.connect({ planTools: true });
+    await connection.connect();
+
+    expect(connection.getStatus().surfaces.find((surface) => surface.id === 'core')?.tools).toContain('update_plan');
+    expect(mocks.contextProvider?.()).toMatchObject({
+      planTools: true,
+      sessionTools: false,
+      planToolsDisabledSetting: 'Headless server task plans'
+    });
+    expect(mocks.config.sessions.record).toBe(false);
+    await connection.disconnect();
+  });
+
   beforeEach(() => {
     mocks.report = null;
     mocks.starts = 0;
+    mocks.contextProvider = null;
     mocks.prewarm.mockClear();
     mocks.endpointStop.mockClear();
     mocks.publication.mockClear();

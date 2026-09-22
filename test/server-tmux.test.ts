@@ -13,7 +13,7 @@ const options = {
 describe('headless tmux launcher', () => {
   it('builds literal argv for the server process', () => {
     expect(buildTmuxArgs(options)).toEqual([
-      'new-session', '-d', '-s', 'cos-pi', '--', '/usr/bin/node',
+      'new-session', '-d', '-s', 'cos-pi', '-c', '/srv/cos', '--', '/usr/bin/node',
       '/srv/cos/out/main/server.js', 'start', '--data-dir', '/srv/cos-data'
     ]);
   });

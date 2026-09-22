@@ -272,6 +272,7 @@ beforeAll(async () => {
     // that silently changes meaning when a product default moves is not testing gating.
     // The tools they add are covered by their own suites.
     sessionTools: false,
+    planTools: undefined,
     agentTools: false
   };
 });
@@ -292,6 +293,7 @@ beforeEach(async () => {
   ctx.readOnly = true;
   ctx.roots = [{ name: 'workspace', path: approved }];
   ctx.sessionTools = false;
+  ctx.planTools = undefined;
   ctx.agentTools = false;
   // A fresh endpoint gives every test a fresh ChatGPT tool-surface snapshot. Tests
   // that change permissions mid-flight still exercise the real live-config path.
@@ -1129,6 +1131,21 @@ describe('capability gating', () => {
     expect(names).not.toContain('session');
     expect(names).toContain('update_plan');
     expect(names).toContain('agents');
+  });
+
+  it('exposes plan tools independently from conversation recording', async () => {
+    ctx.sessionTools = false;
+    ctx.planTools = true;
+
+    const names = toolNames(await core('tools/list'));
+    expect(names).toContain('update_plan');
+    expect(names).not.toContain('session');
+
+    const initialized = await core('initialize', {
+      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test-client', version: '1.0.0' }
+    });
+    expect(initialized.body.result.instructions).toContain('# Task plan');
+    expect(initialized.body.result.instructions).not.toContain('the app shows the headlines');
   });
 
   it('teaches primes to reuse sleeping workers before spawning replacements', async () => {
@@ -3046,7 +3063,8 @@ describe('exec_command and write_stdin', () => {
 
 describe('agent-maintained plans over MCP', () => {
   it('uses exact request proof without workers, refuses foreign targets and retired chats', async () => {
-    ctx.sessionTools = true;
+    ctx.sessionTools = false;
+    ctx.planTools = true;
     ctx.agentTools = false;
     const source = await createSession({ conversationId: 'plan-http-source' });
     const other = await createSession({ conversationId: 'plan-http-other' });
@@ -3073,18 +3091,20 @@ describe('agent-maintained plans over MCP', () => {
     expect((await readSessionPlan(source.id))?.plan).toEqual([]);
   });
 
-  it('validates the Codex statuses and enforces recording disable after discovery', async () => {
-    ctx.sessionTools = true;
+  it('validates the Codex statuses and enforces plan-tool disable after discovery', async () => {
+    ctx.planTools = true;
     const declaration = toolList(await core('tools/list')).find(tool => tool.name === 'update_plan');
     expect(declaration?.inputSchema.required).toEqual(['plan']);
     expect(declaration?.inputSchema.additionalProperties).toBe(false);
     expect(failed(await core('tools/call', { name: 'update_plan', arguments: { plan: [
       { step: 'One', status: 'in_progress' }, { step: 'Two', status: 'in_progress' }
     ] } }))).toBe(true);
+    ctx.planTools = false;
     ctx.sessionTools = false;
     const disabled = await core('tools/call', { name: 'update_plan', arguments: { plan: [] } });
     expect(failed(disabled)).toBe(true);
-    expect(textOf(disabled)).toContain('Session recording');
+    expect(textOf(disabled)).toContain('Task plans');
+    expect(textOf(disabled)).toContain('Settings → Chat');
   });
 });
 

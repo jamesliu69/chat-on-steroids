@@ -75,7 +75,7 @@ losing the project, history, workers or queued instructions when a chat grows to
 | Goal objective | The requested finish line for one chat. It persists independently of a provider attempt. |
 | Goal / Loop | Mutually exclusive modes of one driver. Goal can decide no further message is needed; Loop continues within scope. |
 | Generated workflow / checkpoints | User instructions owned by the outbox; delivered at real finish/completion boundaries. |
-| `update_plan` | The agent's displayed progress plan. It does not execute or consume queue entries. |
+| `update_plan` | The agent's CoS-stored progress plan, optionally shown in the desktop UI. It does not execute or consume queue entries. |
 | `session_finish` | Astra's explicit near-finish hold/notice boundary; does not mean the whole task is already verified. |
 | Prime / worker | One owning conversation and its reusable subordinate chats. Several prime families may run independently. |
 | Decision helper / planner | A role-specific chat that produces a continuation decision or workflow; it must not execute the reference task. |
@@ -325,7 +325,7 @@ drop an accepted mutation just to finish quickly; final shutdown has its explici
 
 ### Headless Core host
 
-`src/server/index.ts` is a separate Node entrypoint emitted as `out/main/server.js`. It accepts only Linux ARM64, owns a dedicated server data directory, installs the read-only server secret provider before secret reads, and reuses the existing Core registrar, capability guards, sandbox, terminal manager, tunnel, plugin manager, durable store and bounded shutdown. Keep Electron, renderer, browser bridge and native Desktop out of this dependency path. Server normalization disables recording, Desktop/browser behavior, Goal/Loop, automatic compaction, finish injection and browser workers; external Plugins remain governed by their existing explicit installation and connector rules. The service and tmux launchers pass fixed absolute paths as argv and never put credential values in a unit or command line. See `docs/setup.md#headless-raspberry-pi-5-server` for operator steps; source/build checks do not prove native Pi or provider acceptance.
+`src/server/index.ts` is a separate Node entrypoint emitted as `out/main/server.js`. It accepts only Linux ARM64, owns a dedicated server data directory, installs the read-only server secret provider before secret reads, and reuses the existing Core registrar, capability guards, sandbox, terminal manager, tunnel, plugin manager, durable store and bounded shutdown. Keep Electron, renderer, browser bridge and native Desktop out of this dependency path. Server normalization disables conversation recording, Desktop/browser behavior, Goal/Loop, automatic compaction, finish injection and browser workers; Core `update_plan` remains enabled independently. `endpoint.json` contains only endpoint origins; bearer URLs live in mode-`0600` `endpoint-private.json` and are revealed only by the explicit `server endpoint` command. External Plugins remain governed by their existing explicit installation and connector rules. The service and tmux launchers pass fixed absolute paths as argv and never put credential values in a unit or command line. See `docs/setup.md#headless-raspberry-pi-5-server` for operator steps; source/build checks do not prove native Pi or provider acceptance.
 
 ## 6. MCP surfaces, instructions and code mode
 
@@ -340,7 +340,7 @@ still checks live policy. Schema visibility is never the security boundary.
 
 `read` needs read/browse/metadata as appropriate; images need read; patch checks each hunk's
 create/edit/move/delete permission; command controls both terminal tools.
-Recording controls `update_plan`; multi-agent controls `agents`;
+Desktop session recording controls `update_plan`; the headless Core host can enable task plans independently while keeping conversation recording off. Multi-agent controls `agents`;
 the finish setting controls `session_finish`. Windows publishes four observation methods under
 screen access, nine input/launch methods under control, and clipboard methods under their own
 permissions. Multiline `type_text` additionally requires clipboard write. macOS `computer`
@@ -1093,7 +1093,7 @@ composition retain their ordinary editing behavior.
   the composer cannot delete the checkpoints. Edit/delete/reorder uses the ordinary queue.
   Failed admission keeps the editable result for retry in its originating session.
 - **Displayed `update_plan`:** `plan-tool.ts` writes one whole `plan.json` under the exact
-  caller's local session. Short headlines, bounded details and statuses appear above the queue;
+  caller's local session, or a request-scoped plan until chat identity arrives. Short headlines, bounded details and statuses appear above the queue;
   at most one step is in progress. Older calls/retired frontends cannot overwrite newer state.
   Completion animates then dismisses the card; completed reloads stay hidden while the document
   and history remain. Prepared handoffs freeze the saved plan's explanation, steps, details
@@ -1333,7 +1333,8 @@ footer and in-place badge updates keep streaming reactions from shifting message
 or reloading attachment previews. Old history gains badges when natively reobserved.
 
 Continuous recording serves the local transcript, exact identity and continuation infrastructure.
-There is no model-facing session lookup tool. `update_plan` remains recording-backed; historical
+There is no model-facing session lookup tool. Desktop `update_plan` remains recording-backed;
+the headless host can expose request-scoped plan storage without recording conversations. Historical
 lookup tool calls remain displayable in existing transcripts.
 
 Desktop session lists use stable `(updatedAt,id)` pagination. Each session selection loads a

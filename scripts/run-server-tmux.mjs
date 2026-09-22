@@ -21,7 +21,7 @@ export function buildTmuxArgs(options) {
   const validated = validateOptions(options);
   const entryPath = path.posix.join(validated.projectDir, 'out', 'main', 'server.js');
   return [
-    'new-session', '-d', '-s', validated.session, '--', validated.nodePath,
+    'new-session', '-d', '-s', validated.session, '-c', validated.projectDir, '--', validated.nodePath,
     entryPath, 'start', '--data-dir', validated.dataDir
   ];
 }

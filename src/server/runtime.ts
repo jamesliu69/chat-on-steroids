@@ -11,6 +11,7 @@ const ROOT_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 export type ServerArgs =
   | { command: 'init'; dataDir: string; root: string; name: string; tunnel: TunnelKind; tunnelId: string }
   | { command: 'check'; dataDir: string }
+  | { command: 'endpoint'; dataDir: string }
   | { command: 'start'; dataDir: string };
 
 interface InitialServerConfigOptions {
@@ -85,8 +86,8 @@ export function defaultServerDataDir(env: NodeJS.ProcessEnv = process.env): stri
 
 export function parseServerArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): ServerArgs {
   const [command, ...rest] = argv;
-  if (command !== 'init' && command !== 'check' && command !== 'start') {
-    throw new Error('Command must be init, check, or start');
+  if (command !== 'init' && command !== 'check' && command !== 'endpoint' && command !== 'start') {
+    throw new Error('Command must be init, check, endpoint, or start');
   }
   const options = parseOptions(rest);
   const dataDir = options.dataDir
