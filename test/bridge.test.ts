@@ -5196,7 +5196,7 @@ describe('delivering a bootstrap', () => {
     expect(swarmStateForCaller({ conversationId: PRIME_CHAT }).agents.find(row => row.id === 'worker-1')?.state).toBe('sleeping');
   });
 
-  it.each(['replay', 'new output', 'unattributed tool'] as const)('does not sleep an attached worker from silence while native generation may still be running (%s)', async mode => {
+  it.each(['replay', 'new output', 'unattributed tool'] as const)('measures attached worker silence from accepted work despite page polls and another running MCP (%s)', async mode => {
     await pair();
     spawn({ workers: [{ task: 'observe native output' }, { task: 'a long running tool' }], caller: { conversationId: PRIME_CHAT } });
     const conversationId = randomUUID();
@@ -5227,10 +5227,10 @@ describe('delivering a bootstrap', () => {
       expect(swarmState().agents.find(row => row.id === 'worker-1')?.state).toBe('active');
       clock.mockReturnValue(workAt + 180_000);
       await sweepStaleSwarm(Date.now());
-      expect(swarmStateForCaller({ conversationId: PRIME_CHAT }).agents.find(row => row.id === 'worker-1')).toMatchObject({ state: 'active', lastSeenAt: workAt });
-      expect(swarmStateForCaller({ conversationId: PRIME_CHAT }).agents.find(row => row.id === 'worker-2')?.state).toBe('active');
+      expect(swarmStateForCaller({ conversationId: PRIME_CHAT }).agents.find(row => row.id === 'worker-1')).toMatchObject({ state: 'sleeping', lastSeenAt: workAt });
+      expect(swarmStateForCaller({ conversationId: PRIME_CHAT }).agents.find(row => row.id === 'worker-2')?.state).toBe(mode === 'unattributed tool' ? 'sleeping' : 'active');
       expect((await post([opening, revision])).status).toBe(200);
-      expect(swarmStateForCaller({ conversationId: PRIME_CHAT }).agents.find(row => row.id === 'worker-1')?.state).toBe('active');
+      expect(swarmStateForCaller({ conversationId: PRIME_CHAT }).agents.find(row => row.id === 'worker-1')?.state).toBe('sleeping');
     } finally { release(); await held; clock.mockRestore(); }
   });
 
@@ -6857,13 +6857,7 @@ describe('unattributed activity recovery', () => {
       const offered = await maintenance();
       expect(offered).toMatchObject({ conversationId: WORKER, reason });
 
-      // The broker silence clock is only an escape hatch after browser ownership is gone.
-      // Keep this test on that path while preserving the repair-token revocation assertion.
-      if (swarmStateForCaller({ conversationId: PRIME }).agents.find(row => row.id === 'worker-1')?.state === 'active') {
-        expect(workerConversationGone(WORKER)).toBe(true);
-      }
-      const detachedAt = Date.now();
-      clock.mockReturnValue(detachedAt + WORKER_SILENCE_MS);
+      clock.mockReturnValue(start + WORKER_SILENCE_MS);
       const requestId = `wfr_prime_sleep_${reason}`;
       await events(PRIME, [{ kind: 'tool_evidence', time: Date.now(),
         calls: [{ messageId: 'prime-status-call', tool: 'read', order: 0, answered: false, requestId }] }]);

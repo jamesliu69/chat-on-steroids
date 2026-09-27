@@ -1224,10 +1224,11 @@ function apply(next: AppState): void {
     ui($('backgroundRunningCopy'), 'textContent', () => t("The app quits completely when you close the window."));
   } else if (next.platform?.family === 'macos') {
     ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use the connector. It stays available from the menu bar and Dock when you close the window."));
+    ui($('minimizeToTrayCopy'), 'textContent', () => t("Hide the window to the menu bar when closed"));
   } else {
     ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use the connector. It stays in the tray when you close the window."));
+    ui($('minimizeToTrayCopy'), 'textContent', () => t("Keep running in the tray when closed"));
   }
-  ui($('minimizeToTrayCopy'), 'textContent', () => t("Keep running after closing the window. Turn off to quit the app completely."));
 
   const openai = config.tunnel.kind === 'openai';
   const browserRequired = browserExtensionRequired(config);
