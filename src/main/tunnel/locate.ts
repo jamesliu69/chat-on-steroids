@@ -82,13 +82,13 @@ export function commonBinaryDirsForPlatform(
  * Resolves a binary, preferring an explicit user-supplied path.
  * `hint` may be either the executable itself or the folder containing it.
  */
-export function locateBinary(name: BinaryName, hint?: string): string | null {
+export function locateBinary(name: BinaryName, hint?: string, serverRoot = process.cwd()): string | null {
   const key = [
     name,
     hint ?? '',
+    serverRoot,
     process.platform,
     process.resourcesPath ?? '',
-    process.cwd(),
     process.env.PATH ?? process.env.Path ?? '',
     process.env.USERPROFILE ?? '',
     process.env.HOME ?? '',
@@ -119,15 +119,13 @@ export function locateBinary(name: BinaryName, hint?: string): string | null {
       locateCache.set(key, sibling);
       return sibling;
     }
-    // An explicit user choice is authoritative. If it exists but is not executable, or
-    // otherwise cannot resolve to the requested binary, fail closed instead of silently
-    // switching to the bundled/PATH copy and pretending the saved setting worked.
+    // An explicit selection is an executable identity, not a suggestion. Falling
+    // back here hides a missing/non-executable selection behind an unrelated copy.
     locateCache.set(key, null);
     return null;
   }
 
-  const bundled = bundledDir();
-  if (bundled) {
+  for (const bundled of bundledDirs(serverRoot)) {
     const candidate = path.join(bundled, fileName);
     if (isExecutableFile(candidate)) {
       locateCache.set(key, candidate);
@@ -158,34 +156,32 @@ export function locateBinary(name: BinaryName, hint?: string): string | null {
  * In a packaged build extraResources land in resourcesPath; during development the
  * same files sit in resources/ at the repository root.
  */
-function bundledDir(): string | null {
+function bundledDirs(serverRoot: string): string[] {
   const packaged = process.resourcesPath ? path.join(process.resourcesPath, 'tunnel') : null;
-  if (packaged && existsSync(packaged)) return packaged;
-
-  // A headless Rollup build can move shared code below out/main/chunks, so __dirname no longer
-  // identifies the repository root. The systemd service owns WorkingDirectory and starts in the
-  // CoS source/install root, making cwd the stable server resource anchor.
-  const workingTree = path.join(process.cwd(), 'resources', 'tunnel');
-  if (existsSync(workingTree)) return workingTree;
-
-  // Source: src/main/tunnel -> repo root is three levels up. Keep this for Electron dev/tests.
+  const server = path.join(serverRoot, 'resources', 'tunnel');
+  // Source: src/main/tunnel -> repo root is three levels up.
+  // Packaged/compiled dev output keeps the same main/tunnel nesting under dist.
   const dev = path.resolve(__dirname, '..', '..', '..', 'resources', 'tunnel');
-  return existsSync(dev) ? dev : null;
+  return [...new Set([packaged, server, dev].filter((candidate): candidate is string => Boolean(candidate)))];
 }
 
 /** The bundled tunnel-client version, for the diagnostics panel. */
 export function bundledVersion(): string | null {
-  const dir = bundledDir();
-  if (!dir) return null;
-  if (bundledVersionCache.has(dir)) return bundledVersionCache.get(dir) ?? null;
-  try {
-    const value = readFileSync(path.join(dir, 'VERSION'), 'utf8').trim() || null;
-    bundledVersionCache.set(dir, value);
-    return value;
-  } catch {
-    bundledVersionCache.set(dir, null);
-    return null;
+  for (const dir of bundledDirs(process.cwd())) {
+    if (bundledVersionCache.has(dir)) {
+      const cached = bundledVersionCache.get(dir);
+      if (cached) return cached;
+      continue;
+    }
+    try {
+      const value = readFileSync(path.join(dir, 'VERSION'), 'utf8').trim() || null;
+      bundledVersionCache.set(dir, value);
+      if (value) return value;
+    } catch {
+      bundledVersionCache.set(dir, null);
+    }
   }
+  return null;
 }
 
 /** Test seam for environment/path-resolution cases. */

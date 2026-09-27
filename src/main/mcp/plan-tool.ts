@@ -15,11 +15,11 @@ import { agentPlanUpdateSchema } from '../../shared/agent-plan.js';
 export function registerPlanTool(reg: SurfaceRegistrar): void {
   reg.register('update_plan', toolDeclaration('update_plan', () => ({
     title: 'Update plan',
-    description: 'Updates your task plan in the user’s app. Use for work with several meaningful steps; skip simple tasks. Send the complete plan with short step headlines, useful details and current statuses. Keep at most one step in_progress. Update after completing a step or changing approach. This only displays a plan; it does not execute steps or advance queued stages.',
+    description: 'Updates your task plan in the CoS workspace. Use for work with several meaningful steps; skip simple tasks. Send the complete plan with short step headlines, useful details and current statuses. Keep at most one step in_progress. Update after completing a step or changing approach. This only stores a plan; it does not execute steps or advance queued stages.',
     inputSchema: agentPlanUpdateSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   })), update => guard('update_plan', async () => {
-    if (!reg.sessionToolsLive) return reg.featureDisabled('Session recording', 'Settings → Chat');
+    if (!reg.planToolsLive) return reg.featureDisabled('Task plans', reg.ctx.planToolsDisabledSetting ?? 'Settings → Chat');
     const caller = currentCaller();
     const startedAt = currentCall()?.startedAt ?? Date.now();
     if (caller.sessionId && caller.conversationId) {

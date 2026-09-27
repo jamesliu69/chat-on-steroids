@@ -1119,6 +1119,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
 
   if (reg.sessionToolsExposed) {
     registerSessionSearchReadTool(reg);
+  }
+  if (reg.planToolsExposed) {
     registerPlanTool(reg);
   }
   if (reg.ctx.exposedFinishTool ?? getConfig().ui.finishTool === true) {

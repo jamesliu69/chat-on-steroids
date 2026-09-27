@@ -1,113 +1,111 @@
-#!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { serverDataDirectory, validateServerLaunchPath } from './server-launch-utils.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const defaultDataDir = path.join(os.homedir(), '.config', 'chat-on-steroids-server');
+const SESSION_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
-function resolveServerPath(value) {
-  return path.posix.isAbsolute(value) ? path.posix.normalize(value) : path.resolve(value);
+function validateOptions(options) {
+  const session = options.session.trim();
+  if (!SESSION_NAME.test(session)) throw new Error('Session name must be 1–32 lower-case letters, digits, dashes, or underscores');
+  return {
+    session,
+    nodePath: validateServerLaunchPath(options.nodePath, 'Node executable'),
+    projectDir: validateServerLaunchPath(options.projectDir, 'Project directory'),
+    dataDir: validateServerLaunchPath(options.dataDir, 'Data directory'),
+    restart: options.restart === true
+  };
 }
 
-export const DEFAULT_TMUX_SESSION = 'chat-on-steroids';
-
-/** Keep tmux invocation argument-based so paths and credentials never pass through a shell. */
 export function buildTmuxArgs(options) {
+  const validated = validateOptions(options);
+  const entryPath = path.posix.join(validated.projectDir, 'out', 'main', 'server.js');
   return [
-    'new-session', '-d', '-s', options.session, '--',
-    options.nodePath, options.entryPath, 'start', '--data-dir', options.dataDir
+    'new-session', '-d', '-s', validated.session, '-c', validated.projectDir, '--', validated.nodePath,
+    entryPath, 'start', '--data-dir', validated.dataDir
   ];
 }
 
-function run(file, args, options) {
-  return execFileSync(file, [...args], options);
-}
-
-function missingSession(error) {
-  return error && typeof error === 'object' && error.status === 1;
-}
-
-export function tmuxSessionExists(session, runner = run) {
-  try {
-    runner('tmux', ['has-session', '-t', session], { stdio: 'ignore' });
-    return true;
-  } catch (error) {
-    if (missingSession(error)) return false;
-    throw error;
-  }
-}
-
-export function startTmuxServer(options, runner = run) {
-  if (tmuxSessionExists(options.session, runner)) return false;
-  runner('tmux', buildTmuxArgs(options), { stdio: 'ignore' });
-  return true;
-}
-
-export function restartTmuxServer(options, runner = run) {
-  if (tmuxSessionExists(options.session, runner)) {
-    runner('tmux', ['kill-session', '-t', options.session], { stdio: 'ignore' });
-  }
-  runner('tmux', buildTmuxArgs(options), { stdio: 'ignore' });
-  return true;
-}
-
-function requiredValue(argv, index, option) {
-  const value = argv[index + 1];
-  if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
-  return value;
-}
-
-function validateSession(session) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(session)) {
-    throw new Error('--session must be 1-64 letters, digits, dot, dash, or underscore');
-  }
-  return session;
-}
-
-export function parseTmuxArgs(argv) {
-  let dataDir = defaultDataDir;
-  let session = DEFAULT_TMUX_SESSION;
+export function parseTmuxArgs(argv, env = process.env) {
+  const defaults = {
+    session: 'cos-server',
+    nodePath: process.execPath.replaceAll('\\', '/'),
+    projectDir: process.cwd().replaceAll('\\', '/'),
+    restart: false
+  };
+  const keys = new Map([
+    ['--session', 'session'],
+    ['--node', 'nodePath'],
+    ['--project-dir', 'projectDir'],
+    ['--data-dir', 'dataDir']
+  ]);
+  const values = new Map();
   let restart = false;
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     if (option === '--restart') {
+      if (restart) throw new Error('--restart may be provided only once');
       restart = true;
-    } else if (option === '--data-dir') {
-      dataDir = requiredValue(argv, index, option);
-      index += 1;
-    } else if (option === '--session') {
-      session = validateSession(requiredValue(argv, index, option));
-      index += 1;
-    } else {
-      throw new Error(`Unknown option: ${option}`);
+      continue;
     }
+    const key = keys.get(option);
+    if (!key) throw new Error(`Unknown option: ${option}`);
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
+    if (values.has(key)) throw new Error(`${option} may be provided only once`);
+    values.set(key, value);
+    index += 1;
   }
-  return {
-    dataDir: resolveServerPath(dataDir),
+  const session = values.get('session') ?? defaults.session;
+  if (!SESSION_NAME.test(session.trim())) {
+    throw new Error('Session name must be 1–32 lower-case letters, digits, dashes, or underscores');
+  }
+  return validateOptions({
     session,
-    restart,
-    nodePath: process.execPath,
-    entryPath: path.join(root, 'out', 'main', 'server.js')
-  };
+    nodePath: values.get('nodePath') ?? defaults.nodePath,
+    projectDir: values.get('projectDir') ?? defaults.projectDir,
+    dataDir: values.get('dataDir') ?? serverDataDirectory(env),
+    restart
+  });
 }
 
-function main(argv) {
-  const options = parseTmuxArgs(argv);
-  if (!existsSync(options.entryPath)) throw new Error(`Missing ${options.entryPath}. Run npm run build first.`);
-  const started = options.restart ? restartTmuxServer(options) : startTmuxServer(options);
-  process.stdout.write(`${started ? 'Started' : 'Already running'} tmux session ${options.session}.\n`);
-  if (started) process.stdout.write(`Attach with: tmux attach -t ${options.session}\n`);
+function exitStatus(error) {
+  return typeof error === 'object' && error !== null && 'status' in error
+    ? error.status
+    : null;
 }
 
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
-if (invokedPath === fileURLToPath(import.meta.url)) {
+export function runServerInTmux(options, dependencies = {}) {
+  const validated = validateOptions(options);
+  const execute = dependencies.execFileSync ?? execFileSync;
+  const target = `=${validated.session}`;
+  let exists = false;
   try {
-    main(process.argv.slice(2));
+    execute('tmux', ['has-session', '-t', target], { stdio: 'ignore' });
+    exists = true;
   } catch (error) {
-    process.stderr.write(`Could not start tmux server: ${error instanceof Error ? error.message : String(error)}\n`);
+    if (exitStatus(error) !== 1) throw error;
+  }
+
+  if (exists && !validated.restart) {
+    throw new Error(`tmux session ${validated.session} already exists; pass --restart to replace it`);
+  }
+  if (exists) execute('tmux', ['kill-session', '-t', target], { stdio: 'inherit' });
+  execute('tmux', buildTmuxArgs(validated), { stdio: 'inherit' });
+  return { session: validated.session, restarted: exists };
+}
+
+function main(argv = process.argv.slice(2)) {
+  if (process.platform !== 'linux') throw new Error('The tmux launcher requires Linux');
+  const result = runServerInTmux(parseTmuxArgs(argv));
+  process.stdout.write(`${result.restarted ? 'Restarted' : 'Started'} CoS server in tmux session ${result.session}\n`);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`CoS server tmux error: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
 }

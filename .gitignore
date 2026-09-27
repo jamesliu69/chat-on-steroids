@@ -42,6 +42,7 @@ docs/open-issues-*.md
 
 # One-off local experiment scratch.
 /.tmp/
+/.worktrees/
 one-cycle.ps1
 .one-cycle-*
 proof-*.txt
@@ -54,6 +55,10 @@ proof-*.txt
 /.omc
 /.omo
 /.vitest
+.server-live/config.json
+.server-live/endpoint.json
+.server-live/openai-api-key
+.server-live/endpoint-private.json
 
 # Written by scripts/write-extension-stamp.mjs at packaging time; see that script.
 /extension/build-stamp.txt

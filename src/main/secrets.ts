@@ -297,6 +297,7 @@ export async function hasSecret(key: SecretKey): Promise<boolean> {
 export function setSecret(key: SecretKey, value: string): Promise<void> {
   if (externalProvider) return Promise.reject(new Error('The headless server secret provider is read-only; update its systemd credential or environment instead'));
   return enqueue(async () => {
+    if (externalProvider) throw new Error('The headless server secret provider is read-only; update its systemd credential or environment instead');
     if (!(await isEncryptionAvailable())) {
       throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
     }
@@ -328,6 +329,7 @@ export function clearSecret(key: SecretKey): Promise<void> {
 export function deleteAllSecrets(): Promise<void> {
   if (externalProvider) return Promise.reject(new Error('The headless server secret provider is read-only; update its systemd credential or environment instead'));
   return enqueue(async () => {
+    if (externalProvider) throw new Error('The headless server secret provider is read-only; update its systemd credential or environment instead');
     // Invalidate first, before touching disk. A decrypt may already hold the old ciphertext in
     // memory and can complete after rm(); its generation check above then returns the new empty
     // view instead of resurrecting the deleted credentials into cache.

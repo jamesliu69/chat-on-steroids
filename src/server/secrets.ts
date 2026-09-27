@@ -2,47 +2,46 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { SecretKey, SecretProvider } from '../main/secrets.js';
 
-interface ServerSecretProviderOptions {
-  env?: NodeJS.ProcessEnv;
+interface ServerSecretSource {
+  credentialName: string;
+  environmentName: string;
 }
 
-const CREDENTIAL_FILES: Partial<Record<SecretKey, string>> = {
-  openaiApiKey: 'openai-api-key',
-  openRouterApiKey: 'openrouter-api-key',
-  customProviderApiKey: 'custom-provider-api-key'
+const SERVER_SECRET_SOURCES: Partial<Record<SecretKey, ServerSecretSource>> = {
+  openaiApiKey: {
+    credentialName: 'openai-api-key',
+    environmentName: 'OPENAI_API_KEY'
+  }
 };
 
-const ENV_KEYS: Partial<Record<SecretKey, string>> = {
-  openaiApiKey: 'OPENAI_API_KEY',
-  openRouterApiKey: 'OPENROUTER_API_KEY',
-  customProviderApiKey: 'COS_CUSTOM_PROVIDER_API_KEY'
-};
+function present(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
 
-async function readCredential(directory: string | undefined, fileName: string | undefined): Promise<string | null> {
-  if (!directory || !fileName) return null;
+async function readCredential(
+  directory: string | undefined,
+  source: ServerSecretSource
+): Promise<string | null> {
+  const credentialDirectory = present(directory);
+  if (!credentialDirectory) return null;
   try {
-    const value = (await fs.readFile(path.join(directory, fileName), 'utf8')).trim();
-    return value.length > 0 ? value : null;
+    return present(await fs.readFile(path.join(credentialDirectory, source.credentialName), 'utf8'));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
+    throw new Error(`Could not read systemd credential ${source.credentialName}: ${(error as Error).message}`);
   }
 }
 
-/**
- * Server credentials are injected by systemd's credential directory or the service environment.
- * Nothing here persists a secret and unsupported secret classes fail closed as absent.
- */
-export function createServerSecretProvider(options: ServerSecretProviderOptions = {}): SecretProvider {
+export function createServerSecretProvider(
+  options: { env?: NodeJS.ProcessEnv } = {}
+): SecretProvider {
   const env = options.env ?? process.env;
   return {
     async get(key: SecretKey): Promise<string | null> {
-      const fromCredential = await readCredential(env.CREDENTIALS_DIRECTORY, CREDENTIAL_FILES[key]);
-      if (fromCredential) return fromCredential;
-      const envName = ENV_KEYS[key];
-      if (!envName) return null;
-      const value = env[envName]?.trim() ?? '';
-      return value.length > 0 ? value : null;
+      const source = SERVER_SECRET_SOURCES[key];
+      if (!source) return null;
+      return (await readCredential(env.CREDENTIALS_DIRECTORY, source)) ?? present(env[source.environmentName]);
     }
   };
 }

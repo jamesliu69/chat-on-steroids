@@ -576,6 +576,7 @@ function adoptCurrentGoalPrompt(config: Config): Config {
 
 let configPath = '';
 let current: Config = defaultConfig();
+let runtimeConfigOverride: Config | null = null;
 // Every UI mutation ultimately lands in the same tiny JSON file. Keep those
 // read-modify-write transactions strictly ordered so two fast checkbox/root changes
 // cannot race on config.json.tmp or overwrite each other's newer state.
@@ -614,6 +615,7 @@ function preserveDisabledRecording(
 
 export function initConfigPath(userDataDir: string): void {
   configPath = path.join(userDataDir, 'config.json');
+  runtimeConfigOverride = null;
 }
 
 export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config> {
@@ -715,7 +717,11 @@ function adoptWiderWindow(config: Config): Config {
 }
 
 export function getConfig(): Config {
-  return current;
+  return runtimeConfigOverride ?? current;
+}
+
+export function setRuntimeConfigOverride(config: Config | null): void {
+  runtimeConfigOverride = config === null ? null : configSchema.parse(config);
 }
 
 /**
