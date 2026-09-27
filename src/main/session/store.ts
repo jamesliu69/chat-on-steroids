@@ -2502,9 +2502,7 @@ function publishClosedSummary(summary: SessionSummary): void {
 }
 
 function newAttachmentCatalog(): AttachmentCatalog {
-function newAttachmentCatalog(): AttachmentCatalog {
   return { summaries: new Map(), orderedIds: [], current: new Map(), historical: new Map(), supersededAttachments: 0, complete: true };
-}
 }
 
 /**
