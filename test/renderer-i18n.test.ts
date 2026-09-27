@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import zhCN from '../src/renderer/locales/zh-CN.json';
 import zhTW from '../src/renderer/locales/zh-TW.json';
+import es from '../src/renderer/locales/es.json';
 
 let dom: JSDOM;
 beforeEach(() => {
@@ -19,14 +19,13 @@ describe('Chinese app interface', () => {
     expect(currentLanguage()).toBe('zh-TW');
   });
 
-  it('preserves the original Simplified Chinese preference and catalog', async () => {
+  it('migrates an original Simplified Chinese preference to Traditional Chinese', async () => {
     window.localStorage.setItem('cos.ui.language', 'zh-CN');
     const { currentLanguage, initLanguage, t } = await import('../src/renderer/i18n.js');
     initLanguage();
-    expect(currentLanguage()).toBe('zh-CN');
-    expect(window.localStorage.getItem('cos.ui.language')).toBe('zh-CN');
-    expect((document.getElementById('uiLanguage') as HTMLSelectElement).value).toBe('zh-CN');
-    expect(t('Settings')).toBe(zhCN.Settings);
+    expect(currentLanguage()).toBe('zh-TW');
+    expect((document.getElementById('uiLanguage') as HTMLSelectElement).value).toBe('zh-TW');
+    expect(t('Settings')).toBe(zhTW.Settings);
   });
 
   it('exposes flagged setup choices and keeps them synchronized with settings and reloads', async () => {
@@ -133,17 +132,17 @@ describe('Chinese app interface', () => {
     live.append(text);
     pane.replaceChildren(live);
     retiredReads.mockClear();
-    for (const locale of ['zh-CN', 'en', 'zh-CN'] as const) {
+    for (const locale of ['zh-TW', 'en', 'zh-TW'] as const) {
       setLanguage(locale);
-      expect(live.title).toBe(locale === 'zh-CN' ? '设置' : 'Settings');
-      expect(text.textContent).toBe(locale === 'zh-CN' ? '复制' : 'Copy');
+      expect(live.title).toBe(locale === 'zh-TW' ? zhTW.Settings : 'Settings');
+      expect(text.textContent).toBe(locale === 'zh-TW' ? zhTW.Copy : 'Copy');
       expect(live.firstChild).toBe(text);
     }
     expect(retiredReads).not.toHaveBeenCalled();
     expect(retired).toHaveLength(1024);
     const fresh = ui(document.createElement('span'), 'textContent', () => t('Settings'));
     pane.append(fresh);
-    expect(fresh.textContent).toBe('设置');
+    expect(fresh.textContent).toBe(zhTW.Settings);
   });
 
   it('translates plan chrome while preserving model-authored headlines and details', async () => {
@@ -212,7 +211,7 @@ describe('Chinese app interface', () => {
   it('translates dynamic recovery, reasoning and setup-profile strings in Traditional Chinese', async () => {
     const { setLanguage, t } = await import('../src/renderer/i18n.js');
     setLanguage('zh-TW');
-    expect(Object.keys(zhCN).filter(key => !(key in zhTW))).toEqual([]);
+    expect(Object.keys(es).filter(key => !(key in zhTW))).toEqual([]);
     const required = [
       'Reload in {0}', 'Check in {0}', 'Default ({0})', 'Waiting for running tools',
       'Show setup guide', 'Delete profile: {0}', 'Queued message', 'Unattributed call'

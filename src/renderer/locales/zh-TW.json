@@ -421,8 +421,6 @@
   "Brave Browser": "Brave Browser",
   "Background chats": "背景聊天",
   "Keep app-created ChatGPT tabs in the background.": "應用程式建立的 ChatGPT 分頁保持在背景。",
-  "Close behavior": "關閉行為",
-  "Keep running after closing the window. Turn off to quit the app completely.": "關閉視窗後繼續執行。關閉此選項會在關閉視窗時完全退出應用程式。",
   "Automatic plugin refresh": "自動重新整理外掛",
   "Let the companion refresh changed connector tools in ChatGPT. Off by default; manual refresh remains available in ChatGPT.": "允許配套擴充功能在 ChatGPT 中重新整理變更後的連接器工具。預設關閉；仍可在 ChatGPT 中手動重新整理。",
   "Browser only": "僅瀏覽器",

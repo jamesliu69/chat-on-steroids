@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { goalErrorMessage } from '../src/shared/goal-errors.js';
 import es from '../src/renderer/locales/es.json';
-import zhCN from '../src/renderer/locales/zh-CN.json';
 import zhTW from '../src/renderer/locales/zh-TW.json';
 import ja from '../src/renderer/locales/ja.json';
 import tr from '../src/renderer/locales/tr.json';
@@ -52,7 +51,7 @@ describe('Goal failure explanations', () => {
   });
 
   it('keeps every fixed Goal explanation localizable in every renderer catalog', () => {
-    const catalogs = { es, 'zh-CN': zhCN, 'zh-TW': zhTW, ja, tr, fr } as const;
+    const catalogs = { es, 'zh-TW': zhTW, ja, tr, fr } as const;
     const codes = [
       'loop_mcp_call_missing', 'goal_reply_not_pending', 'goal_context_too_large', 'reply_too_long',
       'stream_record_too_long', 'response_body_too_large', 'no_api_key', 'auth_rejected', 'out_of_credit',

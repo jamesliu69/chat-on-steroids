@@ -437,7 +437,8 @@ it.each(['5.6', 'gpt-5.6-sol', 'GPT-5.6 Sol', 'gpt-5-6-thinking'])('keeps saved 
 });
 
 it('offers ChatGPT’s current model only when no account list is readable, and only on an explicit choice (#104)', async () => {
-  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  preferEnglish();
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let receive!: (catalog: any) => void;
   Object.assign(dom.window, { api: {

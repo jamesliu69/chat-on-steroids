@@ -12,7 +12,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); dom.window.close(); });
 
 it('covers the current catalogs including Turkish and preserves numbered arguments', () => {
-  const keys = new Set(['es', 'zh-CN', 'zh-TW', 'ja', 'tr'].flatMap(locale =>
+  const keys = new Set(['es', 'zh-TW', 'ja', 'tr'].flatMap(locale =>
     Object.keys(JSON.parse(readFileSync(`src/renderer/locales/${locale}.json`, 'utf8')))));
   expect([...keys].filter(source => !Object.hasOwn(fr, source))).toEqual([]);
   const args = (value: string) => (value.match(/\{\d+\}/g) ?? []).sort();
@@ -38,7 +38,7 @@ it('restores French through both selectors and keeps drafts, focus and authored 
   const authored = document.createElement('p'); authored.textContent = 'Settings'; document.body.append(authored);
   const action = ui(document.createElement('button'), 'textContent', () => t('Remove {0}', ['<img src=x>']));
   document.body.append(action);
-  for (const locale of ['en', 'ja', 'es', 'zh-TW', 'zh-CN', 'tr', 'pt-PT', 'fr'] as const) {
+  for (const locale of ['en', 'ja', 'es', 'zh-TW', 'tr', 'pt-PT', 'fr'] as const) {
     setLanguage(locale);
     expect(document.activeElement).toBe(input);
     expect([input.selectionStart, input.selectionEnd]).toEqual([2, 9]);
@@ -56,11 +56,11 @@ it('restores French through both selectors and keeps drafts, focus and authored 
   vi.resetModules(); expect((await import('../src/renderer/i18n.js')).currentLanguage()).toBe('fr');
 });
 
-it('leaves the default unchanged and can switch to French when preference storage fails', async () => {
+it('leaves the fork default unchanged and can switch to French when preference storage fails', async () => {
   vi.spyOn(dom.window.Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('unavailable'); });
   vi.spyOn(dom.window.Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('unavailable'); });
   const { initLanguage, setLanguage, currentLanguage, t } = await import('../src/renderer/i18n.js');
-  expect(currentLanguage()).toBe('en');
+  expect(currentLanguage()).toBe('zh-TW');
   initLanguage(); setLanguage('fr');
   expect(currentLanguage()).toBe('fr');
   expect(t('Settings')).toBe('Paramètres');

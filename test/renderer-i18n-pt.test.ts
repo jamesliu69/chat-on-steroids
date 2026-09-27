@@ -12,7 +12,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); dom.window.close(); });
 
 it('covers every current catalog key and preserves every numbered argument', () => {
-  const keys = new Set(['es', 'zh-CN', 'zh-TW', 'ja', 'tr', 'fr'].flatMap(locale =>
+  const keys = new Set(['es', 'zh-TW', 'ja', 'tr', 'fr'].flatMap(locale =>
     Object.keys(JSON.parse(readFileSync(`src/renderer/locales/${locale}.json`, 'utf8')))));
   expect([...keys].filter(source => !Object.hasOwn(ptPT, source))).toEqual([]);
   const args = (value: string) => (value.match(/\{\d+\}/g) ?? []).sort();
@@ -59,7 +59,7 @@ it('restores European Portuguese through setup and settings without changing aut
   const authored = document.createElement('p'); authored.textContent = 'Settings'; document.body.append(authored);
   const action = ui(document.createElement('button'), 'textContent', () => t('Remove {0}', ['<img src=x>']));
   document.body.append(action);
-  for (const locale of ['en', 'ja', 'es', 'zh-TW', 'zh-CN', 'tr', 'fr', 'pt-PT'] as const) {
+  for (const locale of ['en', 'ja', 'es', 'zh-TW', 'tr', 'fr', 'pt-PT'] as const) {
     setLanguage(locale);
     expect(document.activeElement).toBe(input);
     expect([input.selectionStart, input.selectionEnd]).toEqual([2, 9]);
@@ -77,11 +77,11 @@ it('restores European Portuguese through setup and settings without changing aut
   vi.resetModules(); expect((await import('../src/renderer/i18n.js')).currentLanguage()).toBe('pt-PT');
 });
 
-it('uses English as the storage fallback and still switches to European Portuguese without storage', async () => {
+it('uses the fork default as the storage fallback and still switches to European Portuguese without storage', async () => {
   vi.spyOn(dom.window.Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('unavailable'); });
   vi.spyOn(dom.window.Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('unavailable'); });
   const { initLanguage, setLanguage, currentLanguage, t } = await import('../src/renderer/i18n.js');
-  expect(currentLanguage()).toBe('en');
+  expect(currentLanguage()).toBe('zh-TW');
   initLanguage(); setLanguage('pt-PT');
   expect(currentLanguage()).toBe('pt-PT');
   expect(t('Settings')).toBe('Definições');

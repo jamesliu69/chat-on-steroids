@@ -1,19 +1,19 @@
 import zhTW from './locales/zh-TW.json';
-import zhCN from './locales/zh-CN.json';
 import es from './locales/es.json';
 import ja from './locales/ja.json';
 import tr from './locales/tr.json';
 import fr from './locales/fr.json';
 import ptPT from './locales/pt-PT.json';
 
-export type Language = 'en' | 'es' | 'zh-CN' | 'zh-TW' | 'ja' | 'tr' | 'fr' | 'pt-PT';
+export type Language = 'en' | 'es' | 'zh-TW' | 'ja' | 'tr' | 'fr' | 'pt-PT';
 const STORAGE_KEY = 'cos.ui.language';
 type Catalog = Readonly<Record<string, string>>;
-const catalogs: Readonly<Record<Exclude<Language, 'en'>, Catalog>> = { es, 'zh-CN': zhCN, 'zh-TW': zhTW, ja, tr, fr, 'pt-PT': ptPT };
+const catalogs: Readonly<Record<Exclude<Language, 'en'>, Catalog>> = { es, 'zh-TW': zhTW, ja, tr, fr, 'pt-PT': ptPT };
 const sourceKeys = new Set(Object.values(catalogs).flatMap(catalog => Object.keys(catalog)));
 
 function parseLanguage(value: string | null | undefined): Language {
-  return value === 'es' || value === 'zh-CN' || value === 'zh-TW' || value === 'ja' || value === 'tr' || value === 'fr' || value === 'pt-PT' ? value : 'en';
+  if (value === 'zh-CN') return 'zh-TW';
+  return value === 'es' || value === 'zh-TW' || value === 'ja' || value === 'tr' || value === 'fr' || value === 'pt-PT' ? value : 'en';
 }
 
 /** Fork default: Traditional Chinese remains the first-run language. */

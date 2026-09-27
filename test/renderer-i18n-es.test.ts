@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import es from '../src/renderer/locales/es.json';
-import zhCN from '../src/renderer/locales/zh-CN.json';
+import zhTW from '../src/renderer/locales/zh-TW.json';
 
 let dom: JSDOM;
 beforeEach(() => {
@@ -15,7 +15,7 @@ afterEach(() => { vi.restoreAllMocks(); dom.window.close(); });
 
 describe('Spanish app interface', () => {
   it('covers the complete source catalog and preserves every numbered argument', () => {
-    expect(Object.keys(es).sort()).toEqual(Object.keys(zhCN).sort());
+    expect(Object.keys(es).sort()).toEqual(Object.keys(zhTW).sort());
     for (const [source, translation] of Object.entries(es)) {
       expect(translation.trim(), source).not.toBe('');
       const args = (value: string) => (value.match(/\{\d+\}/g) ?? []).sort();
@@ -72,7 +72,7 @@ describe('Spanish app interface', () => {
     authored.textContent = 'Save'; document.body.append(authored);
     const action = ui(document.createElement('button'), 'textContent', () => t('Remove {0}', ['<img src=x>']));
     document.body.append(action);
-    for (const locale of ['es', 'zh-CN', 'zh-TW', 'ja', 'en', 'es'] as const) {
+    for (const locale of ['es', 'zh-TW', 'ja', 'en', 'es'] as const) {
       setLanguage(locale);
       expect(document.getElementById('chatInput')).toBe(input);
       expect(input.value).toBe('Save\nMi borrador 🙂 <script>literal</script>');
