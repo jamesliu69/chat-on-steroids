@@ -238,8 +238,6 @@
   "Brave Browser": "Brave Browser",
   "Background chats": "Chats en segundo plano",
   "Keep app-created ChatGPT tabs in the background.": "Mantener en segundo plano las pestañas de ChatGPT creadas por la aplicación.",
-  "Close behavior": "Comportamiento al cerrar",
-  "Keep running after closing the window. Turn off to quit the app completely.": "Seguir ejecutándose después de cerrar la ventana. Desactívalo para salir completamente de la aplicación.",
   "Automatic plugin refresh": "Actualización automática de complementos",
   "Let the companion refresh changed connector tools in ChatGPT. Off by default; manual refresh remains available in ChatGPT.": "Permite que la extensión complementaria actualice en ChatGPT las herramientas modificadas de los conectores. Está desactivado de forma predeterminada; puedes seguir actualizándolas manualmente en ChatGPT.",
   "Browser only": "Solo navegador",

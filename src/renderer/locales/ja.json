@@ -248,8 +248,6 @@
   "Brave Browser": "Brave Browser",
   "Background chats": "バックグラウンドのチャット",
   "Keep app-created ChatGPT tabs in the background.": "アプリが作成した ChatGPT タブをバックグラウンドに保ちます。",
-  "Close behavior": "ウィンドウを閉じたときの動作",
-  "Keep running after closing the window. Turn off to quit the app completely.": "ウィンドウを閉じた後も実行を続けます。オフにすると、ウィンドウを閉じたときにアプリを完全に終了します。",
   "Automatic plugin refresh": "プラグインの自動更新",
   "Let the companion refresh changed connector tools in ChatGPT. Off by default; manual refresh remains available in ChatGPT.": "連携用拡張機能が、変更されたコネクターのツールを ChatGPT で更新できるようにします。既定では無効です。ChatGPT での手動更新は引き続き可能です。",
   "Browser only": "既存のブラウザーのみ",
