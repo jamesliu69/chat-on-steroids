@@ -1,11 +1,10 @@
-import os from 'node:os';
 import path from 'node:path';
+import { serverDataDirectory, validateServerLaunchPath } from '../../scripts/server-launch-utils.mjs';
 import { defaultConfig } from '../main/config.js';
 import { RESERVED_ROOT_NAMES } from '../main/sandbox.js';
 import { DESKTOP_CAPABILITIES, type Config, type TunnelKind } from '../shared/types.js';
 
 const TUNNEL_KINDS = new Set<TunnelKind>(['openai', 'cloudflared', 'manual']);
-const DEFAULT_DATA_DIRECTORY_NAME = '.config/chat-on-steroids-server';
 const ROOT_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 
 export type ServerArgs =
@@ -78,10 +77,7 @@ function parseOptions(argv: readonly string[]): ParsedOptions {
 }
 
 export function defaultServerDataDir(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = present(env.COS_SERVER_DATA_DIR);
-  if (configured) return requireAbsolutePosixPath(configured, 'COS_SERVER_DATA_DIR');
-  const home = present(env.HOME) ?? os.homedir().replaceAll('\\', '/');
-  return requireAbsolutePosixPath(path.posix.join(home, DEFAULT_DATA_DIRECTORY_NAME), 'Home directory');
+  return serverDataDirectory(env);
 }
 
 export function parseServerArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): ServerArgs {
@@ -91,7 +87,7 @@ export function parseServerArgs(argv: readonly string[], env: NodeJS.ProcessEnv 
   }
   const options = parseOptions(rest);
   const dataDir = options.dataDir
-    ? requireAbsolutePosixPath(options.dataDir, '--data-dir')
+    ? validateServerLaunchPath(options.dataDir, '--data-dir')
     : defaultServerDataDir(env);
 
   if (command !== 'init') {

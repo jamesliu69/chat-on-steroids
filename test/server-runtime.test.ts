@@ -79,6 +79,19 @@ describe('headless server runtime', () => {
     expect(config.tunnel.tunnelId).toBe('');
   });
 
+  it('applies the launcher data-directory policy to the server data directory', () => {
+    const env = { HOME: '/home/pi' };
+
+    expect(defaultServerDataDir(env)).toBe('/home/pi/.config/chat-on-steroids-server');
+    expect(defaultServerDataDir({ ...env, COS_SERVER_DATA_DIR: '/var/lib/cos-data' })).toBe('/var/lib/cos-data');
+    expect(() => parseServerArgs(['check', '--data-dir', '/state/My Data'], env)).toThrow(
+      /normalized absolute Linux path/i
+    );
+    expect(() => defaultServerDataDir({ ...env, COS_SERVER_DATA_DIR: '/var/lib/cos data' })).toThrow(
+      /normalized absolute Linux path/i
+    );
+  });
+
   it('publishes the environment tunnel override to config consumers without persisting it', async () => {
     const directory = await makeTempDir('cos-server-runtime-config-');
     try {

@@ -33,6 +33,7 @@ describe('headless systemd user service', () => {
   it('rejects unit paths that could add directives or alter the command', () => {
     expect(() => renderServerUserService({ ...options, projectDir: '/srv/cos\nExecStart=/bin/sh' })).toThrow(/project/i);
     expect(() => renderServerUserService({ ...options, dataDir: 'relative/path' })).toThrow(/data directory/i);
+    expect(() => renderServerUserService({ ...options, dataDir: '/srv/cos data' })).toThrow(/data directory/i);
   });
 
   it('atomically installs the unit and reloads systemd without enabling it', async () => {

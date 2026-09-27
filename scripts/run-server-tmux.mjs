@@ -69,10 +69,6 @@ export function parseTmuxArgs(argv, env = process.env) {
   });
 }
 
-function execTmux(args, stdio) {
-  return execFileSync('tmux', args, { stdio });
-}
-
 function exitStatus(error) {
   return typeof error === 'object' && error !== null && 'status' in error
     ? error.status
@@ -81,7 +77,7 @@ function exitStatus(error) {
 
 export function runServerInTmux(options, dependencies = {}) {
   const validated = validateOptions(options);
-  const execute = dependencies.execFileSync ?? execTmux;
+  const execute = dependencies.execFileSync ?? execFileSync;
   const target = `=${validated.session}`;
   let exists = false;
   try {
