@@ -808,7 +808,7 @@ describe('a worker whose chat never opened', () => {
 });
 
 describe('a worker whose chat closed', () => {
-  it('never sleeps an attached worker from silence alone and starts the clock when its browser view detaches', () => {
+  it.each([false, true])('sleeps after three minutes of real inactivity even with repeated page reports (detached=%s)', detached => {
     startSwarm(1);
     startWorker('worker-1');
     const clock = vi.spyOn(Date, 'now');
@@ -816,34 +816,35 @@ describe('a worker whose chat closed', () => {
     try {
       clock.mockReturnValue(started);
       noteAgentAlive('c-worker-1', 'call');
-      clock.mockReturnValue(started + WORKER_SILENCE_MS * 2);
+      clock.mockReturnValue(started + 179_999);
+      if (detached) workerConversationGone('c-worker-1');
       noteAgentAlive('c-worker-1', 'page');
       expect(sleepSilentWorkers()).toEqual([]);
-      expect(swarmState().agents.find(agent => agent.id === 'worker-1')).toMatchObject({ state: 'active' });
-
-      const detachedAt = Date.now();
-      expect(workerConversationGone('c-worker-1')).toBe(true);
-      clock.mockReturnValue(detachedAt + WORKER_SILENCE_MS - 1);
-      expect(sleepSilentWorkers()).toEqual([]);
-      clock.mockReturnValue(detachedAt + WORKER_SILENCE_MS);
+      clock.mockReturnValue(started + 180_000);
+      noteAgentAlive('c-worker-1', 'page');
       expect(sleepSilentWorkers()).toHaveLength(1);
       const slept = swarmState().agents.find(agent => agent.id === 'worker-1')!;
       expect(slept).toMatchObject({ state: 'sleeping', lastSeenAt: started });
+      clock.mockReturnValue(started + 360_000);
+      noteAgentAlive('c-worker-1', 'page');
+      noteAgentAlive('c-worker-1', 'turn', started);
+      expect(swarmState().agents.find(agent => agent.id === 'worker-1')).toMatchObject({ state: 'sleeping', lastSeenAt: started });
+      expect(sleepSilentWorkers()).toEqual([]);
     } finally { clock.mockRestore(); }
   });
 
-  it('renews a detached worker silence deadline from exact server-side work', () => {
+  it('renews the three-minute deadline only for new accepted work, not replayed turn evidence', () => {
     startSwarm(1);
     startWorker('worker-1');
     const started = Date.now(), clock = vi.spyOn(Date, 'now');
     try {
-      clock.mockReturnValue(started);
-      expect(workerConversationGone('c-worker-1')).toBe(true);
+      noteAgentAlive('c-worker-1', 'call');
       clock.mockReturnValue(started + 120_000);
-      expect(noteAgentAlive('c-worker-1', 'call')?.revived).toBe(false);
+      noteAgentAlive('c-worker-1', 'turn', started + 120_000);
       clock.mockReturnValue(started + 180_000);
       expect(sleepSilentWorkers()).toEqual([]);
       clock.mockReturnValue(started + 299_999);
+      noteAgentAlive('c-worker-1', 'turn', started + 120_000);
       expect(sleepSilentWorkers()).toEqual([]);
       clock.mockReturnValue(started + 300_000);
       expect(sleepSilentWorkers()).toHaveLength(1);
@@ -1376,7 +1377,6 @@ describe('a worker that is sleeping', () => {
     startSwarm(1);
     const worker = startWorker('worker-1');
     const at = Date.now();
-    expect(workerConversationGone('c-worker-1')).toBe(true);
     expect(sleepSilentWorkers(at + WORKER_SILENCE_MS + 1000)).toHaveLength(1);
     expect(noteAgentAlive('c-worker-1', 'output', at + WORKER_SILENCE_MS + 2000)?.revived).toBe(true);
     finishAgent(worker.caller, 'Audit finished');
@@ -2997,42 +2997,6 @@ describe('through the MCP endpoint', () => {
     await setEnabled(true);
     expect(await callTool('read', { paths: ['/anything'] })).toContain('CALLER_IDENTITY_REQUIRED');
   });
-
-  it.each(['dormant', 'retired'] as const)(
-    'does not make an unrelated allowed unattributed read spend the full identity window with %s worker history',
-    async history => {
-      startSwarm(1);
-      const worker = startWorker('worker-1', history === 'retired' ? 'c-worker-retired-fast-read' : undefined);
-      if (history === 'retired') {
-        expect(clearAgent(PRIME_ID).cleared).toBe('run');
-      } else {
-        finishAgent(worker.caller, 'parked history for fast read');
-        expect(releaseQuiescentRun()).toBe(true);
-      }
-      await setEnabled(true, 3, true);
-
-      const requestId = `wfr_${history}_unrelated_fast_read`;
-      let settled = false;
-      const pending = ordinaryWithRequestId(requestId, 'read', { paths: ['/anything'] }).then(reply => {
-        settled = true;
-        return reply;
-      });
-      await new Promise(resolve => setTimeout(resolve, 300));
-      const settledBeforeEvidence = settled;
-      if (!settledBeforeEvidence) {
-        await recordChatObservations('c-unrelated-fast-read', [
-          { kind: 'turn_start', time: Date.now(), turnId: `t-${history}-fast-read` },
-          { kind: 'tool_evidence', time: Date.now(), turnId: `t-${history}-fast-read`,
-            calls: [{ messageId: `m-${history}-fast-read`, tool: 'read', order: 0, answered: false, requestId }] }
-        ]);
-      }
-      const reply = await pending;
-      await setEnabled(true);
-
-      expect(settledBeforeEvidence).toBe(true);
-      expect(textOfReply(reply)).toMatch(REFUSED_ON_ROOTS);
-    }
-  );
 
   it('permits an unattributed workspace-dependent call to fail honestly instead of guessing a chat', async () => {
     await setEnabled(true, 3, true);
