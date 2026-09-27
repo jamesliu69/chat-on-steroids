@@ -53,3 +53,6 @@ proof-*.txt
 .server-live/endpoint.json
 .server-live/openai-api-key
 .server-live/endpoint-private.json
+
+# Written by scripts/write-extension-stamp.mjs at packaging time; see that script.
+/extension/build-stamp.txt
