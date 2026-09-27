@@ -54,3 +54,6 @@ proof-*.txt
 /.omc
 /.omo
 /.vitest
+
+# Written by scripts/write-extension-stamp.mjs at packaging time; see that script.
+/extension/build-stamp.txt
