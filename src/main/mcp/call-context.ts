@@ -19,6 +19,7 @@ import type { OutputPublication, ProcessCompletion } from '../codex/unified-exec
 export interface CallEvidence {
   processCompletion?: Promise<ProcessCompletion>;
   changes: FileChange[];
+  reviews: Array<{ changeIndex: number; before: string; after: string }>;
   assets: AssetRef[];
   /** Result count for searches and listings. */
   count: number | null;
@@ -107,6 +108,7 @@ const storage = new AsyncLocalStorage<CallContext>();
 export function emptyEvidence(): CallEvidence {
   return {
     changes: [],
+    reviews: [],
     assets: [],
     count: null,
     detail: null,
@@ -281,9 +283,14 @@ export function noteChange(change: FileChange): void {
   storage.getStore()?.evidence.changes.push(change);
 }
 
-export function noteChanges(changes: readonly FileChange[]): void {
+export function noteChanges(changes: readonly FileChange[], reviews?: readonly { before: string; after: string }[]): void {
   const store = storage.getStore();
-  if (store) store.evidence.changes.push(...changes);
+  if (!store) return;
+  const offset = store.evidence.changes.length;
+  store.evidence.changes.push(...changes);
+  if (reviews?.length === changes.length) {
+    reviews.forEach((review, index) => store.evidence.reviews.push({ changeIndex: offset + index, ...review }));
+  }
 }
 
 export function noteAsset(asset: AssetRef): void {
