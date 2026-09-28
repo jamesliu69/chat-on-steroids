@@ -201,10 +201,10 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
     await new Promise(r=>setTimeout(r,50));
     assert.equal(await js(`document.getElementById('setupProfileMenu').matches(':popover-open')`),false);
-    await js(`const language=document.getElementById('uiLanguage');language.value='zh-CN';language.dispatchEvent(new Event('change'));document.getElementById('setupProfile').click()`);
-    assert.equal(await js(`document.getElementById('setupProfileLabel').textContent`),'连接配置');
+    await js(`const language=document.getElementById('uiLanguage');language.value='zh-TW';language.dispatchEvent(new Event('change'));document.getElementById('setupProfile').click()`);
+    assert.equal(await js(`document.getElementById('setupProfileLabel').textContent`),'連線設定檔');
     assert.equal(await js(`document.getElementById('setupProfileCurrent').textContent`),'Work');
-    assert.equal(await js(`document.querySelector('[data-remove-profile-id="default"]').getAttribute('aria-label')`),'删除配置：Default');
+    assert.equal(await js(`document.querySelector('[data-remove-profile-id="default"]').getAttribute('aria-label')`),'刪除設定檔：Default');
     await js(`document.querySelector('[data-remove-profile-id="default"]').click()`);
     for(let i=0;i<100 && await js(`document.querySelectorAll('[data-remove-profile-id]').length!==1`);i++) await new Promise(r=>setTimeout(r,25));
     assert.equal(await js(`document.querySelector('[data-remove-profile-id]').disabled`),true);

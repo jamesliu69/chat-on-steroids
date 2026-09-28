@@ -5,7 +5,7 @@ import es from '../src/renderer/locales/es.json';
 import zhTW from '../src/renderer/locales/zh-TW.json';
 import ja from '../src/renderer/locales/ja.json';
 
-const names = { en: 'English', es: 'Español', 'zh-TW': '繁體中文', ja: '日本語', tr: 'Türkçe', fr: 'Français', 'pt-PT': 'Português (Portugal)' } as const;
+const names = { en: 'English', es: 'Español', 'zh-TW': '繁體中文', ja: '日本語', tr: 'Türkçe', fr: 'Français', 'pt-PT': 'Português (Portugal)', 'pt-BR': 'Português (Brasil)', de: 'Deutsch' } as const;
 let dom: JSDOM;
 beforeEach(() => {
   vi.resetModules();
@@ -60,7 +60,7 @@ describe('Japanese app interface and compact setup languages', () => {
       const locale = button.dataset.language as keyof typeof names;
       expect(button.type).toBe('button');
       expect(button.lang).toBe(locale);
-      expect(button.textContent).toBe('');
+      expect(button.textContent.trim()).toBe('');
       expect(button.title).toBe(names[locale]);
       expect(button.getAttribute('aria-label')).toBe(names[locale]);
       expect(button.querySelector('svg.language-flag[aria-hidden="true"]')).not.toBeNull();
@@ -87,7 +87,7 @@ describe('Japanese app interface and compact setup languages', () => {
     const action = ui(document.createElement('button'), 'textContent', () => t('Remove {0}', [argument]));
     document.body.append(authored, hidden, action);
     const icons = [...document.querySelectorAll('svg')];
-    for (const locale of ['ja', 'es', 'zh-TW', 'en', 'ja'] as const) {
+    for (const locale of ['ja', 'es', 'zh-TW', 'tr', 'fr', 'pt-BR', 'en', 'ja'] as const) {
       setLanguage(locale);
       expect(document.getElementById('chatInput')).toBe(input);
       expect(input.value).toBe(draft);

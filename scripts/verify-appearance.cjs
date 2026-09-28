@@ -154,8 +154,8 @@ app.whenReady().then(async () => {
     for(let i=0;i<100 && !(await js('!!window.fixtureReady'));i++) await new Promise(r=>setTimeout(r,25));
     await js(`window.fixtureState.config.ui=${JSON.stringify(savedUi)};window.pushState();document.querySelector('[data-tab="appearance"]').click()`);
     assert.equal(await js(`document.getElementById('appearance-sidebar-hex').value`),'#331155');
-    await change('uiLanguage','zh-CN');
-    assert.equal(await js(`document.getElementById('appearanceTitle').textContent`),'外观');
+    await change('uiLanguage','zh-TW');
+    assert.equal(await js(`document.getElementById('appearanceTitle').textContent`),'外觀');
     await screenshot('chinese.png');
     await change('uiLanguage','en');
     await js(`document.getElementById('backToChat').click();document.getElementById('chatInput').value='A workspace in your colors.'`);
