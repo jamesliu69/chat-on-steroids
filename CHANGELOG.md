@@ -9,9 +9,7 @@ The app and the `extension/` companion are versioned together. **Reload the
 extension after updating the app**. If their bridge protocols are incompatible,
 the app refuses the extension and asks you to reload the matching copy.
 
-## Unreleased
-
-Draft for 2.1.17 — Workspace and self-updating extension. The release sets the version heading.
+## [2.1.17] — Workspace and self-updating extension
 
 A feature update. The app gets a workspace next to your chat, pets on your desktop, and an extension that keeps itself up to date. CoS now speaks German and Brazilian Portuguese.
 
@@ -32,9 +30,15 @@ A feature update. The app gets a workspace next to your chat, pets on your deskt
 
 - **Usage counts the messages you type in ChatGPT.** Before, only messages sent from the CoS message box were counted, so the weekly numbers stayed near zero.
 - **Goal and Loop no longer leave helper tabs behind.** The temporary chats they use to decide the next step now close when they are done, and they no longer show up in your chat list.
+- **Goal stops when the work is done.** Goal could ask ChatGPT again and again to run a command that had already run, because it couldn't tell that CoS had done the work. It now knows how many CoS tools ran in each step (never what they did), and stops once the goal is met.
+- **A new message no longer counts as finished right away.** Now and then, a chat marked a message as answered the moment it was sent, before ChatGPT replied. Goal could stop early because of it, and the reply wasn't linked to your message.
 - **ChatGPT's text blocks show properly.** Rewrites and drafts that ChatGPT puts in a text block appear as a titled block instead of raw `:::writing` code.
 - **Project chats get their real title** instead of "ChatGPT - <project name>".
+- **Chats started from the app are named after your request.** ChatGPT named them after CoS's instructions, so they were all called something like "Coding Agent Instructions". Existing chats get their proper name back too.
 - **Pets respond reliably again** after you hide and show them, and they no longer reread your pet library while the mouse moves.
+- **Dragging pets works on Windows** after you hide and show them, and typing goes back to the window you were using once you let go.
+- **Goal keeps going when ChatGPT briefly refuses a tool call.** ChatGPT sometimes blocks a harmless call with "couldn't determine the safety status" and accepts the same call a moment later. ChatGPT now knows to retry it once instead of deciding that CoS tools are broken.
+- **The finish tool works with every model.** With the finish setting on, GPT-5.6 Sol and other models could see the finish tool but were told it was for Astra only.
 - **Web Fetch and other Python plugins install without extra setup.** If the `uv` tool they need is missing, CoS downloads a verified copy for itself instead of failing with "runtime uv is unavailable".
 - **Goal and Loop work again when your saved model is gone.** The step that decides what comes next failed when ChatGPT no longer offered the model saved in Settings; it now uses one that is available.
 - **Setup matches ChatGPT's new settings.** ChatGPT no longer has a Developer mode switch; you now create the app from Plugins → Add → Create MCP App. The setup steps and the connection check say so.
@@ -56,6 +60,7 @@ A feature update. The app gets a workspace next to your chat, pets on your deskt
 - **Greyed-out panels explain themselves:** Files and Review need a project, Sub-agents an open chat.
 - **The Files panel hides `.git` and `.DS_Store`,** like other editors.
 - **Pets and Skills are fully translated,** and the context counter next to the message box reads well in every language.
+- **A cleaner Settings.** All settings pages share one layout. Usage always shows a full year of activity and splits costs into By model and By day. Settings search hides sections that don't match.
 - **A redesigned Usage tab.** Clear cards, a calendar of your activity with day and month labels, a cost chart with dates, and a simple menu to choose which weekday your week starts on.
 - **One tidy title bar on macOS.** The window buttons, the sidebar button and the View menu now share one row instead of two.
 - **Skill cards show their full description.**

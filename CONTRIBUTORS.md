@@ -49,6 +49,16 @@ Listed alphabetically by GitHub handle. "Adapted" means the implementation chang
 | [@ventianima-lab](https://github.com/ventianima-lab) | Preserving the exact message, conversation and page-epoch identity accepted by a desktop-send ACK when later canonical text differs, so the same send retains its turn-start boundary: adapted from the [code and regression tests in #185](https://github.com/totec448-spec/chat-on-steroids/issues/185#issuecomment-5647883368). This narrow repair does not reconstruct earlier missing history or resolve every symptom in the issue. |
 | [@yahiaal](https://github.com/yahiaal) | Publishing larger Plugins catalogs within the existing schema byte budget: [#216](https://github.com/totec448-spec/chat-on-steroids/pull/216), adapted to include the optional local code-mode tool in refresh observation and legacy enrollment. |
 
+The September 28 direct upstream merge retains the original commits for
+[@Haz4rdovisk](https://github.com/Haz4rdovisk)'s Windows Pets input and focus repair
+([#537](https://github.com/totec448-spec/chat-on-steroids/pull/537)) and
+[@Maximapple](https://github.com/Maximapple)'s app-created chat titles
+([#552](https://github.com/totec448-spec/chat-on-steroids/pull/552)), Pets focus fallback
+([#553](https://github.com/totec448-spec/chat-on-steroids/pull/553)), 2.1.17 release preparation
+([#554](https://github.com/totec448-spec/chat-on-steroids/pull/554)), changelog completion
+([#550](https://github.com/totec448-spec/chat-on-steroids/pull/550)) and finish-tool guidance
+([#557](https://github.com/totec448-spec/chat-on-steroids/pull/557)).
+
 The September 12 repair snapshot also adapts [@Maximapple](https://github.com/Maximapple)'s
 destination loading guard ([#164](https://github.com/totec448-spec/chat-on-steroids/pull/164)),
 expired automatic resume claim release ([#165](https://github.com/totec448-spec/chat-on-steroids/pull/165)),

@@ -21,7 +21,7 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-09-17**, including the 2.1.14 release candidate. App/extension **2.1.14**,
+Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-09-28**. App/extension **2.1.17**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -76,7 +76,7 @@ losing the project, history, workers or queued instructions when a chat grows to
 | Goal / Loop | Mutually exclusive modes of one driver. Goal can decide no further message is needed; Loop continues within scope. |
 | Generated workflow / checkpoints | User instructions owned by the outbox; delivered at real finish/completion boundaries. |
 | `update_plan` | The agent's CoS-stored progress plan, optionally shown in the desktop UI. It does not execute or consume queue entries. |
-| `session_finish` | Astra's explicit near-finish hold/notice boundary; does not mean the whole task is already verified. |
+| `session_finish` | Explicit near-finish hold/notice boundary available to a user-requested model; Astra also uses it for automatic continuation. It does not mean the whole task is already verified. |
 | Prime / worker | One owning conversation and its reusable subordinate chats. Several prime families may run independently. |
 | Decision helper / planner | A role-specific chat that produces a continuation decision or workflow; it must not execute the reference task. |
 | Code-mode `exec` | Bounded JavaScript composition of one MCP surface's tools. `exec_command` runs an OS process. |
@@ -1148,8 +1148,9 @@ republish an old enqueue-time model as a fresh observed switch.
 ### Astra's finish boundary
 
 `shared/chat-models.ts` recognizes exact Astra/Pro identities; substring guesses are forbidden.
-`session_finish` is exposed by the finish setting and requested in executor prompts only under
-the applicable Astra policy. Workers still use `agents action=finish`.
+`session_finish` is exposed by the finish setting. A user prompt may request it with any model;
+automatic executor prompts request it only under the applicable Astra policy. Workers still use
+`agents action=finish`.
 
 `shared/finish.ts::finishInstruction()` is the single prompt for browser and tool delivery:
 complete implementation first, call when roughly the configured 3/5 minutes of final checking
@@ -2224,7 +2225,7 @@ holds and queues a bounded exact-turn native Stop command. Native confirmation i
 the app does not manufacture a final answer or infer cancellation from a click/turn_end.
 The desktop logs admission with its exact session, conversation, turn and command. An empty
 or repeated form submit cannot request Stop: the submitting control must be the button while
-it displays Stop/Cancel. End turn only releases an Astra finish hold.
+it displays Stop/Cancel. End turn only releases an exact finish hold.
 Stop elects an existing exact tab, including a loading document, or opens the missing chat
 once under the same durable command. Its absolute two-minute deadline covers browser loading
 without renewing on retries. Browser election is saved before opening; lost receipts, navigation
@@ -2759,6 +2760,13 @@ regeneration are documented in `docs/pet/PRODUCTION.md`; pet unit/DOM tests and
 `scripts/verify-pet-electron.cjs` cover this owner without provider conversations.
 `scripts/verify-pet-performance.cjs` measures the production pet in isolated
 Electron with unchanged artwork, process CPU deltas and actual animation wakes.
+
+`main/pet-overlay.ts` owns the optional Desktop Pets window. On Windows,
+`main/pet-window-focus.ts` observes foreground transfers while that window exists and makes one
+OS-governed attempt to return focus to the previous live window after a pet drag. If the native
+Koffi binding cannot load, pets remain available and only focus return is unavailable.
+`test/pet-window-focus.test.ts` covers ownership, and `scripts/verify-pet-toggle.cjs` exercises
+hide/show and pointer input in Electron.
 
 `renderer/main.ts` owns the shell/setup/settings; `chat.ts` owns sessions, composer and timeline.
 Projects, workers, plans, model choice, usage and plugins have focused modules (§4). The renderer
@@ -3322,7 +3330,8 @@ diagnostics, not restart authority; secrets must never be printed to investigate
 Source, bundle, package, installed bytes and live behavior are separate gates (§3). The app id
 is `com.chatonsteroids.app`. Native release targets are Windows x64/arm64 NSIS, macOS x64/arm64
 DMG+ZIP and Linux x64/arm64 AppImage+DEB. Windows is per-user-capable and `asInvoker`; replacing
-the package preserves userData. Synchronize package/main/extension versions deliberately.
+the package preserves userData. This fork also builds a Windows x64 portable executable.
+Synchronize package/main/extension versions deliberately.
 
 `electron-vite` builds main/preload/renderer into `out/`; extension files ship directly without
 a bundler. It emits `out/main/server.js` as a separate plain-Node Core host. `electron-builder.yml` puts executable tunnel/rg, extension and required native
@@ -3345,9 +3354,9 @@ upstream binaries while retaining that distribution's checksum or notices.
 | `scripts/package.mjs` | Icons → bundle → explicit target resources/native staging → builder with publishing disabled. |
 | `src/server/index.ts`, `scripts/server-launch-utils.mjs`, `scripts/install-server-service.mjs`, `scripts/run-server-tmux.mjs` | Plain-Node Core entrypoint, shared path validation, credential-free systemd unit and literal-argv tmux launcher. |
 | `packaging-targets.mjs`, `packaging-versions.mjs` | Supported OS/arch vocabulary and pinned target checksums; fetchers share these authorities. |
-| `prepare-packaging-native.mjs` | Exact target node-pty/Sharp/tree-sitter from verified package material; host leftovers cannot win. |
+| `prepare-packaging-native.mjs` | Exact target node-pty/Sharp/tree-sitter and Windows Koffi from verified package material; host leftovers cannot win. |
 | `prepare-macos-desktop-helper.mjs` | Thin target Swift dylib + matching N-API addon; packaged in-process permission identity. |
-| `smoke-packaged-runtime.mjs`, `smoke-macos-{bundle,gui}.mjs` | In-place resource/native-stack checks, Mac bundle/seal and real GUI startup evidence. |
+| `smoke-packaged-runtime.mjs`, `smoke-macos-{bundle,gui}.mjs` | In-place resource/native-stack checks including Windows Koffi, Mac bundle/seal and real GUI startup evidence. |
 | `generate-third-party-notices.mjs`, `package-native-sources.mjs` | Production notices and corresponding native source inventory/archive; exact lockfile/catalog provenance. |
 | `verify-public-history.mjs`, `check-release-absent.mjs` | Public-history/privacy gate and positive proof that publishing will not overwrite a release. |
 
