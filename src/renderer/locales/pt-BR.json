@@ -1746,5 +1746,6 @@
   "Review this edit ({0} of {1} files)": "Revisar esta edição ({0} de {1} arquivos)",
   "This reply points to content from another message that was not recorded.": "Esta resposta aponta para conteúdo de outra mensagem que não foi registrado.",
   "Local control API: let agents on this computer read app status and chats": "API de controle local: permitir que agentes neste computador leiam o status do app e os chats",
-  "The app quits completely when you close the window.": "O aplicativo é encerrado completamente quando você fecha a janela."
+  "The app quits completely when you close the window.": "O aplicativo é encerrado completamente quando você fecha a janela.",
+  "Use effort: {0}": "Usar o nível: {0}"
 }

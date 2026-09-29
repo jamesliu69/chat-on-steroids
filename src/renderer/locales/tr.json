@@ -1746,5 +1746,6 @@
   "Review this edit ({0} of {1} files)": "Bu düzenlemeyi incele ({1} dosyadan {0})",
   "This reply points to content from another message that was not recorded.": "Bu yanıt, kaydedilmemiş başka bir mesajdaki içeriğe işaret ediyor.",
   "Local control API: let agents on this computer read app status and chats": "Yerel kontrol API'si: bu bilgisayardaki ajanların uygulama durumunu ve sohbetleri okumasına izin ver",
-  "The app quits completely when you close the window.": "Pencereyi kapattığınızda uygulama tamamen kapanır."
+  "The app quits completely when you close the window.": "Pencereyi kapattığınızda uygulama tamamen kapanır.",
+  "Use effort: {0}": "Bu seviyeyi kullan: {0}"
 }
