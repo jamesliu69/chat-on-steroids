@@ -1744,6 +1744,7 @@
   "This reply points to content from another message that was not recorded.": "此回复指向另一条消息中未被记录的内容。",
   "Local control API: let agents on this computer read app status and chats": "本地控制 API：允许本机上的智能体读取应用状态和聊天",
   "The app quits completely when you close the window.": "关闭窗口时，应用会完全退出。",
+  "Allow actions: let local agents send and cancel messages": "允许操作：本地智能体可以发送和取消消息",
   "Use effort: {0}": "使用此强度：{0}",
   "This chat (estimate)": "此对话（估算）",
   "Context limit": "上下文上限",

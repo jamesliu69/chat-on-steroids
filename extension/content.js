@@ -614,6 +614,16 @@
    * or the Stop control genuinely going away.
    */
   let fiberTerminalMessageId = null;
+  /*
+   * #746: native finals that were already settled before the current generation began. ChatGPT
+   * can briefly hand a new answer's section the previous turn's React branch; its `end_turn`
+   * then closed the new turn about 100 ms after turn_start, and hours of work had no owner.
+   * A final this document already knew when it opened a turn, or one that already ended a turn,
+   * ends no later turn. Adopted turns (reload, late ownership) open nothing here and keep their
+   * own final.
+   */
+  const knownFinals = new Set();
+  const settledFinals = new Set();
 
   /** App-owned render events, including calls ChatGPT never gave a native row. */
   const streamBySeq = new Map();
@@ -2596,6 +2606,7 @@
       // state the resume exists to keep, since recorder.ts empties `progress`, `pageTools`
       // and the pending sightings on every turn_start.
       emit({ kind: 'turn_start', turnId });
+      for (const known of knownFinals) settledFinals.add(known);
 
       // The compaction binding is made here and only here: the first generation to open
     }
@@ -4453,13 +4464,19 @@
     // button. If the final assistant message says `end_turn:true`, close the exact local
     // generation even if a stale Stop control remains mounted. Final message/activity
     // revisions above have already been emitted, so do not trigger a second Fiber final pass.
+    for (const seen of answer.turns) if (seen?.endMessageId) knownFinals.add(seen.endMessageId);
+    for (const bounded of [knownFinals, settledFinals]) {
+      while (bounded.size > 2000) bounded.delete(bounded.values().next().value);
+    }
     if (
       generating &&
       activeTurnIndex >= 0 &&
       activeLocalTurnId === turnId &&
-      Boolean(answer.turns[activeTurnIndex]?.endMessageId)
+      Boolean(answer.turns[activeTurnIndex]?.endMessageId) &&
+      !settledFinals.has(answer.turns[activeTurnIndex].endMessageId)
     ) {
       fiberTerminalMessageId = answer.turns[activeTurnIndex].endMessageId;
+      settledFinals.add(fiberTerminalMessageId);
       const ended = generationTurn();
       if (ended) {
         // Native completion resolves transport uncertainty even when its old
@@ -8441,7 +8458,7 @@
           : 'OpenRouter';
     const bar = (at, done = false) => ({ steps: GOAL_STEPS, at, done });
     const failure = goal.error || (draft && draft.stage === 'failed'
-      ? draft.message || draft.error || t('content_goal_backend_no_answer', '$1 did not answer', dest)
+      ? goalFailureText(draft) || draft.error || t('content_goal_backend_no_answer', '$1 did not answer', dest)
       : '');
     if (failure) {
       const at = draft && draft.stage === 'failed' ? 2 : (GOAL_STEP_AT[goal.phase] ?? 1);
@@ -10162,7 +10179,7 @@
           : goalConfig && goalConfig.provider === 'custom'
             ? t('content_goal_backend_custom_endpoint', 'custom endpoint')
             : 'OpenRouter';
-      const why = draft.message || draft.error || t(
+      const why = goalFailureText(draft) || draft.error || t(
         'content_goal_backend_no_answer',
         '$1 did not answer',
         fallbackDestination
@@ -10372,10 +10389,20 @@
     void pullActivity();
   }
 
+  /** The app's explanation in the page language when it is a fixed catalog text. */
+  function goalFailureText(source) {
+    if (!source || !source.message) return '';
+    const message = String(source.message).slice(0, 600);
+    const key = typeof source.messageKey === 'string' && /^[a-z0-9_]+$/.test(source.messageKey)
+      ? source.messageKey
+      : '';
+    return key ? t(`content_goal_error_${key}`, message) : message;
+  }
+
   function replyError(reply) {
     if (!reply) return '';
     const data = reply.data || {};
-    if (data.message) return String(data.message).slice(0, 600);
+    if (data.message) return goalFailureText(data);
     if (data.error === 'session_not_recorded') return t(
       'content_error_session_not_recorded',
       'This chat has no recorded local session yet.'
@@ -11851,6 +11878,12 @@
         ));
       const sendingTarget = submittedSendLifetime(target, forEpoch);
       draft = CLF_DOM.captureComposerDraft(input.text, () => sendAttempted ? sendingTarget() : onTarget());
+      // #744: a recovery's own text survives a composer remount before Send is authorized. The
+      // lease may follow it once; after authorization a lost editor stays a failure.
+      let authorizing = false;
+      const draftCurrent = () => draft.current() ||
+        (input.recovery === true && !authorizing && !sendAttempted && !(input.images || []).length &&
+          !(input.attachments || []).length && draft.rebind() && draft.current());
       const files = [];
       for (const attachment of input.attachments || []) {
         const parts = [];
@@ -11876,7 +11909,7 @@
         'Attachment upload was not confirmed. Check the unsent draft and any file error in ChatGPT before trying again.'
       ));
       await Promise.resolve();
-      if (!onTarget() || !draft.current() || sendText(CLF_DOM.composer()?.textContent) !== sendText(input.text)) return fail(t(
+      if (!onTarget() || !draftCurrent() || sendText(CLF_DOM.composer()?.textContent) !== sendText(input.text)) return fail(t(
         'content_delivery_draft_preserved',
         'The composer changed; your draft was preserved'
       ));
@@ -11896,9 +11929,10 @@
       // comparison never matched, and that first turn got no ACK, no turn start and no turn end
       // for Goal or Loop to act on. The bootstrap comparison is exact either way (raw, then one
       // unescape); a person's own sends keep the raw comparison in matchesUserSendReceipt.
-      if (!(await sendSubmittedText(sendingTarget, false, async sendCurrent => {
+      const nativeSend = () => sendSubmittedText(sendingTarget, false, async sendCurrent => {
         // Preserve the outbox's revocable claim until the actual native Send is ready.
         if (input.recovery && !await recoveryPageUnfinished(() => sendCurrent() && onTarget() && draft.current())) return false;
+        authorizing = true;
         const authorized = await ask({ type: 'desktop_input', id: input.id, owner: input.owner, conversationId: target, authorize: true });
         if (!sendCurrent() || authorized?.data?.ok !== true || !onTarget() || !draft.current()) return false;
         if (input.recovery && !await recoveryPageUnfinished(() => sendCurrent() && onTarget() && draft.current())) return false;
@@ -11912,7 +11946,10 @@
         // may replace it before this async operation resumes; do not rediscover it.
         receipt = { conversation, user: { id: user.id } };
         return true;
-      }, matchesSubmittedBootstrap))) return false;
+      }, matchesSubmittedBootstrap);
+      // #744: one retry when the editor was replaced before anything asked to send it.
+      if (!(await nativeSend()) &&
+          !(!authorizing && !sendAttempted && !receipt && !draft.current() && draftCurrent() && await nativeSend())) return false;
       if (!receipt || !sendingTarget()) return false;
       // Native Send listeners refresh the receipt; pin only that witnessed object.
       const witnessedSendReceipt = userSendReceipt;

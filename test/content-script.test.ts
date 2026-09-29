@@ -750,6 +750,55 @@ describe('desktop input delivery and helper ownership', () => {
     }
   });
 
+  /**
+   * #744: after a reload, React replaced the composer between insertion and Send and kept the
+   * recovery's exact text. The lease was tied to the old node, Send was never pressed, and the
+   * message sat in ChatGPT until the user sent it by hand. One rebind is allowed before anything
+   * asked to send; a different text, a plain input or an already authorized send still fails.
+   */
+  it.each(['recovery', 'other text', 'plain input', 'after authorization'] as const)(
+    'follows a remounted composer once before Send authorization (%s)', async kind => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    live = await harness(`https://chatgpt.com/c/${chatA}`, {
+      desktop_input: async message => {
+        if (message.authorize && kind === 'after authorization') await held;
+        return { ok: true, data: message.authorize || message.ack || message.fail
+          ? { ok: true } : { input: claimed(kind === 'plain input' ? {} : { recovery: true }) } };
+      }
+    }, () => undefined, false, true);
+    const button = live.document.querySelector<HTMLButtonElement>('[data-testid="send-button"]')!;
+    if (kind !== 'after authorization') button.disabled = true;
+    const sends = watchSend(live.document);
+    live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => {
+      userTurn(live!.document, 'remount-question', text, { sent: false });
+      live!.document.querySelector('#prompt-textarea')!.textContent = '';
+    });
+    const accepting = live.runtimeMessage({ type: 'clf-desktop-input', id: inputId, conversationId: chatA });
+    await settle();
+    expect(composerText(live.document)).toBe(text);
+    expect(sends()).toBe(0);
+    const composer = live.document.querySelector('#prompt-textarea')!;
+    const replacement = composer.cloneNode(true) as Element;
+    if (kind === 'other text') replacement.textContent = 'A sentence I was still writing';
+    composer.replaceWith(replacement);
+    button.disabled = false;
+    release();
+    const result = await accepting;
+    await settle();
+    const authorizations = live.sent.filter(message => message.type === 'desktop_input' && message.authorize);
+    if (kind === 'recovery') {
+      expect(result).toEqual({ ok: true });
+      expect(sends()).toBe(1);
+      expect(authorizations).toHaveLength(1);
+    } else {
+      expect(result).toEqual({ ok: false });
+      expect(sends()).toBe(0);
+      expect(authorizations).toHaveLength(kind === 'after authorization' ? 1 : 0);
+    }
+    if (kind === 'other text') expect(composerText(live.document)).toBe('A sentence I was still writing');
+  });
+
   it('keeps a helper claim revocable until its delayed Send is ready', async () => {
     let authorized = true;
     live = await harness(`https://chatgpt.com/c/${chatA}`, {
@@ -8230,6 +8279,80 @@ describe('a stop button that goes missing while the turn is still running', () =
     live.hook.observe(); await settle();
     await bindFiberTurns([{ section: remounted, turn: firstEnd }, { section: second, turn: { turnId: 'remount-a2', endMessageId: 'remount-a2-final',
       calls: [], activities: [], messages: [{ messageId: 'remount-a2-final', stable: true, rawText: 'Second answer.', renderedHtml: '<p>Second answer.</p>' }] } }]);
+    await live.hook.flush(); await settle();
+    const ends = emitted(live.sent, 'turn_end').map(entry => entry.event);
+    expect(ends).toHaveLength(2);
+    expect(ends[1]).toMatchObject({ turnId: emitted(live.sent, 'turn_start')[1]!.event.turnId, outcome: 'completed' });
+  });
+
+  it('does not close a new turn with the previous answer remounted below its question (#746)', async () => {
+    // #746, live on 2.1.20: a Loop continuation's turn was closed 112 ms after turn_start and the
+    // next two hours of work had no owner. The finished previous answer, remounted where the new
+    // answer belongs, must not end the new turn either.
+    live = await harness();
+    startGenerating(live.document);
+    userTurn(live.document, 'remount-q1', 'first question');
+    const first = assistantTurn(live.document, 'remount-a1', []);
+    live.hook.observe(); await settle();
+    const firstEnd = { turnId: 'remount-a1', endMessageId: 'remount-a1-final', calls: [], activities: [],
+      messages: [{ messageId: 'remount-a1-final', stable: true, rawText: 'First answer.', renderedHtml: '<p>First answer.</p>' }] };
+    await bindFiberTurns([{ section: first, turn: firstEnd }]);
+    await live.hook.flush(); await settle();
+    stopGenerating(live.document);
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_end')).toHaveLength(1);
+
+    const question = userTurn(live.document, 'remount-q2', 'second question');
+    startGenerating(live.document);
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_start')).toHaveLength(2);
+    first.remove();
+    const remounted = assistantTurn(live.document, 'remount-a1', []);
+    question.after(remounted);
+    live.hook.observe(); await settle();
+    await bindFiberTurns([{ section: remounted, turn: firstEnd }]);
+    await live.hook.flush(); await settle();
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_end')).toHaveLength(1);
+
+    const second = assistantTurn(live.document, 'remount-a2', []);
+    live.hook.observe(); await settle();
+    await bindFiberTurns([{ section: remounted, turn: firstEnd }, { section: second, turn: { turnId: 'remount-a2', endMessageId: 'remount-a2-final',
+      calls: [], activities: [], messages: [{ messageId: 'remount-a2-final', stable: true, rawText: 'Second answer.', renderedHtml: '<p>Second answer.</p>' }] } }]);
+    await live.hook.flush(); await settle();
+    const ends = emitted(live.sent, 'turn_end').map(entry => entry.event);
+    expect(ends).toHaveLength(2);
+    expect(ends[1]).toMatchObject({ turnId: emitted(live.sent, 'turn_start')[1]!.event.turnId, outcome: 'completed' });
+  });
+
+  it('does not close a new turn with a stale descriptor of the previous final (#746)', async () => {
+    live = await harness();
+    startGenerating(live.document);
+    userTurn(live.document, 'stale-q1', 'first question');
+    const first = assistantTurn(live.document, 'stale-a1', []);
+    live.hook.observe(); await settle();
+    const firstEnd = { turnId: 'stale-a1', endMessageId: 'stale-a1-final', calls: [], activities: [],
+      messages: [{ messageId: 'stale-a1-final', stable: true, rawText: 'First answer.', renderedHtml: '<p>First answer.</p>' }] };
+    await bindFiberTurns([{ section: first, turn: firstEnd }]);
+    await live.hook.flush(); await settle();
+    stopGenerating(live.document);
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_end')).toHaveLength(1);
+
+    userTurn(live.document, 'stale-q2', 'second question');
+    startGenerating(live.document);
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_start')).toHaveLength(2);
+    // The new answer's section mounts while React still hands it the previous turn's branch.
+    const second = assistantTurn(live.document, 'stale-a2', []);
+    live.hook.observe(); await settle();
+    await bindFiberTurns([{ section: first, turn: firstEnd }, { section: second, turn: firstEnd }]);
+    await live.hook.flush(); await settle();
+    live.hook.observe(); await settle();
+    expect(emitted(live.sent, 'turn_end'), 'the previous final closed the new turn').toHaveLength(1);
+
+    await bindFiberTurns([{ section: first, turn: firstEnd }, { section: second, turn: { turnId: 'stale-a2', endMessageId: 'stale-a2-final',
+      calls: [], activities: [], messages: [{ messageId: 'stale-a2-final', stable: true, rawText: 'Second answer.', renderedHtml: '<p>Second answer.</p>' }] } }]);
     await live.hook.flush(); await settle();
     const ends = emitted(live.sent, 'turn_end').map(entry => entry.event);
     expect(ends).toHaveLength(2);

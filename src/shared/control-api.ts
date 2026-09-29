@@ -20,6 +20,12 @@ export const CONTROL_API_ROUTES = [
   '/v1/log'
 ] as const;
 
+/**
+ * Routes that change something. They are served only while the user has also switched on
+ * `controlApi.allowActions`, and are listed apart from `CONTROL_API_ROUTES` for that reason.
+ */
+export const CONTROL_API_ACTION_ROUTES = ['POST /v1/inputs', 'POST /v1/inputs/{id}/cancel'] as const;
+
 /** Written to `userData/control-api/endpoint.json` while the listener is up. */
 export interface ControlApiEndpoint {
   protocol: number;
@@ -33,6 +39,8 @@ export interface ControlApiHealth {
   ok: true;
   protocol: number;
   routes: string[];
+  /** Whether the action routes are being served right now, and which ones this build has. */
+  actions: { enabled: boolean; routes: string[] };
   pid: number;
   appVersion: string;
   /** When this app process started. */
@@ -129,18 +137,80 @@ export interface ControlApiSessionList {
   activeId: string | null;
 }
 
+/**
+ * The compaction, or handoff to a replacement chat, this session is part of: one that is running,
+ * or one the app has just finished and not yet forgotten.
+ */
+export interface ControlApiJob {
+  /** `handoff-pending`, `opening`, `waiting-for-browser`, `done` or `failed`. */
+  stage: string;
+  startedAt: number;
+  /** Started by the app's own threshold rather than by a person. */
+  automatic: boolean;
+  /** True while the job is running: every stage but `done` and `failed`. */
+  busy: boolean;
+  /** `not-attempted`, `attempted-unresolved`, `dispatched-unresolved` or `sent`. */
+  sourceSend: string;
+  destinationSend: string;
+  /** Why the job failed, when it did. Free text, masked and cut like the rest. */
+  error: string | null;
+}
+
+/** One thing the app is waiting on for a chat, and when it stops waiting. */
+export interface ControlApiRecovery {
+  /**
+   * `unattributed`, `unattributed-wait`, `assistant-error`, `tab-recovery`, `thinking-failed`,
+   * `native-busy`, `silence`, `post-reload` or `pickup`.
+   */
+  kind: string;
+  /** Milliseconds since the epoch. When the app has not fixed an end for a wait, this is the moment of the read. */
+  deadline: number;
+  /** When the app's window starts to show this wait, if it holds it back until then. */
+  visibleAt: number | null;
+  /** What the wait leads to when it runs out, if anything: `queue`, `goal`, `loop` or `continue`. */
+  next: string | null;
+  /** The conditions for the app's attribution retry are met now. */
+  reload: boolean;
+  /** The app is still holding the source turn open during a post-reload wait. */
+  generating: boolean;
+}
+
+export interface ControlApiLive {
+  /** The turn ChatGPT is running now, if the app judges it still running. */
+  activeTurnId: string | null;
+  stopPending: boolean;
+  /** `off`, `goal` or `loop`. */
+  automation: string;
+  /**
+   * Empty, or why the app has taken its hands off the chat: `blocked` (the user blocked it, so
+   * its tools are refused and its loop is suspended) or `worker` (a worker's chat).
+   */
+  blocked: string;
+  /** A message sent now would stop the answer ChatGPT is writing (the composer's Send directly). */
+  canSendDirectly: boolean;
+  /** A message sent now is injected into the running turn (the composer's Inject now). */
+  canInject: boolean;
+  /** A message can be queued to go out when the session finishes. */
+  queueAtFinish: boolean;
+  /** The app is holding the open turn's finish and has not released it. */
+  finishHeld: boolean;
+  /** The finish is held and a finish call is in progress, with no message queued for the chat. */
+  finishWaiting: boolean;
+  /** Why an armed goal or loop has not sent its next instruction yet. `until` is null when the wait has no deadline. */
+  goalWait: { reason: string; until: number | null } | null;
+  /** Deadlines the app is holding for this chat: the reasons it has not acted yet. */
+  recovery: ControlApiRecovery[];
+  job: ControlApiJob | null;
+}
+
 export interface ControlApiSessionDetail {
   session: ControlApiSession;
   /**
    * Only present when asked for with `?live=1`. Null when the session has no attached chat to
-   * describe (never recorded, or superseded) or its state could not be read.
+   * describe (never recorded, or superseded), when its state could not be read, or when the
+   * session moved to another chat while it was being read.
    */
-  live?: {
-    activeTurnId: string | null;
-    stopPending: boolean;
-    automation: string;
-    blocked: string;
-  } | null;
+  live?: ControlApiLive | null;
 }
 
 export type ControlApiEvent = {
@@ -221,7 +291,16 @@ export interface ControlApiInput {
   deliveredSessionId: string | null;
   conversationId: string | null;
   state: string;
+  /**
+   * What the row proves about delivery. `sent`: the receipt exists. `not_sent`: terminal and
+   * Send was never authorized. `unconfirmed`: Send may have reached ChatGPT; never resent.
+   * `pending`: not yet handed out.
+   */
+  delivery: 'sent' | 'not_sent' | 'unconfirmed' | 'pending';
   mode: string;
+  transportIntent: string | null;
+  /** Filed by the app itself, such as a recovery pickup, rather than sent by a person or agent. */
+  automatic: boolean;
   purpose: string | null;
   createdAt: number;
   dueAt: number;
@@ -279,4 +358,17 @@ export interface ControlApiLog {
   entries: Array<{ time: number; level: string; message: string; agent?: string; truncated?: true }>;
   /** Entries the in-memory ring holds, before the filters. */
   ringSize: number;
+}
+
+export interface ControlApiSendResult {
+  /** The outbox row. It is admitted, not delivered: `input.delivery` says what is known. */
+  input: ControlApiInput;
+  /** True when this id was already in the outbox, so nothing was sent again. */
+  replayed: boolean;
+}
+
+export interface ControlApiCancelResult {
+  input: ControlApiInput;
+  /** False when the row was already cancelled or failed. `input.delivery` says whether it may have been sent. */
+  cancelled: boolean;
 }
