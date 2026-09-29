@@ -77,11 +77,11 @@ it('restores German through setup and settings without changing authored content
   vi.resetModules(); expect((await import('../src/renderer/i18n.js')).currentLanguage()).toBe('de');
 });
 
-it('uses Traditional Chinese without storage and still switches to German', async () => {
+it('uses English without storage and still switches to German', async () => {
   vi.spyOn(dom.window.Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('unavailable'); });
   vi.spyOn(dom.window.Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('unavailable'); });
   const { initLanguage, setLanguage, currentLanguage, t } = await import('../src/renderer/i18n.js');
-  expect(currentLanguage()).toBe('zh-TW');
+  expect(currentLanguage()).toBe('en');
   initLanguage(); setLanguage('de');
   expect(currentLanguage()).toBe('de');
   expect(t('Settings')).toBe('Einstellungen');

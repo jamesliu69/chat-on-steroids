@@ -21,7 +21,7 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-09-28**. App/extension **2.1.17**,
+Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-09-29**. App/extension **2.1.20**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -110,6 +110,8 @@ losing the project, history, workers or queued instructions when a chat grows to
 
 There are four cooperating planes. Core, Desktop and Plugins are three logical MCP surfaces on
 the local MCP listener; the browser bridge is a separate loopback service with separate auth.
+The optional local control API (§18) is a third loopback listener for a trusted local caller; it
+projects state and is not a plane of its own.
 
 ```text
 ChatGPT model                         ChatGPT browser page
@@ -218,6 +220,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | App shell | `src/main/index.ts`, `window-lifecycle.ts`, `window-layout.ts`, `window-icon.ts`, `tray-image.ts`, `shutdown.ts`: bootstrap, activation, geometry, tray and bounded exit. |
 | Config/security | `src/main/config.ts`, `platform.ts`, `secrets.ts`, `sandbox.ts`, `redaction.ts`; `src/shared/types.ts`, `capabilities.ts`: permission and host projection, secrets, approved paths. |
 | Publication | `src/main/connection.ts`, `mcp/server.ts`, `mcp/surfaces.ts`, `tunnel/{index,health,locate}.ts`, `diagnostics.ts`: endpoint/tunnel generation and truthful status. |
+| Local control API | `src/main/control-api.ts`, `src/main/control-reads.ts`, `src/shared/control-api.ts`: opt-in loopback listener, per-launch token, allowlisted read-only projections of other owners. Owns no fact. The session list and event page it serves come from `session/read-model.ts`, the same functions the renderer's IPC handlers call. |
 | Tool dispatch | `src/main/mcp/{tools,kernel,inbound,call-context,tool-declarations}.ts`, `tools-core.ts`, `tools-desktop.ts`, `tools-plugins.ts`: declarations, exact caller, live guards and evidence. |
 | Code composition | `src/main/mcp/code-mode-{tool,runtime,worker}.ts`: surface-scoped `exec`, QuickJS admission, limits and explicit emissions. |
 | Instructions/plan | `src/main/mcp/{instructions,coding-instructions,plan-tool}.ts`, `src/shared/agent-plan.ts`, `src/renderer/agent-plan.ts`: executor contract and displayed progress plan. |
@@ -236,7 +239,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Extension | `extension/{manifest.json,chatgpt-dom.js,content.js,fiber.js,background.js,usage.js,overlay.css,popup.html,popup.css,popup.js}`: injection worlds, native observations/actions, journal and UI. |
 | Models/usage | `src/main/chat-models.ts`, `session/usage.ts`; `src/shared/{chat-models,usage}.ts`; `src/renderer/{chat-models,context-meter,usage}.ts`: account observations vs local estimates. |
 | External plugins | `src/main/plugins/{catalog,installer,manager,exposure,oauth}.ts`, `plugins-ipc.ts`, `plugin-refresh.ts`, `src/shared/{plugins,plugin-refresh}.ts`, `src/renderer/plugins.ts`. |
-| Renderer boundary | `src/main/ipc.ts`, `edit-context-menu.ts`, `src/preload/index.ts`; `src/renderer/{main,chat,dom,tool-result,timeline-scroll,sidebar-resize,browser-preferences,connection-popover,i18n}.ts`, `locales/{es,zh-TW,ja,tr,fr,pt-PT,pt-BR,de}.json`, `index.html`, `styles.css`. |
+| Renderer boundary | `src/main/ipc.ts`, `edit-context-menu.ts`, `src/preload/index.ts`; `src/renderer/{main,chat,dom,tool-result,timeline-scroll,sidebar-resize,browser-preferences,connection-popover,i18n}.ts`, `locales/{es,zh-CN,zh-TW,ja,ko,tr,fr,pt-PT,pt-BR,de}.json`, `index.html`, `styles.css`. |
 | Appearance | `src/shared/appearance.ts`, `src/main/appearance-schema.ts`, `src/renderer/appearance.ts`: bounded saved colors/typography, field-wise Settings merge, immediate semantic CSS projection. `window-layout.ts` shares native caption/backing colors. |
 | Native Desktop | `src/main/computer/{index,helper,browser-chords,windows-api,windows-capture,windows-apps,windows-keys}.ts`, `src/shared/windows-computer.ts`, `mcp/tools-desktop-{windows,macos}.ts`, `native/macos-desktop-helper/*`, `native/macos-desktop-addon/*`. |
 | Direct browser control | `src/main/browser-control.ts`, `mcp/tools-browser.ts`, `src/shared/browser-control.ts`, `extension/browser-control{,-page}.js`: short-lived RPCs, session-owned debugger tabs, bounded DOM/diagnostics and background input. |
@@ -265,6 +268,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Browser repair | `bridge.ts` process-memory episodes | Re-earn from live evidence; never restore an old reload token as action authority. |
 | Catalog/usage | Saved successful `chat-models`; derived `usage-cache`; live usage snapshot | Catalog is observation, not a send receipt; estimates are not provider billing. |
 | Connector refresh | `plugin-refresh.ts` / `state/plugin-refresh.json` | Exact installed app id + schema fingerprint, claimed before Refresh, verified after. |
+| Control API endpoint | `control-api.ts` / `control-api/{token,endpoint.json}` | Per launch, only while the listener runs. Token written before the endpoint; endpoint removed first on stop. A crash can leave both behind, so a caller must still reach the port. |
 
 ## 5. Startup, configuration and shutdown
 
@@ -281,7 +285,8 @@ plugin manager, loads Goal ledgers, exact correlations and blocked chats, then r
 and every active/dormant prime family. Persistence hooks exist even when multi-agent is Off.
 Continuation restore follows swarm restore because it may repair prime ownership. IPC/input
 hooks precede browser traffic. Then the secure window/tray, bridge for recording or agents,
-independent retention maintenance, optional connector auto-connect and updater lifetime begin.
+the opt-in local control API, independent retention maintenance, optional connector
+auto-connect and updater lifetime begin.
 The current first-window model-discovery exception is noted in §21.
 
 Settings use validated current config and `effectiveCapabilities()`. Fresh-install defaults,
@@ -2756,8 +2761,8 @@ changes retire scene props synchronously. Reduced motion disables autonomous
 travel/actions while keeping static click feedback. Company targets are plain DOM
 text; bat, bin and hit effects carry no company logos. `pet-assets/animations.json`
 maps 96 local character frames with contact/release timing. Asset production and
-regeneration are documented in `docs/pet/PRODUCTION.md`; pet unit/DOM tests and
-`scripts/verify-pet-electron.cjs` cover this owner without provider conversations.
+regeneration are documented in `docs/pet/PRODUCTION.md`; pet unit/DOM tests, `scripts/verify-pet-overlay-electron.cjs` and `scripts/verify-pet-toggle.cjs`
+cover this owner without provider conversations.
 `scripts/verify-pet-performance.cjs` measures the production pet in isolated
 Electron with unchanged artwork, process CPU deltas and actual animation wakes.
 
@@ -2901,8 +2906,8 @@ names render as plain chips; unresolved file citations do not gain invented loca
 Tool result rendering preserves structured text/image/resource distinctions within bounds.
 App-owned external/local links cross their validated main-process route.
 
-English, Spanish, Traditional Chinese, Japanese, Turkish, French, European Portuguese, Brazilian Portuguese and German use the existing UI
-catalogs (`i18n.ts`, `locales/{es,zh-TW,ja,tr,fr,pt-PT,pt-BR,de}.json`), with the selected locale in
+English, Spanish, Simplified Chinese, Traditional Chinese, Japanese, Korean, Turkish, French, European Portuguese, Brazilian Portuguese and German use the existing UI
+catalogs (`i18n.ts`, `locales/{es,zh-CN,zh-TW,ja,ko,tr,fr,pt-PT,pt-BR,de}.json`), with the selected locale in
 `cos.ui.language`. Setup uses SVG flags only, with native language names in tooltips and
 accessible labels; Appearance retains the named language dropdown. Both controls share the
 same persisted preference. `translate="no"` protects text and attributes, including native
@@ -2910,9 +2915,9 @@ language names. Japanese has its own system-font fallbacks and CJK wrapping. Cha
 repaints owned labels while retaining drafts/selections; never translate authored messages,
 provider text or file paths. Catalog checks cover all source keys and numbered placeholders;
 `dom.run()` translates catalogued IPC errors before displaying a toast; unknown error strings
-and successful payloads stay literal. This fork defaults to Traditional Chinese, including when
-storage is unavailable, and retains its existing mapping of a saved `zh-CN` preference to `zh-TW`.
-Neither the app nor the companion ships a Simplified Chinese catalog or selector.
+and successful payloads stay literal. With no saved preference or available storage, the app
+defaults to English. A saved `zh-CN` preference remains Simplified Chinese; the companion also
+ships its `zh_CN` catalog.
 Settings search folds both query and labels with the selected locale, including Turkish İ/ı.
 `scripts/verify-setup-guide.cjs` exercises narrow/zoomed layouts and native keyboard selection.
 Bindings live only in a WeakMap keyed by their DOM node. Language changes walk the current
@@ -2943,8 +2948,21 @@ apply immediately; Reset appearance restores both palettes and typography withou
 theme, language or setup profile. Text size scales the existing typography hierarchy, including
 code, independently of window zoom. System font retains the locale-specific fallback stack.
 The Appearance sample chat reflects the same semantic color and typography tokens immediately;
-it contains no session data. The composer context ring and compact count remain labeled as local
-estimates. Unverified saved model preferences show their status beside the model select.
+it contains no session data. The composer context dialog and accessible label identify local
+estimates; its toolbar toggles percentage/token values. Compact and Cancel remain the original
+session-scoped actions inside that dialog. Normal/Goal/Loop and Plan use their existing controllers;
+the Goal row opens the objective editor, including before the first message. The mode menu's Goal
+and Loop pencils open that editor without switching automation; Save applies objective and mode,
+then closes the menu. The Plan toolbar toggle only arms planning, even over an existing draft;
+Send/Enter generates. Queued and prepared plan stages show up to three lines. The model menu lists
+every observed model separately and the effort slider only adjusts the selected model. Hidden
+native selects retain send admission; stale selections still require an explicit choice.
+Unverified saved model preferences show their status beside the model select.
+The composer dock measures its natural inner body and animates only transient height changes;
+CSS owns resting height/visibility. The plan's existing green completion owns its own collapse,
+so other dock occupants do not animate a second time. Empty docks retain no border or fixed height.
+The welcome title retains its resting optical center as the draft grows. Real Electron checks
+live in `scripts/verify-composer-ui.cjs` and `scripts/verify-plan-collapse.cjs`.
 Readable foregrounds, secondary text, borders, status colors and accent labels derive from the
 chosen surfaces; sidebar text derives from its own color. Translucency is an in-window tinted
 gradient/blur, not transparency through the native window to other applications.
@@ -2976,6 +2994,14 @@ access. Main re-resolves current approved roots and rejects traversal, symbolic 
 and project-root mutation. The renderer's `workspace-docks.ts` owns the right tool dock and
 bottom terminal dock; Files, Review, Sub-agents and each Terminal view retain their own content
 and async lifetimes. Closing the right dock hides its active tool but retains its tab selection.
+Every dock track change (right column, bottom row) goes through `moveWorkDock`, which animates
+resolved pixel tracks (CSS keeps the resting layout). Open/close slide the content whole at its
+resting size and retire the outgoing tool or terminal after the exit; right expand/restore fade
+the chat at its readable width. The bottom dock resizes from its top edge; its handle stays above
+the terminal bar. Dock `+` menus are anchor-positioned and flip at the window edge. Right-dock
+and bottom-terminal tabs share one pill layout with a truncating `.tab-label`, and reorder by
+pointer drag or Ctrl+Shift+Left/Right; the owner's order stays authoritative. Selecting a tab
+updates the existing pills; only tab, order or title changes rebuild them.
 The right dock has launcher shortcuts, tool tabs and a `+` tool menu. Its Files, Review,
 Sub-agents and Terminal actions open right tabs; repeated Terminal `+` actions add a shell there.
 With no tabs, the right dock shows only launcher shortcuts; its tab bar and `+` stay hidden.
@@ -3102,6 +3128,42 @@ Approved-root requirements are surface/capability decisions, not whether the ext
 Separate local listener health, public tunnel reachability, ChatGPT connector configuration and
 browser attachment in both status and diagnosis. Stale connect/disconnect results cannot replace
 a newer endpoint. Secret paths/tokens are not public diagnostics.
+
+The local control API (`control-api.ts`, Settings → Setup → Advanced, off by default) serves
+`/v1/health` (which also lists the routes this build serves), `/v1/status` and the read routes
+below to a trusted local caller, typically an agent's MCP server watching the app from outside
+its process. It binds 127.0.0.1 on an ephemeral port
+and writes a per-launch token to `userData/control-api/`. The token is never issued over HTTP.
+It refuses any Origin, requires its own Host, and accepts GET only without a body. Status is an
+allowlisted projection of the connection, bridge, plugin, updater and call-context owners.
+Local and public URLs, tunnel ids and plugin sources/config never appear; free text passes
+`redact()`. It holds no timer, retry or recovery authority.
+
+The read routes (`control-reads.ts`) are `GET /v1/sessions`, `/v1/sessions/{id}`,
+`/v1/sessions/{id}/events`, `/v1/inputs`, `/v1/agents` and `/v1/log`. Each asks the owner that
+already feeds the renderer (`session/read-model.ts`, `listInputs`, `swarmState`, `getLog`) and
+projects the answer through an allowlist, so a field an owner grows later stays private until
+it is named there. An event kind added later is published by name only; the kind, input-state
+and log-level tables are exhaustive by type. Message, tool argument/result, outbox and log text
+has known credential shapes masked (`redactSecretText`: API keys, GitHub/Slack/AWS/Google
+tokens, bearer and basic headers, JWTs, URL passwords, private keys, MCP endpoint paths) before
+it is cut to a fixed size, and carries the stored length and a `truncated` flag; the stored
+record is never changed. That is a list of shapes, not a guarantee: other secrets typed into a
+chat pass through, which is why the switch and the token matter. A user message shows what the
+user wrote (`authoredText`), not the framed text the app delivered. Asset ids, request ids and
+outbox owners, delivery-only prompt text, attachment paths and recovery bookkeeping do not
+appear. Unknown, repeated or malformed query parameters are refused with 400, page sizes are
+capped, session ids match only in their generated lowercase spelling (a differently cased
+spelling would open the same journal under a second name on a case-insensitive filesystem),
+and at most two journal reads run at once (503 `busy` otherwise). Events carry `position`; the
+`before` and `after` cursors take it, since a revised message keeps its first position but gets
+a new `seq`. Two things run the app's own bookkeeping and so are not pure reads: `listInputs()`,
+which `/v1/inputs` and `/v1/sessions` call, repairs delivery receipts and materializes queued
+follow-up rows exactly as when the renderer polls it; and `/v1/sessions/{id}?live=1`, which
+calls `sessionControlsFor`, can load the session into memory and seal a torn last line of its
+journal. The live state is therefore asked for, not attached to every read. Start and stop are serialized; a
+settings change starts or stops it only when the switch changes. Shutdown stops it in the
+admission/drain phase and does not let a late save reopen it.
 
 Disconnect immediately publishes `disconnecting` and coalesces repeated clicks into one
 transition. MCP drain protects only complete requests admitted to the adapter: idle TCP,
@@ -3275,12 +3337,15 @@ the whole run replaying one long workflow; avoid optimizing speculative edge cas
 | Transcript order, UI clobber, usage | store/chronology → IPC → renderer | `session`, `chronology`, `renderer-*`, `timeline-scroll`, `session-usage`, `usage-observer` |
 | Files/patch/output/code-mode | concrete tool owner → kernel serialization | `codex-*`, `exec-*`, `code-mode-*`, `mcp-tool-declarations` |
 | Plugins/auth/native Desktop | manager/exposure/OAuth or computer frame owner | `plugins-*`, `computer*`, `tools-desktop-*`, `macos-*` |
-| Startup/connection/shipping | lifecycle/config/connection or packaging script | `config`, `window-*`, `shutdown`, `tunnel*`, `packaging`, `update`, `third-party-notices` |
+| Startup/connection/shipping | lifecycle/config/connection or packaging script | `config`, `window-*`, `shutdown`, `tunnel*`, `control-api`, `packaging`, `update`, `third-party-notices` |
 
 Discover current suites with `rg --files test`; do not maintain a stale suite count. Validate
 both ends of every changed protocol: app↔extension, content↔MAIN, main↔preload↔renderer,
 schema↔handler↔recorder and durable write↔restore. Run the nearest suites, adjacent boundary
 tests and `npm run verify` for production edits. Build/package when that layer can differ.
+Renderer, layout and pet changes also run `npm run verify:ui`: those checks are not part of
+`npm test`, start from the app's own default config (`scripts/fixtures/app-defaults.cjs`) and
+rotted unnoticed for weeks before the runner existed.
 
 ```sh
 npm run dev
@@ -3290,6 +3355,7 @@ npm run verify:privacy
 npm run verify:notices
 npm run verify
 npm run build
+npm run verify:ui                  # after build: every real-Electron UI check in scripts/verify-*.cjs
 npm run dist                       # current OS, x64 + arm64
 npm run dist:dir:mac:x64            # example unpacked target on a matching host
 ```

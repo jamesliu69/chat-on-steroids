@@ -169,7 +169,7 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
-  // Timeline assertions are authored in English; production defaults to Traditional Chinese.
+  // Timeline assertions are authored in English.
   w.localStorage.setItem('cos.ui.language', 'en');
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; };
@@ -1362,7 +1362,7 @@ it.each(['new-same-key', 'a-b-a', 'opening-adopt-new', 'same-session-send-next',
     (w as any).api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['Stage one', 'Stage two'] }));
     const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
     input.value = 'Turn this into a plan';
-    w.document.getElementById('createPlan')!.click();
+    w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true }));
     await vi.waitFor(() => expect(input.value).toBe(''));
   } else {
     (w.document.querySelector('.delivery-retry') as HTMLButtonElement).click();
@@ -1824,6 +1824,31 @@ it('reviews only an exact recorded edit without expanding its tool row or queryi
   expect(app.w.document.querySelector('.review-panel .file-preview-meta')?.textContent).toContain('This edit');
 });
 
+it('says why an edit has no diff and how many files a partial review covers (#563)', async () => {
+  const project: LocalProject = { id: '44444444-4444-4444-8444-444444444444', name: 'Workspace', path: '/workspace', createdAt: T0 };
+  const missing = toolCall(2, 'edit-too-large');
+  const partial = toolCall(3, 'edit-partial');
+  if (missing.kind !== 'tool_call' || partial.kind !== 'tool_call') throw new Error('Expected tool calls');
+  for (const edit of [missing, partial]) {
+    edit.call.tool = 'apply_patch';
+    edit.call.summary = { kind: 'edit', title: 'Edited files', metric: '+2 −2', tone: 'good' };
+  }
+  missing.call.changes = [{ path: '/repo/big.json', added: 1, removed: 1, approximate: false, reviewUnavailable: 'too-large' }];
+  partial.call.changes = [
+    { path: '/repo/src/a.ts', added: 1, removed: 1, approximate: false, reviewAssetId: 'deadbeef.txt' },
+    { path: '/repo/src/b.ts', added: 1, removed: 1, approximate: false, reviewUnavailable: 'not-kept' }
+  ];
+  const app = await boot([missing, partial], true, [], [project]);
+  const [first, second] = [...app.w.document.querySelectorAll<HTMLDetailsElement>('details.tool')];
+  const unavailable = first!.querySelector<HTMLButtonElement>('.tool-open-diff')!;
+  expect(unavailable.classList.contains('is-unavailable')).toBe(true);
+  expect(unavailable.getAttribute('aria-disabled')).toBe('true');
+  expect(unavailable.getAttribute('aria-label')).toBe('Diff unavailable: this edit was too large to keep');
+  unavailable.click(); await settle();
+  expect(first!.open).toBe(false);
+  expect(second!.querySelector('.tool-open-diff')?.getAttribute('aria-label')).toBe('Review this edit (1 of 2 files)');
+});
+
 it('does not offer a project diff shortcut in an unfiled chat', async () => {
   const edit = toolCall(2, 'edit-unfiled');
   if (edit.kind !== 'tool_call') throw new Error('Expected a tool call');
@@ -2183,10 +2208,11 @@ it('colors removed lines separately from added lines without changing other tool
   expect(rows[0]!.querySelector('summary .metric')?.textContent).toBe('+28 −11');
   expect(rows[0]!.querySelector('summary .metric-added')?.textContent).toBe('+28');
   expect(rows[0]!.querySelector('summary .metric-removed')?.textContent).toBe('−11');
-  // The per-call change count beside the title splits the same way.
-  expect(rows[0]!.querySelector('summary .tool-change-count .metric-added')?.textContent).toBe('+28');
-  expect(rows[0]!.querySelector('summary .tool-change-count .metric-removed')?.textContent).toBe('−11');
+  // The outcome metric already states this delta, so the per-call count beside the title stays out.
+  expect(rows[0]!.querySelector('summary .tool-change-count')).toBeNull();
   expect(rows[1]!.querySelector('summary .metric')?.textContent).toBe('~−7');
+  // A delta metric formatted differently from the count ("~−7" beside "+0 −7") is still one number.
+  expect(rows[1]!.querySelector('summary .tool-change-count')).toBeNull();
   expect(rows[1]!.querySelector('summary .metric-removed')?.textContent).toBe('−7');
   expect(rows[2]!.querySelector('summary .metric')?.textContent).toBe('12 lines');
   expect(rows[2]!.querySelector('summary .metric-added, summary .metric-removed')).toBeNull();
@@ -2247,6 +2273,18 @@ it('folds five consecutive status polls while retaining each exact tool row', as
   await append([{ ...failed, call: { ...failed.call, outcome: 'tool_rejected', summary: { ...failed.call.summary, tone: 'bad' } } }]);
   expect(fold.querySelectorAll('.ev-tool_call')).toHaveLength(6);
   expect(timeline.querySelectorAll('.ev-tool_call')).toHaveLength(7);
+});
+
+it("shows a created file's line count once when the outcome metric already states it", async () => {
+  const created = toolCall(1, 'created-file') as Extract<SessionEvent, { kind: 'tool_call' }>;
+  created.call.tool = 'apply_patch';
+  created.call.summary = { kind: 'create', tone: 'good', title: 'Created CHANGELOG-0.4.5.txt', metric: '+39' };
+  created.call.changes = [{ path: 'CHANGELOG-0.4.5.txt', added: 39, removed: 0, approximate: false }];
+  const { w } = await boot([created]);
+  const row = w.document.querySelector<HTMLDetailsElement>('details.tool')!;
+  expect(row.querySelectorAll('summary .metric-added')).toHaveLength(1);
+  expect(row.querySelector('summary .tool-change-count')).toBeNull();
+  expect(row.querySelector('summary .metric')?.textContent).toBe('+39');
 });
 
 it('keeps an artifact action as the activity title rather than its tool tag', async () => {
@@ -2415,6 +2453,30 @@ it('says a chat is working when its page reports no turn but its tools keep arri
   expect(note.textContent).toBe('Worked for 5s');
 });
 
+it('says a chat worked as soon as its page reports the end after its last tool call', async () => {
+  // A normal turn: tools run, then the page reports the end. The last call is recent, but the
+  // reported end is newer, so nothing is unaccounted for and the caption must not wait out
+  // the blind window.
+  const start = Date.now() - 40_000;
+  const turn: SessionEvent[] = [
+    { seq: 1, time: start, source: 'extension', kind: 'turn_start', turnId: 'page-turn' },
+    { seq: 2, time: start + 38_000, source: 'extension', kind: 'turn_end', turnId: 'page-turn', outcome: 'completed' }
+  ];
+  const row = { ...summary(turn), lastToolCallAt: start + 33_000 as number | null };
+  const { w, append } = await boot(turn, true, [], [], { sessions: [row] });
+  (w as any).api.getSessionControls = (id: string) => Promise.resolve({ ok: true,
+    data: { sessionId: id, automation: 'off', activeTurnId: null, finishHeld: false, blocked: '', job: null } });
+  const note = w.document.getElementById('chatState')!;
+  await append([]);
+  expect(note.textContent).toBe('Worked for 38s');
+  expect(note.classList.contains('is-working')).toBe(false);
+
+  // A call after that reported end is still work the page has not accounted for.
+  row.lastToolCallAt = start + 39_000;
+  await append([]);
+  expect(note.textContent).toBe('Working…');
+});
+
 it('stops directly from the empty composer without a second Stop menu action', async () => {
   const { w } = await boot([]);
   const stop = vi.fn(async () => ({ ok: true, data: {} }));
@@ -2537,7 +2599,7 @@ it('keeps editable stages and sends the original request with the full workflow 
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Build the whole task';
   input.dispatchEvent(new w.Event('input'));
-  w.document.getElementById('createPlan')!.click();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true }));
   await settle();
   expect(live.sent).toHaveLength(0);
   expect(w.document.getElementById('taskPlanPreview')!.textContent).not.toMatch(/Start plan|Review stages/);
@@ -2568,7 +2630,7 @@ it.each([true, false])('hands plan presentation to queued stages while sending a
   api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: stages }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Build the whole task'; input.dispatchEvent(new w.Event('input'));
-  w.document.getElementById('createPlan')!.click();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true }));
   await settle();
   const preview = w.document.getElementById('taskPlanPreview')!;
   expect(preview.hidden).toBe(false);
@@ -2630,6 +2692,41 @@ it.each(['delivery', 'model', 'refresh-failed', 'enqueue-failed'])('retries the 
     expect(w.document.querySelectorAll('#finishQueue .queued-input')).toHaveLength(3);
   }
   expect(api.requestChatModels).toHaveBeenCalledTimes(failure === 'model' || failure === 'refresh-failed' ? 1 : 0);
+});
+
+it('the Plan toggle only arms planning; Send generates from the draft', async () => {
+  const { w } = await boot([], false);
+  const api = (w as any).api;
+  api.draftTaskPlan = vi.fn(() => new Promise(() => {}));
+  const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
+  const plan = w.document.getElementById('createPlan') as HTMLButtonElement;
+  input.value = 'Existing draft'; input.dispatchEvent(new w.Event('input'));
+  plan.click(); await settle();
+  expect(api.draftTaskPlan).not.toHaveBeenCalled();
+  expect(plan.getAttribute('aria-pressed')).toBe('true');
+  input.value = ''; input.dispatchEvent(new w.Event('input'));
+  expect(plan.getAttribute('aria-pressed')).toBe('true');
+  input.value = 'Plan this'; input.dispatchEvent(new w.Event('input'));
+  input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', cancelable: true })); await settle();
+  expect(api.draftTaskPlan).toHaveBeenCalledWith('Plan this', expect.anything(), expect.any(String));
+});
+
+it('the mode-menu pencil edits an objective without switching automation until Save', async () => {
+  const { w, live } = await boot([]);
+  const api = (w as any).api;
+  api.setSessionObjective = vi.fn(async () => ({ ok: true, data: {} }));
+  const objective = w.document.getElementById('sessionObjective') as HTMLTextAreaElement;
+  (w.document.querySelector('#automationSwitch [data-edit-mode="goal"]') as HTMLButtonElement).click(); await settle();
+  expect(live.controlCalls).toEqual([]);
+  expect((w.document.getElementById('chatAutomation') as HTMLSelectElement).value).toBe('off');
+  expect(objective.hidden).toBe(false);
+  expect(w.document.activeElement).toBe(objective);
+  expect(w.document.querySelector('label[for="sessionObjective"]')!.textContent).toBe('Goal');
+  objective.value = 'Ship the dashboard'; objective.dispatchEvent(new w.Event('input'));
+  w.document.getElementById('saveSessionObjective')!.click(); await settle();
+  expect(api.setSessionObjective).toHaveBeenCalledWith(summary([]).id, 'Ship the dashboard', 'goal');
+  expect(live.controlCalls).toEqual([]);
+  expect((w.document.getElementById('composerSettings') as HTMLDetailsElement).open).toBe(false);
 });
 
 it('disables empty task actions and confirms saving without the old helper sentence', async () => {
@@ -2770,7 +2867,7 @@ it('blocks an empty stage, deletes it explicitly, and hides the whole dock in se
   api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['Write poem', 'Verify lines'] }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Rain poem'; input.dispatchEvent(new w.Event('input'));
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   const stage = w.document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit stage 1"]')!;
   stage.value = ''; stage.dispatchEvent(new w.Event('input'));
   expect(stage.getAttribute('aria-invalid')).toBe('true');
@@ -2800,7 +2897,7 @@ it('cancels pending planning without replacing the draft with a late result', as
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Keep this draft';
   const plan = w.document.getElementById('createPlan') as HTMLButtonElement;
-  plan.click(); await settle();
+  plan.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   const requestId = api.draftTaskPlan.mock.calls[0][2];
   expect(plan.getAttribute('aria-pressed')).toBe('true');
   plan.click();
@@ -2820,7 +2917,7 @@ it('keeps completed stages after clearing or replacing the composer until explic
   api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['Build foundation', 'Verify it'] }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Build the whole task'; input.dispatchEvent(new w.Event('input'));
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   for (const replacement of ['', 'Unrelated next message', '']) {
     input.value = replacement; input.dispatchEvent(new w.Event('input'));
     expect(w.document.querySelectorAll('.plan-stage')).toHaveLength(2);
@@ -2839,7 +2936,7 @@ it('queues every generated stage in an existing session without Send and preserv
   api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['Build foundation', 'Verify it'] }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Build the whole task'; input.dispatchEvent(new w.Event('input'));
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   expect(live.sent).toHaveLength(1);
   expect(live.sent[0]).toMatchObject({ sessionId: summary([]).id, text: 'Build foundation', stages: ['Verify it'], mode: 'finish', model: null, reasoningEffort: null, authoredSource: 'objective' });
   expect(input.value).toBe('');
@@ -2874,7 +2971,7 @@ it('retains a rejected queue admission independently of composer edits and retri
   api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['First checkpoint', 'Last checkpoint'] }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Plan the remaining checks';
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   input.value = ''; input.dispatchEvent(new w.Event('input'));
   reject({ ok: false, error: 'Queue full' }); await settle();
   expect(w.document.querySelectorAll('.plan-stage')).toHaveLength(2);
@@ -2894,7 +2991,7 @@ it.each([false, true])('clears the planner prompt and starts a new-chat plan wit
   (w as any).api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['Build foundation', 'Verify it'] }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Original objective';
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   expect(input.value).toBe('');
   input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, cancelable: true }));
   input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', isComposing: true, cancelable: true }));
@@ -2912,7 +3009,7 @@ it('does not erase a new composer draft while completed-plan queue admission is 
   api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['First checkpoint', 'Last checkpoint'] }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Planner request';
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   expect(input.value).toBe('');
   input.value = 'My next correction'; input.dispatchEvent(new w.Event('input'));
   await admit(); await settle();
@@ -2928,11 +3025,12 @@ it('clearing the complete planner task cancels generation and restores Create pl
   api.draftTaskPlan = vi.fn(() => new Promise(resolve => { finish = resolve; }));
   api.cancelTaskRequest = vi.fn(async () => ({ ok: true, data: true }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
-  input.value = 'Write a poem'; w.document.getElementById('createPlan')!.click(); await settle();
+  input.value = 'Write a poem'; w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   input.value = ''; input.dispatchEvent(new w.Event('input'));
   expect(api.cancelTaskRequest).toHaveBeenCalled();
   expect(w.document.getElementById('createPlan')!.getAttribute('aria-pressed')).toBe('false');
-  expect(w.document.getElementById('createPlan')!.textContent).toBe('Create plan');
+  expect(w.document.getElementById('createPlan')!.textContent).toBe('Plan');
+  expect(w.document.getElementById('createPlan')!.getAttribute('aria-label')).toBe('Create plan');
   finish({ ok: true, data: ['Old stage', 'Old check'] }); await settle();
   expect(live.sent).toHaveLength(0);
   expect(w.document.querySelectorAll('.plan-stage')).toHaveLength(0);
@@ -3284,7 +3382,7 @@ it('cancels pending plan generation when its own draft changes', async () => {
   api.draftTaskPlan = vi.fn(() => new Promise(resolve => { finish = resolve; }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Original plan';
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   const requestId = api.draftTaskPlan.mock.calls[0][2];
   input.value = 'Replacement plan'; input.dispatchEvent(new w.Event('input'));
   expect(api.cancelTaskRequest).toHaveBeenCalledWith(requestId);
@@ -3325,7 +3423,7 @@ it('retains an existing running chat planner across navigation and accepts its r
   api.draftTaskPlan = vi.fn(() => new Promise(resolve => { finish = resolve; }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   input.value = 'Plan for this running chat'; input.dispatchEvent(new w.Event('input'));
-  w.document.getElementById('createPlan')!.click(); await settle();
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
   const requestId = api.draftTaskPlan.mock.calls[0][2];
   (w.document.querySelector('#sessionList [data-id="second-chat"]') as HTMLElement).click(); await settle();
   input.value = 'Unrelated draft'; input.dispatchEvent(new w.Event('input'));
@@ -3356,7 +3454,7 @@ it('keeps two planner owners independent and ignores a cancelled result after re
   api.draftTaskPlan = vi.fn((text: string) => new Promise(resolve => { pending.set(text, resolve); }));
   api.cancelTaskRequest = vi.fn(async () => ({ ok: true, data: true }));
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
-  const generate = () => w.document.getElementById('createPlan')!.click();
+  const generate = () => { w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); };
   const select = async (id: string) => { (w.document.querySelector(`#sessionList [data-id="${id}"]`) as HTMLElement).click(); await settle(); };
   input.value = 'Plan A'; generate(); await settle();
   const requestA = api.draftTaskPlan.mock.calls[0][2];
@@ -3369,7 +3467,7 @@ it('keeps two planner owners independent and ignores a cancelled result after re
   expect(w.document.getElementById('finishQueue')!.textContent).toContain('A first');
   await select(second.id);
   const requestB = api.draftTaskPlan.mock.calls[1][2];
-  generate(); // Explicitly cancel B; A and navigation did not cancel it.
+  w.document.getElementById('createPlan')!.click(); // Explicitly cancel B; A and navigation did not cancel it.
   expect(api.cancelTaskRequest.mock.calls).toEqual([[requestB]]);
   expect(api.cancelTaskRequest).not.toHaveBeenCalledWith(requestA);
   input.value = 'B replacement'; generate(); await settle();
@@ -3955,4 +4053,35 @@ it('keeps the plain Working label unless playful status words are turned on', as
 it('uses a playful work word when it is turned on in Settings', async () => {
   const { w } = await boot([{ seq: 1, time: T0, source: 'extension', kind: 'turn_start', turnId: 'held-turn' }], true, [], [], { playfulStatus: true });
   expect(w.document.getElementById('chatState')!.textContent).toMatch(PLAYFUL_WORDS);
+});
+
+it('offers copy and Markdown export under the answer of a completed turn only', async () => {
+  const ask: SessionEvent = { kind: 'user_message', seq: 1, origin: 1, time: T0, source: 'extension', turnId: 'done-turn', messageId: 'ask', message: text('Write hello.txt') };
+  const reply: SessionEvent = { kind: 'assistant_message', seq: 2, time: T0 + 1_000, source: 'extension', turnId: 'done-turn', messageId: 'reply', message: text('Created **hello.txt**.'), final: true, state: 'final' };
+  const { w, append } = await boot([ask, reply]);
+  const api = (w as any).api;
+  api.exportMarkdown = vi.fn(async () => ({ ok: true, data: { done: 'copied' } }));
+  // Still open: the answer may yet change, so it offers nothing.
+  expect(w.document.querySelector('.answer-actions')).toBeNull();
+
+  await append([{ seq: 3, time: T0 + 2_000, source: 'extension', kind: 'turn_end', turnId: 'done-turn', outcome: 'completed' }]);
+  const actions = w.document.querySelector('.ev-assistant_message .said .answer-actions');
+  expect(actions).not.toBeNull();
+  expect(w.document.querySelectorAll('.answer-actions')).toHaveLength(1);
+
+  (actions!.querySelector('button.answer-action') as HTMLButtonElement).click(); await settle();
+  expect(api.exportMarkdown).toHaveBeenCalledWith({ id: summary([]).id, scope: 'answer', turnId: 'done-turn', target: 'clipboard' });
+  expect(actions!.querySelector('button.answer-action')!.classList.contains('is-done')).toBe(true);
+
+  api.exportMarkdown = vi.fn(async () => ({ ok: true, data: { done: 'saved', name: 'chat.md' } }));
+  const choices = [...actions!.querySelectorAll<HTMLButtonElement>('.answer-export-choice')];
+  expect(choices.map(choice => choice.textContent)).toEqual(['This answer', 'Whole session']);
+  choices[1]!.click(); await settle();
+  expect(api.exportMarkdown).toHaveBeenCalledWith({ id: summary([]).id, scope: 'session', turnId: undefined, target: 'file' });
+});
+
+it('does not offer copy or export after an interrupted turn', async () => {
+  const reply: SessionEvent = { kind: 'assistant_message', seq: 1, time: T0, source: 'extension', turnId: 'cut-turn', messageId: 'cut', message: text('Half an answer'), final: true, state: 'final' };
+  const { w } = await boot([reply, { seq: 2, time: T0 + 1_000, source: 'extension', kind: 'turn_end', turnId: 'cut-turn', outcome: 'interrupted' }]);
+  expect(w.document.querySelector('.answer-actions')).toBeNull();
 });

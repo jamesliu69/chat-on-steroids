@@ -56,11 +56,11 @@ it('restores French through both selectors and keeps drafts, focus and authored 
   vi.resetModules(); expect((await import('../src/renderer/i18n.js')).currentLanguage()).toBe('fr');
 });
 
-it('leaves the fork default unchanged and can switch to French when preference storage fails', async () => {
+it('uses English without storage and can switch to French', async () => {
   vi.spyOn(dom.window.Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('unavailable'); });
   vi.spyOn(dom.window.Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('unavailable'); });
   const { initLanguage, setLanguage, currentLanguage, t } = await import('../src/renderer/i18n.js');
-  expect(currentLanguage()).toBe('zh-TW');
+  expect(currentLanguage()).toBe('en');
   initLanguage(); setLanguage('fr');
   expect(currentLanguage()).toBe('fr');
   expect(t('Settings')).toBe('Paramètres');

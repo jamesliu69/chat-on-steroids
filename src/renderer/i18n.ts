@@ -1,33 +1,27 @@
-import zhTW from './locales/zh-TW.json';
+import zhCN from './locales/zh-CN.json';
 import es from './locales/es.json';
+import zhTW from './locales/zh-TW.json';
 import ja from './locales/ja.json';
+import ko from './locales/ko.json';
 import tr from './locales/tr.json';
 import fr from './locales/fr.json';
 import ptPT from './locales/pt-PT.json';
 import ptBR from './locales/pt-BR.json';
 import de from './locales/de.json';
 
-export type Language = 'en' | 'es' | 'zh-TW' | 'ja' | 'tr' | 'fr' | 'pt-PT' | 'pt-BR' | 'de';
+export type Language = 'en' | 'es' | 'zh-CN' | 'zh-TW' | 'ja' | 'ko' | 'tr' | 'fr' | 'pt-PT' | 'pt-BR' | 'de';
 const STORAGE_KEY = 'cos.ui.language';
 type Catalog = Readonly<Record<string, string>>;
-const catalogs: Readonly<Record<Exclude<Language, 'en'>, Catalog>> = { es, 'zh-TW': zhTW, ja, tr, fr, 'pt-PT': ptPT, 'pt-BR': ptBR, de };
+const catalogs: Readonly<Record<Exclude<Language, 'en'>, Catalog>> = { es, 'zh-CN': zhCN, 'zh-TW': zhTW, ja, ko, tr, fr, 'pt-PT': ptPT, 'pt-BR': ptBR, de };
 const sourceKeys = new Set(Object.values(catalogs).flatMap(catalog => Object.keys(catalog)));
 
 function parseLanguage(value: string | null | undefined): Language {
-  if (value === 'zh-CN') return 'zh-TW';
-  return value === 'es' || value === 'zh-TW' || value === 'ja' || value === 'tr' || value === 'fr' || value === 'pt-PT' || value === 'pt-BR' || value === 'de' ? value : 'en';
+  return value === 'es' || value === 'zh-CN' || value === 'zh-TW' || value === 'ja' || value === 'ko' || value === 'tr' || value === 'fr' || value === 'pt-PT' || value === 'pt-BR' || value === 'de' ? value : 'en';
 }
 
-/** Fork default: Traditional Chinese remains the first-run language. */
-function savedLanguage(): Language {
-  try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) return parseLanguage(saved);
-  } catch { /* Storage may be unavailable in a restricted renderer. */ }
-  return 'zh-TW';
-}
-
-let language: Language = savedLanguage();
+let language: Language = 'en';
+try { language = parseLanguage(window.localStorage.getItem(STORAGE_KEY)); }
+catch { /* Storage may be unavailable in a restricted renderer; English remains the default. */ }
 
 export function currentLanguage(): Language { return language; }
 

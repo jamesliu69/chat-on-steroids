@@ -236,9 +236,9 @@ describe('what leaves this machine', () => {
     // a command that had run every time.
     const session = await createSession({ title: 'tool count', conversationId: 'tool-count' });
     await appendEvent(session.id, { time: 100, source: 'extension', kind: 'user_message', message: { text: 'Run echo goal-ok', chars: 16, truncated: false } });
-    for (const [index, turnId] of ['count-turn', 'count-turn', 'other-turn'].entries()) {
+    for (const [index, [turnId, tool]] of ([['count-turn', 'exec_command'], ['count-turn', 'exec_command'], ['count-turn', 'session_finish'], ['other-turn', 'exec_command']] as const).entries()) {
       await appendEvent(session.id, { time: 110 + index, source: 'mcp', kind: 'tool_call', turnId, call: {
-        callId: `count-call-${index}`, tool: 'exec_command', attribution: 'request_id', requestId: `count-request-${index}`, conversationId: session.conversationId,
+        callId: `count-call-${index}`, tool, attribution: 'request_id', requestId: `count-request-${index}`, conversationId: session.conversationId,
         attributionMethod: 'request_id', outcome: 'ok', durationMs: 1,
         args: { text: '{"cmd":"echo SECRET_ARGUMENT"}', chars: 30, truncated: false },
         result: { text: 'SECRET_RESULT', chars: 13, truncated: false },
@@ -253,6 +253,19 @@ describe('what leaves this machine', () => {
       { role: 'assistant', content: 'goal-ok\n\n[Chat On Steroids: 2 tool calls ran in this turn. Arguments and results are not shown.]' }
     ]);
     expect(JSON.stringify(projected)).not.toMatch(/exec_command|SECRET_ARGUMENT|SECRET_RESULT/);
+  });
+
+  it('gives the helper the reply a content-reference pointer stands for, not the pointer (#574)', async () => {
+    const session = await createSession({ title: 'pointer replies', conversationId: 'pointer-replies' });
+    await appendEvent(session.id, { time: 100, source: 'extension', kind: 'user_message', message: { text: 'Hi', chars: 2, truncated: false } });
+    const pointer = '::chatgpt-content-reference{index="0" source_message_id="d2b82e00-509e-4a87-aa93-00bcde251680"}';
+    await appendEvent(session.id, { time: 110, source: 'extension', kind: 'assistant_message', messageId: 'pointer-final', final: true,
+      message: { text: pointer, chars: pointer.length, truncated: false },
+      renderedHtml: { text: '<p>Hi! How can I help you today?</p>', chars: 36, truncated: false } });
+    expect(await goal.conversationMessages(session.id)).toEqual([
+      { role: 'user', content: 'Hi' },
+      { role: 'assistant', content: 'Hi! How can I help you today?' }
+    ]);
   });
 
   it('gives decision helpers authored requests without executor guidance in the reference transcript', async () => {

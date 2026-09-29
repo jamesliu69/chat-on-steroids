@@ -607,6 +607,7 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark'; appearance?:
       theme: over.theme ?? previous.ui.theme,
       appearance: over.appearance ?? previous.ui.appearance
     },
+    controlApi: { enabled: $<HTMLInputElement>('controlApiEnabled').checked },
     ...chatPatch
   };
   requestedSettings = patch;
@@ -639,6 +640,7 @@ async function saveSnapshot(patch: SettingsPatch, previous: AppState['config']):
     sessions: previous.sessions,
     compaction: previous.compaction,
     mcp: previous.mcp ?? { instructions: '' },
+    controlApi: previous.controlApi ?? { enabled: false },
     multiAgent: previous.multiAgent,
     goal: previous.goal
   };
@@ -1254,6 +1256,7 @@ function apply(next: AppState): void {
   applyChecked($<HTMLInputElement>('autoConnect'), config.ui.autoConnect, previousState?.config.ui.autoConnect);
   applyChecked($<HTMLInputElement>('developerMode'), config.ui.developerMode === true, previousState?.config.ui.developerMode);
   applyChecked($<HTMLInputElement>('playfulStatus'), config.ui.playfulStatus === true, previousState?.config.ui.playfulStatus);
+  applyChecked($<HTMLInputElement>('controlApiEnabled'), config.controlApi?.enabled === true, previousState?.config.controlApi?.enabled);
   applyChecked(
     $<HTMLInputElement>('minimizeToTray'),
     config.ui.minimizeToTray,
@@ -2037,6 +2040,7 @@ for (const id of [
   'startAtLogin',
   'developerMode',
   'playfulStatus',
+  'controlApiEnabled',
   'privacyScreenshots',
   'tunnelKind',
   'tunnelId',

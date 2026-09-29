@@ -77,11 +77,11 @@ it('restores European Portuguese through setup and settings without changing aut
   vi.resetModules(); expect((await import('../src/renderer/i18n.js')).currentLanguage()).toBe('pt-PT');
 });
 
-it('uses the fork default as the storage fallback and still switches to European Portuguese without storage', async () => {
+it('uses English as the storage fallback and still switches to European Portuguese', async () => {
   vi.spyOn(dom.window.Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('unavailable'); });
   vi.spyOn(dom.window.Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('unavailable'); });
   const { initLanguage, setLanguage, currentLanguage, t } = await import('../src/renderer/i18n.js');
-  expect(currentLanguage()).toBe('zh-TW');
+  expect(currentLanguage()).toBe('en');
   initLanguage(); setLanguage('pt-PT');
   expect(currentLanguage()).toBe('pt-PT');
   expect(t('Settings')).toBe('Definições');

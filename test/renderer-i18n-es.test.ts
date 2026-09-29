@@ -50,9 +50,9 @@ describe('Spanish app interface', () => {
     expect(reloaded.t('Settings')).toBe('Ajustes');
   });
 
-  it('keeps Traditional Chinese as the fork default until Spanish is selected', async () => {
+  it('keeps English as the default until Spanish is selected', async () => {
     const first = await import('../src/renderer/i18n.js');
-    expect(first.currentLanguage()).toBe('zh-TW');
+    expect(first.currentLanguage()).toBe('en');
     expect(window.localStorage.getItem('cos.ui.language')).toBeNull();
     first.setLanguage('es');
     expect(window.localStorage.getItem('cos.ui.language')).toBe('es');
