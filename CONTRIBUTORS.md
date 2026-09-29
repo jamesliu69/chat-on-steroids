@@ -220,6 +220,12 @@ and its [remounted-answer follow-up](https://github.com/totec448-spec/chat-on-st
 [@Gauthammaster2012Code](https://github.com/Gauthammaster2012Code) reported the plan-collapse
 affordance issue in [#191](https://github.com/totec448-spec/chat-on-steroids/issues/191).
 
+The September 29 upstream merge preserves original commits and authorship for
+[@Haz4rdovisk](https://github.com/Haz4rdovisk)'s per-exchange work-duration line
+([#732](https://github.com/totec448-spec/chat-on-steroids/pull/732)) and
+[@Maximapple](https://github.com/Maximapple)'s reasoning-effort slider update
+([#735](https://github.com/totec448-spec/chat-on-steroids/pull/735)).
+
 Contributions also include reproductions, independent testing, designs and patches that are still under review or were superseded. Thank you to:
 
 - [@ventianima-lab](https://github.com/ventianima-lab) for detailed request-attribution and delivery investigations and controller, stream-observation and tab-reuse proposals, including [#108](https://github.com/totec448-spec/chat-on-steroids/issues/108), [#124](https://github.com/totec448-spec/chat-on-steroids/pull/124), [#159](https://github.com/totec448-spec/chat-on-steroids/pull/159) and [#170](https://github.com/totec448-spec/chat-on-steroids/pull/170).
