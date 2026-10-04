@@ -900,6 +900,29 @@ describe('the reply', () => {
     expect(view.reply).toBe('');
   });
 
+  it('keeps "the goal is met" as the run outcome for the app window after the page acts on it', async () => {
+    const sessionId = await seed('c-met');
+    globalThis.fetch = (async () => stream([delta('NO_REPLY'), 'data: [DONE]\n'])) as never;
+    goal.startGoalDraft({ sessionId, conversationId: 'c-met', turnId: 'g-1' });
+    const view = await settled('c-met');
+    expect(goal.goalOutcomeFor('c-met'), 'nothing to report before the page acts on it').toBeNull();
+    expect(goal.ackGoalDraft('c-met', view.token)).toBe(true);
+    // The page is done with it, so its own view goes quiet...
+    expect(goal.goalViewFor('c-met')).toBeNull();
+    // ...but the window still learns that this run ended with the goal met.
+    expect(goal.goalOutcomeFor('c-met')).toMatchObject({ stage: 'no-reply', turnId: 'g-1', reply: '' });
+  });
+
+  it('reports no outcome for a typed continuation the page has acted on', async () => {
+    const sessionId = await seed('c-typed');
+    globalThis.fetch = (async () => decision('continue', 'what about the tests')) as never;
+    goal.startGoalDraft({ sessionId, conversationId: 'c-typed', turnId: 'g-1' });
+    const view = await settled('c-typed');
+    expect(view.stage).toBe('ready');
+    expect(goal.ackGoalDraft('c-typed', view.token)).toBe(true);
+    expect(goal.goalOutcomeFor('c-typed')).toBeNull();
+  });
+
   /** Protocol words are never safe composer prose; ambiguity stops instead of self-prompting. */
   it('fails closed when legacy output wraps NO_REPLY in scratchpad prose', async () => {
     const sessionId = await seed('c-mentions');
@@ -1434,6 +1457,29 @@ describe('the model catalogue', () => {
     // of the cache rather than off the network.
     expect(calls).toBe(1);
     expect(goal.MODEL_PAGE_SIZE).toBe(20);
+  });
+
+  it('searches the whole catalogue before paging matches', async () => {
+    const entries = Array.from({ length: 45 }, (_, index) => ({
+      id: `vendor/model-${index}`,
+      name: `Model ${index}`,
+      created: 10_000 - index
+    }));
+    entries[44] = { id: 'hidden/vendor-needle', name: 'Needle Model', created: 1 };
+    globalThis.fetch = vi.fn(async () => Response.json({ data: entries }));
+
+    const byName = await goal.listGoalModels(0, 20, 'needle');
+    expect(byName.total).toBe(1);
+    expect(byName.models.map(model => model.id)).toEqual(['hidden/vendor-needle']);
+
+    const byId = await goal.listGoalModels(0, 20, 'VENDOR-NEEDLE');
+    expect(byId.total).toBe(1);
+    expect(byId.models.map(model => model.id)).toEqual(['hidden/vendor-needle']);
+
+    const cleared = await goal.listGoalModels(0, 20, '   ');
+    expect(cleared.total).toBe(45);
+    expect(cleared.models).toHaveLength(20);
+    expect(cleared.models[0]?.id).toBe('vendor/model-0');
   });
 
   it('returns catalogue reasoning metadata for the selected model even outside the requested page', async () => {

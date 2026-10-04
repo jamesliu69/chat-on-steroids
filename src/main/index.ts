@@ -14,6 +14,10 @@ import { getChatModels, restoreChatModels, startChatModelDiscovery } from './cha
 import { flushLogBeforeExit, initLogFile, logError, logInfo, logWarn, snapshotLogOnCrash } from './logger.js';
 import { unifiedExecManager } from './codex/manager.js';
 import { initSecretsPath } from './secrets.js';
+import { initTunnelResourceRoot } from './tunnel/locate.js';
+import { mainText, mainTextTranslations, onMainTextsChange, restoreMainTextTranslations } from './main-texts.js';
+import { isMainText } from '../shared/main-texts.js';
+import { executableFingerprint, initKeychainNotice } from './keychain-notice.js';
 import { pluginManager } from './plugins/manager.js';
 import { setBrowserOpener, setBrowserWorkArea, shutdownBridge, startBridge } from './bridge.js';
 import { setStuckNotifier } from './stuck-notice.js';
@@ -50,6 +54,7 @@ import { flushDurable, initDurableStore, readDurable, writeDurableNow, writeDura
 import { initControlApiPath, shutdownControlApi, startControlApi } from './control-api.js';
 import { restoreRequestCorrelations } from './session/correlation.js';
 import { restoreBlockedChats } from './session/blocked-chats.js';
+import { restoreTrustedChats } from './session/trusted-chats.js';
 import { stopComputerHelper } from './computer/index.js';
 import {
   GOAL_OBJECTIVES_STATE,
@@ -69,8 +74,9 @@ import {
   type ContinuationSnapshot
 } from './session/continuation.js';
 import { runShutdownSequence } from './shutdown.js';
+import { startAgentRuntimeGc, stopAgentRuntimeGc } from './runtime-gc.js';
 import { applyStagedUpdate, startUpdateChecks } from './update.js';
-import { UI_BASE_ZOOM, windowLayoutForWorkArea, titleBarOverlayForTheme, windowBackgroundForTheme } from './window-layout.js';
+import { UI_BASE_ZOOM, windowLayoutForDisplays, windowPlacementWasMaximized, titleBarOverlayForTheme, windowBackgroundForTheme } from './window-layout.js';
 import { openInPreferredBrowser } from './browser.js';
 import {
   applyLoginStartup,
@@ -78,6 +84,7 @@ import {
   createWindowActivationGate,
   ownsAppRuntime,
   registerNativeWindowActivation,
+  trackNormalWindowBounds,
   shouldBeginAppBootstrap,
   shouldQuitOnWindowAllClosed
 } from './window-lifecycle.js';
@@ -88,8 +95,12 @@ import { editContextMenuTemplate } from './edit-context-menu.js';
 /** Durable state file holding the multi-agent run. Hashes only, never credentials. */
 const SWARM_STATE = 'swarm';
 const RETIRED_WORKERS_STATE = 'retired-workers';
+const WINDOW_BOUNDS_STATE = 'window-bounds';
+/** The tray and notice texts in the last interface language; a launch to the tray opens no window to send them. */
+const MAIN_TEXTS_STATE = 'main-texts';
 
 let window: BrowserWindow | null = null;
+let savedWindowBounds: unknown = null;
 let tray: Tray | null = null;
 let quitting = false;
 let shutdownStarted = false;
@@ -109,7 +120,13 @@ if (!hasSingleInstanceLock) {
 const BENIGN_RENDERER_ERRORS = new Set(['ResizeObserver loop completed with undelivered notifications.']);
 
 function createWindow(): void {
-  const layout = windowLayoutForWorkArea(screen.getPrimaryDisplay().workArea);
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
+  const { layout, restored } = windowLayoutForDisplays(
+    primaryWorkArea,
+    screen.getAllDisplays().map(display => display.workArea),
+    savedWindowBounds
+  );
+  const restoreMaximized = windowPlacementWasMaximized(savedWindowBounds);
   const icon = browserWindowIconPath(process.platform, app.isPackaged, process.resourcesPath);
   window = new BrowserWindow({
     ...layout,
@@ -142,6 +159,7 @@ function createWindow(): void {
   });
 
   if (process.platform === 'win32') window.removeMenu();
+  const owner = window;
 
   // First use discovers the account once. A restored catalog is immediately usable;
   // showing the window again may observe an existing page, never open another browser attempt.
@@ -153,11 +171,17 @@ function createWindow(): void {
     // A renderer can finish loading after Cmd+Q has already entered bounded teardown. Never let
     // that late native event make the app visible again while `will-quit` is draining.
     if (!quitting) {
-      // Newly created windows intentionally start maximized. Keep that startup-only presentation
-      // here so later tray/Dock/native activation can show an existing user-sized window without
-      // overwriting its geometry.
-      if (!window?.isFullScreen()) window?.maximize();
+      // Fresh installs retain the existing maximized first presentation. A saved normal window
+      // stays normal; a window last used maximized restores that presentation over its saved
+      // normal rectangle so un-maximizing returns to the same user-sized geometry.
+      if ((!restored || restoreMaximized) && !window?.isFullScreen()) window?.maximize();
       showWindow();
+      // Start observing only after initial native presentation has settled. BrowserWindow
+      // construction/maximization can itself emit geometry events; those are not user choices.
+      trackNormalWindowBounds(owner, (placement) => {
+        savedWindowBounds = placement;
+        writeDurableSoon(WINDOW_BOUNDS_STATE, placement);
+      });
     }
   });
 
@@ -239,8 +263,9 @@ setFinishNotifier((title, body, sessionId, turnId) => {
     const open = (): void => { if (!target.isDestroyed()) target.send('session:write', sessionId); };
     if (target.isLoadingMainFrame()) target.once('did-finish-load', open); else open();
   };
-  const notice = new Notification({ title, body, actions: [
-    { type: 'button', text: 'Send Automatic Goal' }, { type: 'button', text: 'Write Directly' }
+  const shown = (text: string): string => isMainText(text) ? mainText(text) : text;
+  const notice = new Notification({ title: shown(title), body: shown(body), actions: [
+    { type: 'button', text: mainText('Send Automatic Goal') }, { type: 'button', text: mainText('Write Directly') }
   ] });
   notice.on('click', write);
   notice.on('action', (details) => {
@@ -295,21 +320,22 @@ function refreshTray(): void {
   const offline = state === 'offline';
   // Offline keeps the running icon: the bridge is up, the internet is not.
   const running = connected || offline;
-  const label = connected ? 'Connected' : offline ? 'No internet' : 'Not connected';
+  const label = mainText(connected ? 'Connected' : offline ? 'No internet' : 'Not connected');
   tray.setImage(trayIcon(running));
-  tray.setToolTip(`Chat On Steroids — ${label.toLowerCase()}`);
+  // Not lowercased: that would break translated nouns ("Keine Internetverbindung").
+  tray.setToolTip(`Chat On Steroids — ${label}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label, enabled: false },
       { type: 'separator' },
-      { label: 'Open', click: windowActivation.request },
+      { label: mainText('Open'), click: windowActivation.request },
       {
-        label: running ? 'Disconnect' : 'Connect',
+        label: mainText(running ? 'Disconnect' : 'Connect'),
         click: () => void (running ? disconnect() : connect())
       },
       { type: 'separator' },
       {
-        label: 'Quit',
+        label: mainText('Quit'),
         click: () => {
           quitting = true;
           app.quit();
@@ -333,11 +359,20 @@ void app.whenReady().then(async () => {
     snapshotLogOnCrash(`${origin}: ${error.stack ?? error.message}`);
   });
   initConfigPath(userData);
+  initTunnelResourceRoot(app.getAppPath());
   initSecretsPath(userData);
+  initKeychainNotice(userData, {
+    platform: process.platform,
+    contents: () => (window && !window.isDestroyed() ? window.webContents : null),
+    fingerprint: () => executableFingerprint(app.getVersion())
+  });
   initSessionStore(userData);
   try { await initSkillsPath(userData); }
   catch (error) { logWarn(`Skills library unavailable: ${error instanceof Error ? error.message : String(error)}`); }
   initDurableStore(userData);
+  savedWindowBounds = await readDurable<unknown>(WINDOW_BOUNDS_STATE);
+  restoreMainTextTranslations(await readDurable<unknown>(MAIN_TEXTS_STATE));
+  if (windowActivation.isDisabled()) return;
   initControlApiPath(userData);
   initUvRuntime(userData);
   // Bundled pet packages: the packaged app's resources, or the repository's pets/ folder in dev.
@@ -370,6 +405,10 @@ void app.whenReady().then(async () => {
   // And the user's blocks, for the same reason: a chat blocked yesterday is still the rogue
   // turn today, and a block that loads after the first call is a tool the turn already got.
   await restoreBlockedChats();
+  if (windowActivation.isDisabled()) return;
+  // Strict allowlisting is fail-closed: restore the exact trust set before model-facing
+  // endpoints can accept work, just as blocked-chat policy is restored above.
+  await restoreTrustedChats();
   if (windowActivation.isDisabled()) return;
   setAgentConversationLookup(agentConversation);
   // The prime's chat is the user's own, so no extension report can name it. It is bound
@@ -432,6 +471,9 @@ void app.whenReady().then(async () => {
   if (windowActivation.isDisabled()) return;
   await reconcileAgentRequestOwners();
   if (windowActivation.isDisabled()) return;
+  // Runtime GC consumes restored broker/session/exec ownership only. It owns no worker lifecycle
+  // state and does not run until its first coarse interval after this point.
+  startAgentRuntimeGc();
 
   // Strict CSP for our own page. There is no remote content and no inline script.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -474,6 +516,8 @@ void app.whenReady().then(async () => {
   tray.on('click', windowActivation.request);
   refreshTray();
   onStatusChange(refreshTray);
+  onMainTextsChange(refreshTray);
+  onMainTextsChange(() => writeDurableSoon(MAIN_TEXTS_STATE, mainTextTranslations()));
 
   logInfo('app started');
 
@@ -513,6 +557,7 @@ app.on('before-quit', () => {
   // that sequence drains must not recreate or reveal a window after the tray has disappeared.
   windowActivation.disable();
   usageWarmup.abort();
+  void stopAgentRuntimeGc();
 });
 
 app.on('window-all-closed', () => {
@@ -546,7 +591,7 @@ app.on('will-quit', (event) => {
       {
         name: 'admission/drain',
         budgetMs: 40_000,
-        run: () => [shutdownConnection(), shutdownBridge(), shutdownControlApi()]
+        run: () => [shutdownConnection(), shutdownBridge(), shutdownControlApi(), stopAgentRuntimeGc()]
       },
       // Phase 2: only after request handlers are done may their owned child processes go.
       {

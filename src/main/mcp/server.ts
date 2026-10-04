@@ -82,7 +82,9 @@ function jsonError(res: http.ServerResponse, status: number, error: string): voi
   const body = JSON.stringify({ error });
   res.writeHead(status, {
     'content-type': 'application/json',
-    'content-length': Buffer.byteLength(body)
+    // Keep the body framed even when a loopback MCP intermediary strips Content-Length.
+    // Node emits the chunk boundaries; advertising chunked for a raw JSON body is invalid.
+    'transfer-encoding': 'chunked'
   });
   res.end(body);
 }

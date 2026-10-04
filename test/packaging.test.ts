@@ -1,3 +1,5 @@
+// @ts-expect-error The target planner is a plain Node script without type declarations.
+import { releaseTargets } from '../scripts/release-targets.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -159,41 +161,62 @@ describe('cross-platform packaging targets', () => {
     expect(installer).not.toMatch(/(?:no-sandbox|disable-gpu-sandbox)/i);
   });
 
+  it('builds canaries only for the targets most installs use, and releases for all of them', () => {
+    expect(releaseTargets('common').include.map((target: { name: string }) => target.name)).toEqual(['Windows x64', 'macOS arm64', 'Linux x64']);
+    expect(releaseTargets('common').files).toEqual(['Chat-On-Steroids-Setup-x64.exe', 'Chat-On-Steroids-Portable-x64.exe', 'Chat-On-Steroids-macOS-arm64.dmg',
+      'Chat-On-Steroids-macOS-arm64.zip', 'Chat-On-Steroids-Linux-x64.AppImage', 'Chat-On-Steroids-Linux-x64.deb',
+      'Chat-On-Steroids-Extension.zip', 'Chat-On-Steroids-Native-Sources.tar.gz']);
+    expect(() => releaseTargets('some')).toThrow();
+    const canary = yamlFile('.github/workflows/canary.yml');
+    expect(canary.jobs.candidate.with).toEqual({ platforms: 'common' });
+    // Built after every app-relevant push to main, and a running canary is never cancelled
+    // halfway through replacing the previous one.
+    expect(canary.on.push).toMatchObject({ branches: ['main'] });
+    expect(canary.on.push['paths-ignore']).toEqual(expect.arrayContaining(['docs/**', 'test/**']));
+    expect(canary.on).toHaveProperty('workflow_dispatch');
+    expect(canary.concurrency).toEqual({ group: 'canary', 'cancel-in-progress': false });
+    // A stable release passes nothing, which is `all`.
+    expect(yamlFile('.github/workflows/publish.yml').jobs.candidate?.with?.platforms).toBeUndefined();
+  });
+
   it('assembles every platform artifact in the reusable release workflow', () => {
     const workflow = readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
     const parsed = yamlFile('.github/workflows/release.yml');
-    const matrix = parsed.jobs.package.strategy.matrix.include;
+    // The matrix comes from the plan job, which reads .github/release-targets.json.
+    expect(parsed.jobs.package.strategy.matrix.include).toBe('${{ fromJSON(needs.plan.outputs.include) }}');
+    expect(parsed.jobs.plan.steps.at(-1).run).toBe('node scripts/release-targets.mjs "$PLATFORMS"');
+    const matrix = releaseTargets('all').include;
     expect(matrix).toHaveLength(6);
     expect(matrix).toEqual([
       {
         name: 'Windows x64', platform: 'win32', arch: 'x64', runner: 'windows-2025',
         script: 'dist:x64', artifact: 'package-windows-x64',
-        files: 'release/Chat-On-Steroids-Setup-x64.exe\nrelease/Chat-On-Steroids-Portable-x64.exe\n'
+        files: 'release/Chat-On-Steroids-Setup-x64.exe\nrelease/Chat-On-Steroids-Portable-x64.exe'
       },
       {
         name: 'Windows arm64', platform: 'win32', arch: 'arm64', runner: 'windows-11-arm',
         script: 'dist:arm64', artifact: 'package-windows-arm64',
-        files: 'release/Chat-On-Steroids-Setup-arm64.exe\nrelease/Chat-On-Steroids-Portable-arm64.exe\n'
+        files: 'release/Chat-On-Steroids-Setup-arm64.exe\nrelease/Chat-On-Steroids-Portable-arm64.exe'
       },
       {
         name: 'macOS x64', platform: 'darwin', arch: 'x64', runner: 'macos-15-intel',
         script: 'dist:mac:x64', artifact: 'package-macos-x64',
-        files: 'release/Chat-On-Steroids-macOS-x64.dmg\nrelease/Chat-On-Steroids-macOS-x64.zip\n'
+        files: 'release/Chat-On-Steroids-macOS-x64.dmg\nrelease/Chat-On-Steroids-macOS-x64.zip'
       },
       {
         name: 'macOS arm64', platform: 'darwin', arch: 'arm64', runner: 'macos-15',
         script: 'dist:mac:arm64', artifact: 'package-macos-arm64',
-        files: 'release/Chat-On-Steroids-macOS-arm64.dmg\nrelease/Chat-On-Steroids-macOS-arm64.zip\n'
+        files: 'release/Chat-On-Steroids-macOS-arm64.dmg\nrelease/Chat-On-Steroids-macOS-arm64.zip'
       },
       {
         name: 'Linux x64', platform: 'linux', arch: 'x64', runner: 'ubuntu-24.04',
         script: 'dist:linux:x64', artifact: 'package-linux-x64',
-        files: 'release/Chat-On-Steroids-Linux-x64.AppImage\nrelease/Chat-On-Steroids-Linux-x64.deb\n'
+        files: 'release/Chat-On-Steroids-Linux-x64.AppImage\nrelease/Chat-On-Steroids-Linux-x64.deb'
       },
       {
         name: 'Linux arm64', platform: 'linux', arch: 'arm64', runner: 'ubuntu-24.04-arm',
         script: 'dist:linux:arm64', artifact: 'package-linux-arm64',
-        files: 'release/Chat-On-Steroids-Linux-arm64.AppImage\nrelease/Chat-On-Steroids-Linux-arm64.deb\n'
+        files: 'release/Chat-On-Steroids-Linux-arm64.AppImage\nrelease/Chat-On-Steroids-Linux-arm64.deb'
       }
     ]);
     expect(parsed.jobs.package['runs-on']).toBe('${{ matrix.runner }}');
@@ -201,6 +224,9 @@ describe('cross-platform packaging targets', () => {
     expect(workflow).toContain('name: Package Windows portable executable');
     expect(workflow).toContain('--win portable --${{ matrix.arch }} --publish never');
     expect(workflow).toContain('Chat-On-Steroids-Portable-${{ matrix.arch }}.exe');
+    expect(workflow).not.toContain('Package Firefox extension groundwork');
+    expect(workflow).not.toContain('npm run extension:firefox:stage');
+    expect(workflow).not.toContain('Chat-On-Steroids-Firefox.zip');
     expect(workflow).toContain('Install generated DEB on target distro');
     expect(workflow).toContain('Launch installed DEB normally under Xvfb');
     expect(workflow).toContain('CLF_DEBUG=1 timeout --signal=TERM --kill-after=5s 12s xvfb-run -a /usr/bin/chat-on-steroids');
@@ -751,12 +777,19 @@ Load command 11
     );
     const candidateUpload = release.slice(release.indexOf('      - name: Upload release candidate'));
     const publishStep = publish.slice(publish.indexOf('      - name: Publish the release'));
+    // A release packages every target: the plan for `all` names each artifact, and the checksum step
+    // and the candidate upload take exactly that plan.
+    expect(checksumStep).toContain('FILES: ${{ needs.plan.outputs.files }}');
+    expect(candidateUpload).toContain('release/Chat-On-Steroids-*');
+    expect(candidateUpload).toContain('release/SHA256SUMS.txt');
+    const planned = releaseTargets('all').files;
+    expect(planned).not.toContain('Chat-On-Steroids-Firefox.zip');
+    expect(checksumStep).not.toContain('Chat-On-Steroids-Firefox.zip');
+    expect(candidateUpload).not.toContain('Chat-On-Steroids-Firefox.zip');
+    expect(publishStep).not.toContain('Chat-On-Steroids-Firefox.zip');
     for (const artifact of artifacts) {
-      expect(candidateUpload).toContain(artifact);
       expect(publishStep).toContain(artifact);
-    }
-    for (const artifact of artifacts.filter((artifact) => artifact !== 'SHA256SUMS.txt')) {
-      expect(checksumStep).toContain(artifact);
+      if (artifact !== 'SHA256SUMS.txt') expect(planned).toContain(artifact);
     }
   });
 });

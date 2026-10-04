@@ -13,10 +13,20 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { SessionEvent, SessionSummary, StoredText } from '../../shared/session.js';
-import { getSession, indexedSessions, readEvents } from '../session/store.js';
+import { getSession, indexedSessions, readEvents, readOverflowText } from '../session/store.js';
 import { noteCount, noteDetail } from './call-context.js';
 import { toolDeclaration } from './tool-declarations.js';
-import { expandStored, fail, guard, ok, type SurfaceRegistrar, type ToolResult } from './kernel.js';
+import { fail, guard, ok, type SurfaceRegistrar, type ToolResult } from './kernel.js';
+
+/** Restore the exact stored payload, and report an unavailable overflow honestly. */
+async function expandStored(sessionId: string, stored: StoredText): Promise<{ text: string; complete: boolean }> {
+  if (!stored.truncated) return { text: stored.text, complete: true };
+  if (stored.assetId) {
+    const full = await readOverflowText(sessionId, stored.assetId);
+    if (full !== null) return { text: full, complete: true };
+  }
+  return { text: stored.text, complete: false };
+}
 
 const SEARCH_RESULT_TOKENS = 3_000;
 const READ_RESULT_TOKENS = 5_000;

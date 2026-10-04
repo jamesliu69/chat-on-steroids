@@ -5,7 +5,9 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const { fixtureConfigSource, BENIGN_RENDERER_ERRORS } = require('./fixtures/app-defaults.cjs');
-const output = process.argv[2] ? path.resolve(root, process.argv[2]) : path.join(root, '.tmp/message-send-20260918/ui');
+// The first plain argument; switches such as verify-ui's --lang=en-US are not an output folder.
+const outputArg = process.argv.slice(2).find(arg => !arg.startsWith('--'));
+const output = outputArg ? path.resolve(root, outputArg) : path.join(root, '.tmp/message-send-20260918/ui');
 app.setPath('userData', path.join(output, 'runtime'));
 
 app.whenReady().then(async () => {
@@ -41,7 +43,7 @@ app.whenReady().then(async () => {
         total:live.events.length,nextFrom:(live.events.at(-1)?.seq??-1)+1}),
       getSessionControls:()=>ok({sessionId:session.id,activeTurnId:'fixture-turn',canInject:true,automation:'off',objective:'',...live.controls}),
       getChatModels:()=>ok({state:'ready',observedAt:Date.now(),models:[{id:'gpt-5.6-sol',label:'GPT-5.6 Sol',efforts:['high']}]}),
-      listInputs:()=>ok(structuredClone(live.inputs)),listPausedHelpers:()=>ok([]),
+      listInputs:()=>ok(structuredClone(live.inputs)),runningTools:()=>ok([]),listPausedHelpers:()=>ok([]),
       onSessionChanged:fn=>{live.notify=fn;return ()=>{}},chooseFiles:()=>ok(live.files),
       stopSessionTurn:(id,turnId)=>{live.stops.push({id,turnId});return ok({})},
       editQueuedInput:(id,text)=>{const row=live.inputs.find(r=>r.id===id);if(!row||row.state!=='queued')return ok(false);row.text=text.trim();return ok(true)},

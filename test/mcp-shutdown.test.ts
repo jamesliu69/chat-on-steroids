@@ -7,9 +7,10 @@ import { once } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
 import { defaultConfig, initConfigPath, saveConfig } from '../src/main/config.js';
 import { validateNewRoot } from '../src/main/sandbox.js';
-import { initDurableStore, resetDurableForTests } from '../src/main/durable.js';
+import { flushDurable, initDurableStore, resetDurableForTests } from '../src/main/durable.js';
 import { startMcpServer, type McpEndpoint } from '../src/main/mcp/server.js';
-import { initSessionStore, resetSessionStoreForTests, unsetSessionRootForTests } from '../src/main/session/store.js';
+import { flushSessions, initSessionStore, resetSessionStoreForTests, unsetSessionRootForTests } from '../src/main/session/store.js';
+import { flushRecorder, resetRecorderForTests } from '../src/main/session/recorder.js';
 
 let dir = '';
 let endpoint: McpEndpoint | null = null;
@@ -17,6 +18,12 @@ let endpoint: McpEndpoint | null = null;
 afterEach(async () => {
   if (endpoint) await endpoint.stop().catch(() => undefined);
   endpoint = null;
+  // Endpoint drain closes the producer; the recorder and store still own asynchronous writes.
+  // Cross their shutdown barriers before removing the temporary data directory.
+  await flushRecorder();
+  await flushSessions();
+  await flushDurable();
+  resetRecorderForTests();
   resetSessionStoreForTests();
   unsetSessionRootForTests();
   resetDurableForTests();

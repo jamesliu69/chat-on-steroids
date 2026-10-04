@@ -132,17 +132,17 @@ function attachOverlay(win) {
           const hoverY = Math.round(geometry.shell.y + geometry.shell.height / 2);
           win.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
           await new Promise(resolve => setTimeout(resolve, 50));
-          assert.equal(win.isFocusable(), false, 'Pointer outside pet content must keep the overlay click-through.');
+          assert.equal(ignoredMouseCalls.at(-1)?.ignore, true, 'Pointer outside pet content must keep the overlay click-through.');
           const ticksBeforeHover = await hoverOwner.webContents.executeJavaScript('window.__petBehindTicks');
           win.webContents.sendInputEvent({ type: 'mouseMove', x: hoverX, y: hoverY });
           await new Promise(resolve => setTimeout(resolve, 500));
-          assert.equal(win.isFocusable(), false, 'Pet interaction must not activate an occluding desktop window.');
+          assert.equal(win.isFocused(), false, 'Hovering a pet must not activate the overlay.');
           const ticksAfterHover = await hoverOwner.webContents.executeJavaScript('window.__petBehindTicks');
           assert.ok(ticksAfterHover - ticksBeforeHover >= 4,
             `The owner behind an interactive pet must keep running; ticks=${ticksBeforeHover}->${ticksAfterHover}.`);
           win.webContents.sendInputEvent({ type: 'mouseMove', x: 10, y: 10 });
           await new Promise(resolve => setTimeout(resolve, 50));
-          assert.equal(win.isFocusable(), false, 'Leaving pet content must restore native click-through.');
+          assert.equal(ignoredMouseCalls.at(-1)?.ignore, true, 'Leaving pet content must restore native click-through.');
         }
         console.log(JSON.stringify({ userData, shot, zoom: win.webContents.getZoomFactor(), geometry,
           alphaBounds: maxX < 0 ? null : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 } }, null, 2));

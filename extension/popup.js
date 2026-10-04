@@ -257,6 +257,8 @@ function paintHeader(status) {
           ? t('popup_state_app_reachable_port', 'App reachable · Port $1', status.port)
           : t('popup_state_port_connecting', 'Port $1 · connecting', status.port);
 
+  // The one state with nothing to click at the top: say what to do instead of a grey pill alone.
+  $('appHint').hidden = !(status && !connected && !off);
   $('retryBtn').hidden = ready || incompatible;
   $('retryBtn').textContent = off ? t('popup_connect', 'Connect') : t('popup_try_again', 'Try again');
   return ready;
@@ -524,4 +526,9 @@ $('timeToggle').addEventListener('change', async () => {
 // A popup is open for seconds at a time and the three stages move within those seconds.
 void loadPreferences().catch(() => undefined);
 void refresh().catch(() => undefined);
+// The app's language arrives with its catalog a moment later; repaint once it is there and on
+// every later change, so the popup reads like the app rather than like Chrome.
+const relocalize = () => { localizeDocument(); void refresh().catch(() => undefined); };
+void globalThis.CLF_I18N.ready?.then(relocalize).catch(() => undefined);
+globalThis.addEventListener?.('clf-i18n-changed', relocalize);
 setInterval(() => void refresh().catch(() => undefined), POLL_MS);

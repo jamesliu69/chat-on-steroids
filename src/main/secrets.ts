@@ -12,6 +12,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { SecureStorageInfo } from '../shared/types.js';
 import { logError, logWarn } from './logger.js';
+import { afterKeychainRead, beforeKeychainRead } from './keychain-notice.js';
 
 const FILE_NAME = 'secrets.bin';
 const LINUX_BASIC_TEXT_PREFIX = Buffer.from('v10', 'ascii');
@@ -113,11 +114,28 @@ export function secureStorageCiphertextIsProtected(
   return platform !== 'linux' || !encrypted.subarray(0, LINUX_BASIC_TEXT_PREFIX.length).equals(LINUX_BASIC_TEXT_PREFIX);
 }
 
+/**
+ * Every safeStorage call goes through here. The first one sets up Electron's encryptor, which on
+ * macOS reads the key from the Keychain, and after an update that read waits on the password
+ * prompt; keychain-notice.ts lets the window say so before it starts.
+ */
+async function keychain<T>(operation: () => Promise<T>, ok: (result: T) => boolean = () => true): Promise<T> {
+  await beforeKeychainRead();
+  try {
+    const result = await operation();
+    void afterKeychainRead(ok(result));
+    return result;
+  } catch (error) {
+    void afterKeychainRead(false);
+    throw error;
+  }
+}
+
 export async function secureStorageStatus(platform: NodeJS.Platform = process.platform): Promise<SecureStorageInfo> {
   if (externalProvider) return { available: true, detail: null };
   try {
     const safeStorage = await electronSafeStorage();
-    if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+    if (!(await keychain(() => safeStorage.isAsyncEncryptionAvailable(), available => available))) {
       return {
         available: false,
         detail:
@@ -131,7 +149,7 @@ export async function secureStorageStatus(platform: NodeJS.Platform = process.pl
     if (platform === 'linux') {
       // Probe the provider Electron actually chose, not only the desktop/backend label above.
       // The probe contains no credential and is never persisted.
-      const probe = await safeStorage.encryptStringAsync(LINUX_STORAGE_PROBE);
+      const probe = await keychain(() => safeStorage.encryptStringAsync(LINUX_STORAGE_PROBE));
       if (!secureStorageCiphertextIsProtected(probe, platform)) {
         return {
           available: false,
@@ -190,7 +208,7 @@ async function loadAll(): Promise<Record<string, string>> {
       return {};
     }
     const safeStorage = await electronSafeStorage();
-    const decrypted = await safeStorage.decryptStringAsync(blob);
+    const decrypted = await keychain(() => safeStorage.decryptStringAsync(blob));
     const parsed = parseSecretStore(decrypted.result);
     // `deleteAllSecrets()` is allowed to race a Keychain decrypt without waiting for a prompt or
     // unavailable provider. Once deletion starts, plaintext from the older generation must never
@@ -241,8 +259,8 @@ async function writeAll(values: Record<string, string>): Promise<void> {
   if (!(await isEncryptionAvailable())) {
     throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
   }
-  const safeStorage = await electronSafeStorage();
-  const blob = await safeStorage.encryptStringAsync(JSON.stringify(values));
+    const safeStorage = await electronSafeStorage();
+  const blob = await keychain(() => safeStorage.encryptStringAsync(JSON.stringify(values)));
   if (!secureStorageCiphertextIsProtected(blob)) {
     throw new Error('Secure OS credential storage is unavailable, so the key was not saved');
   }

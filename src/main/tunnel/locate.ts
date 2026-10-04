@@ -17,6 +17,14 @@ export type BinaryName = 'tunnel-client' | 'cloudflared';
 
 const locateCache = new Map<string, string | null>();
 const bundledVersionCache = new Map<string, string | null>();
+let resourceRoot = process.cwd();
+
+/** Desktop supplies app.getAppPath(); the plain-Node host keeps its explicit working root. */
+export function initTunnelResourceRoot(root: string): void {
+  resourceRoot = path.resolve(root);
+  locateCache.clear();
+  bundledVersionCache.clear();
+}
 
 function isExecutableFile(candidate: string): boolean {
   try {
@@ -82,7 +90,7 @@ export function commonBinaryDirsForPlatform(
  * Resolves a binary, preferring an explicit user-supplied path.
  * `hint` may be either the executable itself or the folder containing it.
  */
-export function locateBinary(name: BinaryName, hint?: string, serverRoot = process.cwd()): string | null {
+export function locateBinary(name: BinaryName, hint?: string, serverRoot = resourceRoot): string | null {
   const key = [
     name,
     hint ?? '',
@@ -159,15 +167,12 @@ export function locateBinary(name: BinaryName, hint?: string, serverRoot = proce
 function bundledDirs(serverRoot: string): string[] {
   const packaged = process.resourcesPath ? path.join(process.resourcesPath, 'tunnel') : null;
   const server = path.join(serverRoot, 'resources', 'tunnel');
-  // Source: src/main/tunnel -> repo root is three levels up.
-  // Packaged/compiled dev output keeps the same main/tunnel nesting under dist.
-  const dev = path.resolve(__dirname, '..', '..', '..', 'resources', 'tunnel');
-  return [...new Set([packaged, server, dev].filter((candidate): candidate is string => Boolean(candidate)))];
+  return [packaged, server].filter((candidate): candidate is string => Boolean(candidate));
 }
 
 /** The bundled tunnel-client version, for the diagnostics panel. */
 export function bundledVersion(): string | null {
-  for (const dir of bundledDirs(process.cwd())) {
+  for (const dir of bundledDirs(resourceRoot)) {
     if (bundledVersionCache.has(dir)) {
       const cached = bundledVersionCache.get(dir);
       if (cached) return cached;

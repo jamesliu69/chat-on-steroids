@@ -51,7 +51,8 @@ import { GOAL_MARKER_INSTRUCTION, templateGoalDecision } from '../shared/goal-te
 import type { GoalBackend } from '../shared/types.js';
 import { createHash } from 'node:crypto';
 import { getConfig } from './config.js';
-import { getChatModels } from './chat-models.js';
+import { getChatModels, refreshForUnoffered } from './chat-models.js';
+import { resolveChatModel } from '../shared/chat-models.js';
 import type { ReasoningEffort } from '../shared/session.js';
 import { writeDurableNow, writeDurableSnapshotSoon, writeDurableSoon } from './durable.js';
 import { logInfo, logWarn } from './logger.js';
@@ -286,11 +287,6 @@ const LOOP_RESPONSE_FORMAT = {
     }
   }
 } as const;
-
-/** The persisted instruction used for the next draft. Exported for focused contract tests. */
-export function goalSystemPrompt(): string {
-  return getConfig().goal.prompt;
-}
 
 /** The persisted driver instruction, used instead of the gate once a chat carries a goal. */
 export function goalObjectivePrompt(): string {
@@ -1134,11 +1130,6 @@ export function moveGoalSwitch(fromConversationId: string, toConversationId: str
   return true;
 }
 
-export function goalSettings(): { enabled: boolean; mode: GoalMode; model: string; reasoning: string } {
-  const goal = getConfig().goal;
-  return { enabled: goal.enabled, mode: goal.mode, model: goal.model, reasoning: goal.reasoning };
-}
-
 export function goalBackendFor(mode: GoalMode): GoalBackend {
   const settings = getConfig().goal;
   return mode === 'loop' ? settings.loopBackend ?? 'chatgpt' : settings.backend ?? 'chatgpt';
@@ -1223,6 +1214,16 @@ export function goalViewFor(conversationId: string, clientId?: string): GoalDraf
   // that finished minutes ago.
   if (draft.acknowledged && !settledFailure(draft)) return null;
   return view(draft);
+}
+
+/**
+ * The run's outcome for the app window: an acknowledged "goal met" decision, until a newer turn
+ * replaces it. goalViewFor() hides it from the page once acted on, but the window must not fall
+ * back to "Pursuing goal" for a run that ended (found on Windows, 2026-10-04).
+ */
+export function goalOutcomeFor(conversationId: string): GoalDraftView | null {
+  const draft = drafts.get(conversationId);
+  return draft?.acknowledged && draft.stage === 'no-reply' ? view(draft) : null;
 }
 
 export async function retryGoalBrowserHelper(sourceSessionId: string, inputId: string): Promise<boolean> {
@@ -1643,7 +1644,10 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
     : GOAL_REFERENCE_CONTRACT;
   if (request.backend === 'chatgpt') {
     const protocol = request.mode === 'loop' ? LOOP_OUTPUT_PROTOCOL : GOAL_OUTPUT_PROTOCOL;
-    const introduction = 'Return one JSON object: {"action":"stop" or "continue","reply":"the message"}. ' + referenceContract;
+    // ChatGPT offers connected apps, this one included, in every chat, the helper's too. A helper that
+    // called a tool ran it on this machine without any chat to answer for it (2026-10-02, live).
+    const introduction = 'Return one JSON object: {"action":"stop" or "continue","reply":"the message"}. ' + referenceContract +
+      ' Do not call any tools, apps or connectors; decide from the transcript alone.';
     const replacement = 'Use this complete source transcript as reference data.';
     const render = (messages: ChatMessage[], direction = replacement): string => [...request.system, protocol,
       introduction, direction, '<conversation>', ...messages.map(message => JSON.stringify(message)), '</conversation>', request.trailer].join('\n\n');
@@ -1772,13 +1776,19 @@ export function goalHelperSelection(): { model: string | null; reasoningEffort: 
   let reasoningEffort: ReasoningEffort | null = settings.helperReasoning ?? 'high';
   const models = getChatModels().models;
   if (!models.length) return { model, reasoningEffort };
-  const matching = (id: string) => models.filter(choice => choice.id === id || choice.aliases?.includes(id));
   const notes: string[] = [];
-  if (model && matching(model).length !== 1) { notes.push(`model "${model}"`); model = null; }
-  if (reasoningEffort && !(model ? matching(model) : models).some(choice => choice.efforts.includes(reasoningEffort!))) {
+  // A saved display label resolves to its unique observed family — the same rule the
+  // Settings selects apply before showing the badge. Exact ids and lane aliases keep
+  // their lane; a resolved label canonicalizes to the family. An ambiguous label stays rejected.
+  const resolved = model ? resolveChatModel(models, model) : undefined;
+  if (model && !resolved) { notes.push(`model "${model}"`); model = null; }
+  else if (resolved && resolved.id !== model && !resolved.aliases?.includes(model)) model = resolved.id;
+  const offered = model ? (resolved ? [resolved] : models.filter(choice => choice.id === model || choice.aliases?.includes(model))) : models;
+  if (reasoningEffort && !offered.some(choice => choice.efforts.includes(reasoningEffort!))) {
     notes.push(`reasoning "${reasoningEffort}"`); reasoningEffort = null;
   }
   const key = notes.join(',');
+  if (key) refreshForUnoffered(`goal helper ${key}`);
   if (key && key !== helperFallbackLogged) {
     helperFallbackLogged = key;
     logWarn(`goal: the saved helper ${notes.join(' and ')} is not offered by this ChatGPT account; using ChatGPT's current selection`);
@@ -2791,13 +2801,24 @@ let modelCache: { at: number; keyScope: string; models: GoalModel[] } | null = n
  * exists than the one already chosen. Paged, because the listing is several hundred long and
  * nobody scrolls that.
  */
-export async function listGoalModels(offset = 0, limit = MODEL_PAGE_SIZE): Promise<{ models: GoalModel[]; total: number; selectedModel?: GoalModel }> {
+export async function listGoalModels(
+  offset = 0,
+  limit = MODEL_PAGE_SIZE,
+  query = ''
+): Promise<{ models: GoalModel[]; total: number; selectedModel?: GoalModel }> {
   const selectedId = getConfig().goal.model;
   const models = await allGoalModels();
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? models.filter(model => model.id.toLowerCase().includes(needle) || model.name.toLowerCase().includes(needle))
+    : models;
   const from = Math.max(0, Math.floor(offset));
   const count = Math.max(1, Math.min(100, Math.floor(limit)));
+  // Keep the selected model's metadata independent from the search result. A saved model can be
+  // outside both the current page and the active filter, but its reasoning options still belong
+  // to the selected configuration rather than to the query.
   const selectedModel = models.find(model => model.id === selectedId);
-  return { models: models.slice(from, from + count), total: models.length, ...(selectedModel ? { selectedModel } : {}) };
+  return { models: visible.slice(from, from + count), total: visible.length, ...(selectedModel ? { selectedModel } : {}) };
 }
 
 async function allGoalModels(): Promise<GoalModel[]> {
