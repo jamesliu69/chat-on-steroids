@@ -21,9 +21,51 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-05**. App/extension **2.1.26**,
+Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-05**. App/extension **2.1.27**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
+
+### Fork customizations that must survive upstream merges
+
+This repository is the `jamesliu69/chat-on-steroids` fork. When merging or rebasing upstream,
+preserve the behaviors below unless the user explicitly asks to remove or replace one. Do not
+resolve a conflict by silently taking upstream when it would discard one of these contracts.
+
+1. **Raspberry Pi / headless MCP host.** Keep the non-Electron server entry point and lifecycle
+   under `src/server/`, including headless config, secrets, endpoint snapshots, graceful signal
+   handling and shutdown/flush behavior. The headless host must remain usable without opening a
+   desktop window.
+2. **Headless deployment helpers.** Keep the `server:*` npm scripts, tmux launcher/restart flow,
+   and Linux systemd user-service installer in `scripts/run-server-tmux.mjs`,
+   `scripts/install-server-service.mjs` and their shared launch utilities.
+3. **Windows portable distribution.** Keep `dist:win:portable`, portable x64/arm64 release
+   artifacts, and the tested-main Windows portable publication workflow
+   (`.github/workflows/latest-main.yml` plus the release-target/workflow integration).
+4. **Fork-owned releases and updates.** Homepage, update checks, manual release links and
+   standalone extension recovery/downloads must point to `jamesliu69/chat-on-steroids`, not
+   silently revert to `totec448-spec/chat-on-steroids`.
+5. **Generated-artifact download.** Keep the `saveArtifact` capability and
+   `download_artifact` MCP tool, including approved-root enforcement, streamed size limits,
+   safe target creation, hashing and recorder redaction. The default per-file ceiling is 20 MiB
+   unless current product requirements change it.
+6. **Session history MCP tool.** Keep the Core `session` tool implemented by
+   `src/main/mcp/session-tool.ts`, with bounded `search` and exact-session `read` operations
+   over recorded local sessions.
+7. **Fork identity/security fixes.** Preserve the stricter MCP caller/worker ownership and
+   attribution fences, dormant/retired worker identity handling, and extension Fiber
+   `postMessage` same-origin validation. Merge upstream improvements into these invariants
+   instead of replacing them with weaker ownership checks.
+8. **Fork policy defaults and lifecycle choices.** Automatic plugin refresh remains Off by
+   default; explicit recording/retention choices remain authoritative (fresh default: recording
+   On with 30-day retention, while the headless host may explicitly disable recording); and
+   Windows/Linux close-to-tray versus full-quit behavior must continue to follow the saved
+   `minimizeToTray` setting and the bounded shutdown sequence.
+
+After every upstream integration, verify these fork contracts explicitly. At minimum check
+`package.json`, `src/main/version.ts`, `src/main/update.ts`, `src/main/config.ts`,
+`src/main/mcp/`, `src/server/`, `extension/content.js`, the release workflows, and the
+targeted tests for server/headless, portable packaging, plugin refresh, session/artifact tools,
+extension security and update routing.
 
 ## 1. What the whole app is meant to do
 
