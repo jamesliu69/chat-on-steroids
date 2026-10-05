@@ -107,9 +107,9 @@ const CORE: SurfaceDefinition = {
     'of previous or concurrently running ChatGPT work. ' +
     'Also displays task plans and — when the user has ' +
     'enabled it — spawns and coordinates worker agents, subagents or a parallel swarm across several ChatGPT conversations.',
-  cardSummary: 'Files, patches and the terminal. Required — this is the coding connector.',
+  cardSummary: 'Files, patches and terminal.',
   required: true,
-  tools: ['read', 'view_image', 'find', 'apply_patch', 'exec_command', 'write_stdin', 'download_artifact', 'session', 'update_plan', 'agents', 'session_finish', 'exec']
+  tools: ['read', 'view_image', 'find', 'apply_patch', 'save_image', 'exec_command', 'write_stdin', 'download_artifact', 'session', 'update_plan', 'agents', 'session_finish', 'exec']
 };
 
 /**
@@ -132,8 +132,7 @@ const DESKTOP: SurfaceDefinition = {
     'Use for: listing and launching apps, taking background window screenshots, reading what is on screen, listing and finding windows, inspecting buttons, fields and other UI controls, ' +
     'clicking, typing, pressing keys, scrolling and dragging in native applications, ' +
     'and reading the clipboard or copying and pasting text between programs.',
-  cardSummary:
-    'Browser tabs, DOM, console, network and background screenshots; native apps, input and clipboard where supported.',
+  cardSummary: 'Browser and desktop apps.',
   required: false,
   tools: [...BROWSER_TOOLS, ...WINDOWS_COMPUTER_METHODS, 'read_clipboard', 'write_clipboard', 'observe', 'computer', 'exec']
 };
