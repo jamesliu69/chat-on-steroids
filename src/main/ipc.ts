@@ -90,7 +90,7 @@ import {
   publishBridgePortChange,
   companionDiagnostics,
   sessionInputActivity,
-  recoveryInputAllowed,
+  recoveryHeldByCalls, recoveryInputAllowed,
   sessionControlsFor, cancelAssistantRecovery, stopSessionTurn, setSessionAutomation, setSessionObjective, compactSession, cancelSessionCompaction,
   cancelWorkerCommands,
   chatUrl,
@@ -116,7 +116,7 @@ import {
   withSessionMutationFence
 } from './session/store.js';
 import { forgetSession, notifyChanged, onSessionChange } from './session/recorder.js';
-import { searchSessions } from './session/search.js';
+import { locateSearchMatch, searchSessions } from './session/search.js';
 import { readSessionEvents, readSessionList, sessionListCursorSchema } from './session/read-model.js';
 import { exportSessionMarkdown } from './session/markdown-export.js';
 import { blockedChatIds, setChatsBlocked } from './session/blocked-chats.js';
@@ -142,7 +142,7 @@ import { loadCosBrowser, syncCosBrowser } from './cos-browser/selection.js';
 import { onConnectorProofChange } from './connector-proof.js';
 import { opensInCosBrowser } from '../shared/cos-browser-sites.js';
 import { openInPreferredBrowser } from './browser.js';
-import { manualDownloadUrl, markInstallOnQuit, onUpdateChange, updateStatus } from './update.js';
+import { checkForUpdatesIfStale, manualDownloadUrl, markInstallOnQuit, onUpdateChange, updateStatus } from './update.js';
 import {
   getMacOSDesktopAccess,
   onMacOSDesktopAccessChange,
@@ -1130,6 +1130,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
   // "Get update" for an installation that cannot update itself: the exact published file for
   // this machine and the announced version, opened in the user's browser. The renderer names
   // nothing; the URL is built here from the checked release and this process's platform.
+  // Opening Settings: ask GitHub again if the last answer is older than ten minutes. The status
+  // reaches the window through the ordinary state push; this returns before the check does.
+  handle('update:refresh', async () => {
+    void checkForUpdatesIfStale();
+    return true;
+  });
+
   handle('update:download', async () => {
     await shell.openExternal(manualDownloadUrl(updateStatus().latest));
     return true;
@@ -1433,6 +1440,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
     const { query } = z.object({ query: z.string().max(200) }).parse(payload);
     return searchSessions(query);
   });
+  // Where a text match is in its chat, so opening the result shows that message.
+  handle('sessions:locate-match', async (payload) => {
+    const { id, query } = sessionIdArg.extend({ query: z.string().max(200) }).parse(payload);
+    return locateSearchMatch(id, query);
+  });
   handle('sessions:rename', async (payload) => {
     const { id, title } = sessionNameArg.parse(payload);
     if (!await getSession(id)) throw new Error('Session not found');
@@ -1588,6 +1600,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
   };
   configureInputDelivery({
     recoveryAllowed: recoveryInputAllowed,
+    callsHoldRecovery: recoveryHeldByCalls,
     activity: sessionInputActivity,
     wakeDecision: async (entry, signal) => {
       signal.throwIfAborted();
