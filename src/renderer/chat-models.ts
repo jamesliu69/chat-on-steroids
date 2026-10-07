@@ -208,9 +208,11 @@ function paintEffortShortcut(supported: readonly ReasoningEffort[]): void {
   }
   spark.dataset.action = action;
   spark.disabled = supported.length < 2;
-  const label = () => spark.disabled ? t('Thinking effort') : minimum
-    ? t('Use maximum effort: {0}', [effortLabel(supported.at(-1)!)])
-    : t('Use minimum effort: {0}', [effortLabel(supported[0]!)]);
+  const label = (): string => {
+    if (spark.disabled) return t('Thinking effort');
+    if (minimum) return t('Use maximum effort: {0}', [effortLabel(supported.at(-1)!)]);
+    return t('Use minimum effort: {0}', [effortLabel(supported[0]!)]);
+  };
   ui(spark, 'title', label); ui(spark, 'aria-label', label);
 }
 
@@ -395,10 +397,12 @@ function paintComposerLabel(): void {
   // Display the same admission decision as Send, including discovery and removed efforts.
   const confirmed = confirmedComposerModel();
   const modelLabel = confirmed ? catalog.models.find(model => model.id === confirmed.model)!.label : '';
-  const label = () => confirmed
-    ? chatModelDisplayLabel(modelLabel, confirmed.reasoningEffort, effortLabel(confirmed.reasoningEffort))
-    : automaticApplies() ? t("Automatic")
-    : catalog.state === 'pending' ? t("Loading models…") : t("Select model");
+  const label = (): string => {
+    if (confirmed) return chatModelDisplayLabel(modelLabel, confirmed.reasoningEffort, effortLabel(confirmed.reasoningEffort));
+    if (automaticApplies()) return t("Automatic");
+    if (catalog.state === 'pending') return t("Loading models…");
+    return t("Select model");
+  };
   const node = $('composerModelLabel');
   if (confirmed) {
     const pro = confirmed.reasoningEffort === 'pro';
@@ -413,10 +417,17 @@ function paintStatus(): void {
   paintComposerChoices();
   const error = () => catalog.error?.startsWith('Model discovery timed out. ')
     ? t('Model discovery timed out. {0}', [t(catalog.error.slice('Model discovery timed out. '.length))]) : t(catalog.error ?? '');
-  const message = () => catalog.state === 'pending' ? t(catalog.waiting ?? "Reading your account’s model choices…")
-    : catalog.error ? (catalog.models.length ? t('Refresh failed. Previously observed choices remain available. {0}', [error()]) : error())
-    : catalog.state === 'ready' ? t("Available in your ChatGPT account · checked {0}", [new Date(catalog.observedAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })])
-    : t("Connect to ChatGPT to load your models.");
+  const message = (): string => {
+    if (catalog.state === 'pending') return t(catalog.waiting ?? "Reading your account’s model choices…");
+    if (catalog.error) {
+      if (catalog.models.length) return t('Refresh failed. Previously observed choices remain available. {0}', [error()]);
+      return error();
+    }
+    if (catalog.state === 'ready') {
+      return t("Available in your ChatGPT account · checked {0}", [new Date(catalog.observedAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })]);
+    }
+    return t("Connect to ChatGPT to load your models.");
+  };
   for (const id of ['chatModelStatus', 'composerModelStatus']) {
     const node = document.getElementById(id);
     if (node) {
@@ -470,7 +481,9 @@ export async function ensureComposerModel(refresh = false): Promise<SendModel | 
   await discoverModels();
   await ready;
   // A refresh that failed confirms nothing, even with older choices still on screen.
-  return catalog.state === 'ready' && !catalog.error ? composerSendModel() : automaticApplies() ? { ...AUTOMATIC } : null;
+  if (catalog.state === 'ready' && !catalog.error) return composerSendModel();
+  if (automaticApplies()) return { ...AUTOMATIC };
+  return null;
 }
 
 export function applyChatModels(config: Config, previous?: Config): void {
@@ -562,9 +575,16 @@ export function initChatModels(onPaint?: () => void): void {
       const model = $<HTMLSelectElement>(modelId);
       const effort = $<HTMLSelectElement>(effortId);
       const supported = catalog.models.find(item => item.id === model.value)?.efforts ?? [];
-      const nextEffort = allowEmpty
-        ? supported.includes(effort.value as ReasoningEffort) ? effort.value : ''
-        : model.value ? supported.includes('high') ? 'high' : supported[0] ?? '' : '';
+      let nextEffort: string;
+      if (allowEmpty) {
+        nextEffort = supported.includes(effort.value as ReasoningEffort) ? effort.value : '';
+      } else if (!model.value) {
+        nextEffort = '';
+      } else if (supported.includes('high')) {
+        nextEffort = 'high';
+      } else {
+        nextEffort = supported[0] ?? '';
+      }
       paintPair(modelId, effortId, model.value, nextEffort, allowEmpty);
       paintStatus();
     });

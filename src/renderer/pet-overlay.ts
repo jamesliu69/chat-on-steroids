@@ -132,9 +132,10 @@ function paintProps(view: PetView): void {
     }
   }
   const frame = machine.frame, dir = scene.facing;
-  const label = scene.kind === 'openai'
-    ? (machine.state === 'celebrate' || machine.state === 'heavy' && frame >= 61 ? 'ClosedAI' : 'OpenAI')
-    : 'Anthropic';
+  let label = 'Anthropic';
+  if (scene.kind === 'openai') {
+    label = machine.state === 'celebrate' || machine.state === 'heavy' && frame >= 61 ? 'ClosedAI' : 'OpenAI';
+  }
   if (view.target!.textContent !== label) {
     view.target!.textContent = label;
     view.targetWidth = view.target!.offsetWidth;
@@ -517,9 +518,10 @@ function setInteractive(next: boolean): void {
   // Hiding forces native click-through. Reflect that same visibility in our
   // deduplication state so re-showing beneath a stationary pointer re-arms input.
   next = next && snapshot?.visible !== false && !disposed;
-  const regions = snapshot?.visible === false || disposed
-    ? []
-    : next || bounds.boundedIdleShape ? interactionRegions() : [];
+  let regions: PetOverlayHitRegion[];
+  if (snapshot?.visible === false || disposed) regions = [];
+  else if (next || bounds.boundedIdleShape) regions = interactionRegions();
+  else regions = [];
   const signature = JSON.stringify([next, regions]);
   if (interactive === next && interactiveSignature === signature) return;
   interactive = next;

@@ -76,19 +76,27 @@ function paint(state: SignInState): void {
   if (waiting && chosen?.icon) browser.src = chosen.icon;
   $('browserGlyph').hidden = !browser.hidden;
 
-  $('title').textContent = done ? t('You’re signed in')
-    : waiting ? t('Finish signing in with {0}', [chosen?.label ?? '']) : t('Sign in with Google');
-  $('lead').textContent = done ? '' : waiting ? t('When you finish, the extension brings the session here.')
-    : t('Google blocks sign-in here. Continue in your browser.');
+  let titleText: string;
+  if (done) titleText = t('You’re signed in');
+  else if (waiting) titleText = t('Finish signing in with {0}', [chosen?.label ?? '']);
+  else titleText = t('Sign in with Google');
+  $('title').textContent = titleText;
+  let leadText: string;
+  if (done) leadText = '';
+  else if (waiting) leadText = t('When you finish, the extension brings the session here.');
+  else leadText = t('Google blocks sign-in here. Continue in your browser.');
+  $('lead').textContent = leadText;
   $('lead').hidden = done;
   paintOptions(state);
   $('empty').hidden = waiting || state.browsers.length > 0;
   $('empty').textContent = t('Install Chrome, Edge or Brave with the Chat On Steroids extension, then try again.');
 
   $('notice').hidden = state.notice === null;
-  $('notice').textContent = state.notice === 'launch_failed'
-    ? t('The browser could not open. Try again or choose another one.')
-    : state.notice === 'ended' ? t('The sign-in request ended. Choose a browser to start again.') : '';
+  let noticeText: string;
+  if (state.notice === 'launch_failed') noticeText = t('The browser could not open. Try again or choose another one.');
+  else if (state.notice === 'ended') noticeText = t('The sign-in request ended. Choose a browser to start again.');
+  else noticeText = '';
+  $('notice').textContent = noticeText;
 
   button('reopen').hidden = !waiting;
   button('back').hidden = !waiting;

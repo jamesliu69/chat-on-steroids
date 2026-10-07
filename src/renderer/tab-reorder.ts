@@ -53,7 +53,10 @@ export function enableTabReorder(strip: HTMLElement, options: TabReorder): void 
     drag.to = to;
     drag.nodes.forEach((node, index) => {
       if (node === drag!.node) return;
-      const shift = drag!.from < index && index <= to ? -drag!.step : to <= index && index < drag!.from ? drag!.step : 0;
+      let shift: number;
+      if (drag!.from < index && index <= to) shift = -drag!.step;
+      else if (to <= index && index < drag!.from) shift = drag!.step;
+      else shift = 0;
       node.style.transform = shift ? `translateX(${shift}px)` : '';
     });
   });
@@ -83,5 +86,7 @@ export function enableTabReorder(strip: HTMLElement, options: TabReorder): void 
 /** Keyboard reordering: Ctrl+Shift+Left/Right moves the focused tab one place. */
 export function reorderKey(event: KeyboardEvent): -1 | 1 | 0 {
   if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return 0;
-  return event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+  if (event.key === 'ArrowLeft') return -1;
+  if (event.key === 'ArrowRight') return 1;
+  return 0;
 }

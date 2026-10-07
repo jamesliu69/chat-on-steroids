@@ -29,7 +29,10 @@ export function signInState(state: AppState, where: ChatBrowser, live: boolean,
     return connected ? { done: true, signedIn: true, text: () => t('Signed in. ChatGPT is connected.') }
       : { done: false, signedIn: true, text: () => t('Signed in. Connecting to ChatGPT…') };
   }
-  const label = where === 'edge' ? 'Edge' : where === 'brave' ? 'Brave' : 'Chrome';
+  let label: string;
+  if (where === 'edge') label = 'Edge';
+  else if (where === 'brave') label = 'Brave';
+  else label = 'Chrome';
   // ChatGPT's own answer while a tab is open there wins, so signing in or out shows at once. With
   // no tab, or the browser closed, the last answer stands in: a logout stays a logout.
   const liveAnswer = live ? state.bridge.externalExtension?.signedIn ?? null : null;
@@ -100,18 +103,38 @@ export function initBrowserSetup(actions: {
       variant.hidden = variant.dataset.browserVariant !== (cos ? 'cos' : 'extension');
     }
     $<HTMLImageElement>('setupExternalIcon').src = icons[external];
-    $('setupExtensionAddress').textContent = `${external === 'edge' ? 'edge' : external === 'brave' ? 'brave' : 'chrome'}://extensions`;
-    const label = external === 'edge' ? 'Edge' : external === 'brave' ? 'Brave' : 'Chrome';
+    let scheme = 'chrome';
+    if (external === 'edge') scheme = 'edge';
+    else if (external === 'brave') scheme = 'brave';
+    $('setupExtensionAddress').textContent = `${scheme}://extensions`;
+    let label: string;
+    if (external === 'edge') label = 'Edge';
+    else if (external === 'brave') label = 'Brave';
+    else label = 'Chrome';
     ui($('setupExternalLabel'), 'textContent', () => t('Use {0} and your existing profile.', [label]));
-    ui($('extensionStatus'), 'textContent', () => ready ? (live ? t('Extension connected and up to date') : t('Extension installed and up to date'))
-      : outdated ? t('Update your extension')
-      : live && !knownVersion ? t('Extension version could not be verified')
-      : t('Waiting for the browser extension'));
+    ui($('extensionStatus'), 'textContent', () => {
+      if (!ready) {
+        if (outdated) return t('Update your extension');
+        if (live && !knownVersion) return t('Extension version could not be verified');
+        return t('Waiting for the browser extension');
+      }
+      if (live) return t('Extension connected and up to date');
+      return t('Extension installed and up to date');
+    });
     $('extensionStatusBox').dataset.tone = ready ? 'ok' : 'wait';
-    ui($('extensionSetupDetail'), 'textContent', () => ready ? ''
-      : !state.secureStorage?.available && state.secureStorage ? t('Secure credential storage is unavailable, so the extension cannot pair safely.')
-      : state.bridge.running ? outdated || (live && !knownVersion) ? t('Load the extension from this app’s folder, then reload it in your browser.')
-      : '' : t('Browser bridge could not start: {0}', [state.bridge.error ?? t('Not connected yet')]));
+    ui($('extensionSetupDetail'), 'textContent', () => {
+      if (ready) return '';
+      if (!state.secureStorage?.available && state.secureStorage) {
+        return t('Secure credential storage is unavailable, so the extension cannot pair safely.');
+      }
+      if (!state.bridge.running) {
+        return t('Browser bridge could not start: {0}', [state.bridge.error ?? t('Not connected yet')]);
+      }
+      if (outdated || (live && !knownVersion)) {
+        return t('Load the extension from this app’s folder, then reload it in your browser.');
+      }
+      return '';
+    });
     $('extensionSetupDetail').hidden = !$('extensionSetupDetail').textContent;
     const login = signInState(state, browser === 'cos' ? 'cos' : external, live, proof);
     const statusNode = $(cos ? 'cosBrowserState' : 'externalBrowserState');
@@ -151,7 +174,10 @@ export function initBrowserSetup(actions: {
       const options = [...group.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
       const at = options.indexOf(document.activeElement as HTMLButtonElement);
       const delta = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
-      const index = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (at + delta + options.length) % options.length;
+      let index: number;
+      if (event.key === 'Home') index = 0;
+      else if (event.key === 'End') index = options.length - 1;
+      else index = (at + delta + options.length) % options.length;
       event.preventDefault(); options[index]!.click(); options[index]!.focus();
     });
   }

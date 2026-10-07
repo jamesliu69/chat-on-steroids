@@ -60,7 +60,12 @@ export function createAgentPanel(options: {
         row.dataset.workerSession = worker.id;
         row.classList.toggle('is-round-worker', highlighted.has(worker.id));
         const owner = options.agent?.(worker);
-        const state = owner?.state ?? (workerReportedFinish(worker) ? 'sleeping' : active ? 'working' : 'history');
+        const reportedState = (): 'sleeping' | 'working' | 'history' => {
+          if (workerReportedFinish(worker)) return 'sleeping';
+          if (active) return 'working';
+          return 'history';
+        };
+        const state = owner?.state ?? reportedState();
         row.dataset.state = state;
         const health = evaluateWorkerOverviewHealth({
           state: owner?.state ?? null,
@@ -77,8 +82,10 @@ export function createAgentPanel(options: {
         const model = worker.selectedModel && worker.conversationId && worker.selectedModel.conversationId === worker.conversationId
           ? [worker.selectedModel.model, worker.selectedModel.reasoningEffort].filter(Boolean).join(' · ') : '';
         const elapsedMs = Math.max(0, (active ? Date.now() : worker.endedAt ?? worker.updatedAt) - worker.startedAt);
-        const elapsed = elapsedMs < 60_000 ? `${Math.floor(elapsedMs / 1000)}s`
-          : elapsedMs < 3_600_000 ? `${Math.floor(elapsedMs / 60_000)}m` : `${Math.floor(elapsedMs / 3_600_000)}h`;
+        let elapsed: string;
+        if (elapsedMs < 60_000) elapsed = `${Math.floor(elapsedMs / 1000)}s`;
+        else if (elapsedMs < 3_600_000) elapsed = `${Math.floor(elapsedMs / 60_000)}m`;
+        else elapsed = `${Math.floor(elapsedMs / 3_600_000)}h`;
         const avatar = workerAvatar(worker.origin?.agentId ?? '•');
         const content = el('span', 'agent-card-content');
         const heading = el('span', 'agent-card-heading');

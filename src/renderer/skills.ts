@@ -38,8 +38,12 @@ function split(text: string): ReturnType<typeof skillDirectives> {
   catch { return { ids: [], prefix: '', body: text }; } // Incomplete typed commands remain visible.
 }
 const title = (skill: LibrarySkill): string => skill.displayName || skill.name;
-const scopeLabel = (skill: LibrarySkill): string => skill.scope === 'repo' ? t('Project')
-  : skill.scope === 'system' ? t('System') : skill.scope === 'admin' ? t('Admin') : t('Personal');
+const scopeLabel = (skill: LibrarySkill): string => {
+  if (skill.scope === 'repo') return t('Project');
+  if (skill.scope === 'system') return t('System');
+  if (skill.scope === 'admin') return t('Admin');
+  return t('Personal');
+};
 
 /** PR #260's library/chips are projections of the existing authored draft, not a second selection ledger. */
 export function initSkills(options: Options) {
@@ -74,7 +78,10 @@ export function initSkills(options: Options) {
     for (const id of ids) {
       const command = id === 'compact';
       const skill = command ? undefined : catalog?.skills.find(row => row.id === id);
-      const name = command ? t('Compact') : skill ? title(skill) : id;
+      let name: string;
+      if (command) name = t('Compact');
+      else if (skill) name = title(skill);
+      else name = id;
       const chip = el('div', 'composer-selected-skill'); chip.dataset.skillId = id;
       if (command) chip.dataset.command = id;
       chip.title = command ? t('Compact this chat and resume it in a fresh conversation.') : skill?.path ?? `/${id}`;
@@ -114,8 +121,9 @@ export function initSkills(options: Options) {
       const authored = (prefixOwner === options.owner() ? displayedPrefix : '') + text;
       if (options.deferCommand?.(skill.command)) {
         const draft = split(authored);
+        const commandSeparator = draft.prefix && !/\s$/.test(draft.prefix) ? '\n' : '';
         const prefix = draft.ids.includes(skill.command) ? draft.prefix
-          : `${draft.prefix}${draft.prefix && !/\s$/.test(draft.prefix) ? '\n' : ''}/${skill.command}\n`;
+          : `${draft.prefix}${commandSeparator}/${skill.command}\n`;
         close(); project(prefix + draft.body); input.focus(); return;
       }
       close(); project(authored, 'command'); options.command?.(skill.command); input.focus(); return;
@@ -125,8 +133,9 @@ export function initSkills(options: Options) {
     if (!range || painted !== selectionKey()) { close(); return; }
     const text = range ? input.value.slice(0, range.start) + input.value.slice(range.end).replace(/^\s+/, '') : input.value;
     const draft = split((prefixOwner === options.owner() ? displayedPrefix : '') + text);
+    const idSeparator = draft.prefix && !/\s$/.test(draft.prefix) ? '\n' : '';
     const prefix = draft.ids.includes(skill.id) ? draft.prefix
-      : `${draft.prefix}${draft.prefix && !/\s$/.test(draft.prefix) ? '\n' : ''}/${skill.id}\n`;
+      : `${draft.prefix}${idSeparator}/${skill.id}\n`;
     close(); project(prefix + draft.body); input.focus();
   };
   const filtered = (query: string): LibrarySkill[] => {
@@ -174,8 +183,12 @@ export function initSkills(options: Options) {
       row.append(icon(command ? skill.glyph : 'i-skill', 'ico slash-menu-icon'), copy, el('span', 'slash-menu-meta', () => command ? '' : scopeLabel(skill)));
       row.addEventListener('pointerdown', event => event.preventDefault()); row.addEventListener('click', () => chooseCurrent(skill)); host.append(row);
     }
-    const stateMessage = error ? error : loading && !library ? t('Loading skills…')
-      : choices.length ? '' : query ? t('No matches for “{0}”.', [`/${query}`]) : t('No skills available.');
+    let stateMessage: string;
+    if (error) stateMessage = error;
+    else if (loading && !library) stateMessage = t('Loading skills…');
+    else if (choices.length) stateMessage = '';
+    else if (query) stateMessage = t('No matches for “{0}”.', [`/${query}`]);
+    else stateMessage = t('No skills available.');
     if (stateMessage) {
       const state = el('p', 'slash-menu-empty', stateMessage);
       state.setAttribute('role', error ? 'alert' : 'status'); host.append(state);

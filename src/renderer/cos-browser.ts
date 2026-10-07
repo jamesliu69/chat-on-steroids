@@ -43,7 +43,10 @@ function createTab(id: number) {
 
 /** The favicon, or a spinner while loading, under the dot that marks a tab the companion works in. */
 function paintGlyph(glyph: HTMLElement, tab: ToolbarTab): void {
-  const icon = tab.loading ? document.createElement('span') : tab.favicon ? document.createElement('img') : document.createElement('i');
+  let icon: HTMLElement;
+  if (tab.loading) icon = document.createElement('span');
+  else if (tab.favicon) icon = document.createElement('img');
+  else icon = document.createElement('i');
   if (icon instanceof HTMLImageElement) { icon.src = tab.favicon!; icon.alt = ''; icon.className = 'favicon'; icon.draggable = false; }
   else if (tab.loading) icon.className = 'spinner';
   else { icon.className = 'ph ph-chat-circle'; icon.setAttribute('aria-hidden', 'true'); }
@@ -91,7 +94,10 @@ function paint(state: ToolbarState): void {
   if (mark.style.maskImage !== image) { mark.style.maskImage = image; mark.style.webkitMaskImage = image; }
   mark.hidden = !state.companionIcon;
   document.getElementById('companionFallback')!.hidden = Boolean(state.companionIcon);
-  document.getElementById('companionStatus')!.dataset.state = state.connected === null ? 'unknown' : state.connected ? 'connected' : 'disconnected';
+  let connectionState = 'disconnected';
+  if (state.connected === null) connectionState = 'unknown';
+  else if (state.connected) connectionState = 'connected';
+  document.getElementById('companionStatus')!.dataset.state = connectionState;
 }
 
 api.onState(paint);

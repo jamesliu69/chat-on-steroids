@@ -92,8 +92,11 @@ export function searchSettings(entries: SettingEntry[], query: string, language 
     const place = foldSearchText(`${entry.page} ${entry.section}`, language);
     const all = `${title} ${foldSearchText(entry.detail, language)} ${place}`;
     if (!terms.every(term => all.includes(term))) return;
-    const rank = title.startsWith(wanted) ? 0 : terms.every(term => title.includes(term)) ? 1
-      : terms.every(term => `${title} ${place}`.includes(term)) ? 2 : 3;
+    let rank: number;
+    if (title.startsWith(wanted)) rank = 0;
+    else if (terms.every(term => title.includes(term))) rank = 1;
+    else if (terms.every(term => `${title} ${place}`.includes(term))) rank = 2;
+    else rank = 3;
     scored.push({ entry, rank, at });
   });
   return scored.sort((a, b) => a.rank - b.rank || a.at - b.at).slice(0, MAX_RESULTS).map(({ entry }) => entry);

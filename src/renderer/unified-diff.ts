@@ -48,9 +48,12 @@ export async function renderUnifiedDiff(host: HTMLElement, filename: string, bas
   const content = el('div', 'unified-diff-lines'); content.setAttribute('role', 'table');
   for (const line of lines) {
     const row = el('div', `diff-line is-${line.kind}`); row.setAttribute('role', 'row');
+    let sign = ' ';
+    if (line.kind === 'added') sign = '+';
+    else if (line.kind === 'removed') sign = '−';
     row.append(el('span', 'diff-gutter', line.old === null ? '' : String(line.old)),
       el('span', 'diff-gutter', line.next === null ? '' : String(line.next)),
-      el('span', 'diff-sign', line.kind === 'added' ? '+' : line.kind === 'removed' ? '−' : ' '));
+      el('span', 'diff-sign', sign));
     const code = el('code', 'diff-code');
     if (language && line.text.length <= 4000 && line.kind !== 'gap') {
       let cursor = 0;

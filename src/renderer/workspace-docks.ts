@@ -114,7 +114,10 @@ export function createWorkspaceDocks(host: HTMLElement) {
     for (const kind of ['review', 'terminal', 'files', 'agents'] as DockView[]) {
       const enabled = kind === 'terminal' ? rightTerminal?.canCreate() ?? false : views.get(kind)?.available() ?? false;
       // A greyed-out entry says why, instead of leaving the user to guess.
-      const reason = enabled ? '' : kind === 'agents' ? t('Open a chat to see its sub-agents') : t('Open a project to use Files and Review');
+      let reason: string;
+      if (enabled) reason = '';
+      else if (kind === 'agents') reason = t('Open a chat to see its sub-agents');
+      else reason = t('Open a project to use Files and Review');
       for (const button of [menu, launch].map(root => root.querySelector<HTMLButtonElement>(`[data-view="${kind}"]`))) {
         if (!button) continue;
         button.toggleAttribute('disabled', !enabled);
@@ -158,8 +161,11 @@ export function createWorkspaceDocks(host: HTMLElement) {
         if (id) tab.dataset.terminalId = id;
         const pick = el('button', 'btn') as HTMLButtonElement;
         // The label is its own element so a long title truncates instead of running under the close.
-        pick.append(icon(id ? 'i-terminal' : view!.glyph), el('span', 'tab-label', () => terminal
-          ? `${terminal.title}${terminal.exited ? (" · " + t('exited')) : ''}` : t(view!.label)));
+        pick.append(icon(id ? 'i-terminal' : view!.glyph), el('span', 'tab-label', () => {
+          if (!terminal) return t(view!.label);
+          const exitedSuffix = terminal.exited ? (" · " + t('exited')) : '';
+          return `${terminal.title}${exitedSuffix}`;
+        }));
         pick.type = 'button'; pick.setAttribute('role', 'tab');
         if (terminal) pick.title = terminal.title;
         pick.setAttribute('aria-selected', String(active === key)); pick.tabIndex = active === key ? 0 : -1;
@@ -294,8 +300,10 @@ export function createWorkspaceDocks(host: HTMLElement) {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !opened.length) return;
     event.preventDefault();
     const index = active ? opened.indexOf(active) : 0;
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? opened.length - 1
-      : (index + (event.key === 'ArrowRight' ? 1 : opened.length - 1)) % opened.length;
+    let next: number;
+    if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = opened.length - 1;
+    else next = (index + (event.key === 'ArrowRight' ? 1 : opened.length - 1)) % opened.length;
     activateKey(opened[next]!); tabs.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
   });
   document.addEventListener('keydown', event => {

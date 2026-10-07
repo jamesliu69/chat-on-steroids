@@ -8,7 +8,12 @@ export function renderEditCards(call: ToolCallRecord, sessionId: string, current
   for (const [index, change] of (call.changes ?? []).slice(0, 32).entries()) {
     const card = document.createElement('details'); card.className = 'edit-card';
     const header = el('summary', 'edit-card-header');
-    header.append(icon('i-file-text'), el('b', '', () => `${t(call.summary.kind === 'create' ? 'Created' : call.summary.kind === 'delete' ? 'Deleted' : 'Edited')} ${change.path.split(/[\\/]/).pop()}`),
+    header.append(icon('i-file-text'), el('b', '', () => {
+      let action = 'Edited';
+      if (call.summary.kind === 'create') action = 'Created';
+      else if (call.summary.kind === 'delete') action = 'Deleted';
+      return `${t(action)} ${change.path.split(/[\\/]/).pop()}`;
+    }),
       el('span', 'metric-added', `+${change.added}`), el('span', 'metric-removed', `−${change.removed}`), disclosureChevron('edit-chevron'));
     if (change.approximate) header.append(el('span', 'meta', () => t(' (approx.)')));
     const path = el('div', 'edit-card-path', change.path);

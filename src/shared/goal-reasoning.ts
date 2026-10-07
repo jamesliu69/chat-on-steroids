@@ -23,10 +23,16 @@ export function parseGoalModelReasoning(value: unknown): GoalModelReasoning | un
   const raw = value as Record<string, unknown>;
   return {
     mandatory: raw.mandatory === true,
-    ...(raw.supported_efforts === null ? { supportedEfforts: null } : Array.isArray(raw.supported_efforts)
-      ? { supportedEfforts: [...new Set(raw.supported_efforts.slice(0, 32).filter(isEffort))] } : {}),
+    ...supportedEffortsField(raw),
     ...(isEffort(raw.default_effort) ? { defaultEffort: raw.default_effort } : {})
   };
+}
+
+/** Null claims every gateway effort; a list claims its bounded members; absent claims none. */
+function supportedEffortsField(raw: Record<string, unknown>): { supportedEfforts?: GoalEffort[] | null } {
+  if (raw.supported_efforts === null) return { supportedEfforts: null };
+  if (Array.isArray(raw.supported_efforts)) return { supportedEfforts: [...new Set(raw.supported_efforts.slice(0, 32).filter(isEffort))] };
+  return {};
 }
 
 export function goalModelEfforts(model: GoalModel | undefined, custom = false): GoalEffort[] {

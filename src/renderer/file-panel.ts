@@ -420,9 +420,11 @@ export function createFilePanel(options: FilePanelOptions) {
     if (editorDirtyBadge) {
       editorDirtyBadge.hidden = !editorDirty;
       editorDirtyBadge.classList.toggle('is-conflict', editorExternalChange);
-      ui(editorDirtyBadge, 'title', () => editorDirty
-        ? editorExternalChange ? t('Unsaved changes · file changed on disk') : t('Unsaved changes')
-        : '');
+      ui(editorDirtyBadge, 'title', () => {
+        if (!editorDirty) return '';
+        if (editorExternalChange) return t('Unsaved changes · file changed on disk');
+        return t('Unsaved changes');
+      });
     }
   }
 
@@ -654,7 +656,10 @@ export function createFilePanel(options: FilePanelOptions) {
     if (entry.kind === 'directory') row.setAttribute('aria-expanded', String(expanded.has(entry.path)));
     const disclosure = el('span', `file-tree-disclosure${entry.kind === 'directory' && expanded.has(entry.path) ? ' is-open' : ''}`);
     disclosure.setAttribute('aria-hidden', 'true');
-    row.append(disclosure, icon(entry.kind === 'directory' ? 'i-folder' : entry.kind === 'file' ? 'i-file' : 'i-ban', 'ico file-tree-icon'));
+    let glyph = 'i-ban';
+    if (entry.kind === 'directory') glyph = 'i-folder';
+    else if (entry.kind === 'file') glyph = 'i-file';
+    row.append(disclosure, icon(glyph, 'ico file-tree-icon'));
     row.append(el('span', 'file-tree-name', entry.name));
     const gitChange = entry.kind === 'file' ? treeGitStatus(entry.path) : undefined;
     const descendants = entry.kind === 'directory' ? directoryCounts.get(entry.path) : undefined;
@@ -1025,8 +1030,12 @@ export function createFilePanel(options: FilePanelOptions) {
     const stats = el('span', 'file-change-stats');
     if (change.status === 'U') {
       stats.title = t('All lines in this untracked file');
-      stats.append(el('span', 'is-muted', change.binary ? t('Binary') :
-        change.additions === null ? '—' : change.additions === 1 ? t('1 line') : t('{0} lines', [change.additions])));
+      let untrackedSummary: string;
+      if (change.binary) untrackedSummary = t('Binary');
+      else if (change.additions === null) untrackedSummary = '—';
+      else if (change.additions === 1) untrackedSummary = t('1 line');
+      else untrackedSummary = t('{0} lines', [change.additions]);
+      stats.append(el('span', 'is-muted', untrackedSummary));
       return stats;
     }
     stats.title = gitSnapshot?.comparison ? t('Changes from comparison base') : t('Changes since HEAD');
@@ -1198,11 +1207,14 @@ export function createFilePanel(options: FilePanelOptions) {
     }
     const language = el('span', 'file-editor-language', () => t('Detecting language…'));
     const meta = el('div', 'file-preview-meta file-editor-meta');
-    const status = historical
-      ? `${t('This edit')} · ${value.path} · +${(value as ToolEditReview).added} −${(value as ToolEditReview).removed}`
-      : 'previousPath' in value && value.previousPath
-        ? `${gitStatusLabel(value.status)} · ${value.previousPath} → ${value.path}`
-        : `${gitStatusLabel((value as ProjectGitDiff).status)} · ${value.path}`;
+    let status: string;
+    if (historical) {
+      status = `${t('This edit')} · ${value.path} · +${(value as ToolEditReview).added} −${(value as ToolEditReview).removed}`;
+    } else if ('previousPath' in value && value.previousPath) {
+      status = `${gitStatusLabel(value.status)} · ${value.previousPath} → ${value.path}`;
+    } else {
+      status = `${gitStatusLabel((value as ProjectGitDiff).status)} · ${value.path}`;
+    }
     meta.append(el('span', '', status), language);
     if (('binary' in value && (value.binary || value.tooLarge)) || value.baseText === null || value.currentText === null) {
       language.remove();
@@ -1333,8 +1345,12 @@ export function createFilePanel(options: FilePanelOptions) {
     tree.hidden = showingChanges || showingReview;
     changesView.hidden = !showingChanges && !showingReview;
     changesList.hidden = showingDiff;
-    ui(changesHeaderTitle, 'textContent', () => t(showingReview ? 'Review edit' : showingDiff ? 'Diff' :
-      options.reviewOnly && gitSnapshot?.state === 'ready' ? gitSnapshot.currentBranch ?? 'HEAD' : 'Working tree'));
+    ui(changesHeaderTitle, 'textContent', () => {
+      if (showingReview) return t('Review edit');
+      if (showingDiff) return t('Diff');
+      if (options.reviewOnly && gitSnapshot?.state === 'ready') return t(gitSnapshot.currentBranch ?? 'HEAD');
+      return t('Working tree');
+    });
     branchArrow.hidden = !options.reviewOnly || showingDiff || !project ||
       (gitSnapshot?.state !== 'ready' && !selectedBaseRef);
     branchTrigger.hidden = branchArrow.hidden;

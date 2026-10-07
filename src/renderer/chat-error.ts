@@ -25,17 +25,25 @@ export function chatErrorPresentation(error: ChatError, history: readonly Sessio
   const text = error.message.text.trim();
   const thinking = text === 'Thinking failed';
   const stalled = text.startsWith('No visible progress for ten minutes.');
-  const title = thinking ? t('Thinking failed') : stalled ? t('Response stalled') : t('ChatGPT reported a problem');
+  let title: string;
+  if (thinking) title = t('Thinking failed');
+  else if (stalled) title = t('Response stalled');
+  else title = t('ChatGPT reported a problem');
   // Older recordings described our open-turn bookkeeping as native generation.
-  const message = thinking ? t('ChatGPT’s page reported a failure. This does not prove the work stopped.')
-    : stalled ? t('No visible progress for ten minutes. The app could not confirm that this turn finished.') : error.message.text;
-  let next = error.blocking === true
-    ? t('Wait until ChatGPT allows requests again, then retry. Reloading cannot remove this limit.')
-    : thinking
-      ? t('You can send a follow-up. Automatic recovery, when allowed, refreshes the page and waits five minutes before a queued continuation; new work postpones it.')
-      : error.recoverable === true || stalled
-        ? t('The app will try to refresh this chat when recovery is eligible. A refresh does not resend your message. If it stays stuck, open ChatGPT and check the page before retrying.')
-        : t('Open this chat in ChatGPT and check the error. If your message is already there, do not send it again; otherwise retry when the page is ready.');
+  let message: string;
+  if (thinking) message = t('ChatGPT’s page reported a failure. This does not prove the work stopped.');
+  else if (stalled) message = t('No visible progress for ten minutes. The app could not confirm that this turn finished.');
+  else message = error.message.text;
+  let next: string;
+  if (error.blocking === true) {
+    next = t('Wait until ChatGPT allows requests again, then retry. Reloading cannot remove this limit.');
+  } else if (thinking) {
+    next = t('You can send a follow-up. Automatic recovery, when allowed, refreshes the page and waits five minutes before a queued continuation; new work postpones it.');
+  } else if (error.recoverable === true || stalled) {
+    next = t('The app will try to refresh this chat when recovery is eligible. A refresh does not resend your message. If it stays stuck, open ChatGPT and check the page before retrying.');
+  } else {
+    next = t('Open this chat in ChatGPT and check the error. If your message is already there, do not send it again; otherwise retry when the page is ready.');
+  }
 
   // Use the existing recorded repair row, bounded by the next question/error.
   // Never borrow another turn's recovery, or treat a reload receipt as completion.

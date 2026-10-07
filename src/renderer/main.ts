@@ -185,7 +185,10 @@ function showTab(name: string): void {
   const settings = name !== 'chat' && !library;
   // Opening Settings asks whether "Up to date" is still true (the check itself waits ten minutes).
   if (settings && document.querySelector<HTMLElement>('.app')!.dataset.screen !== 'settings') void api.refreshUpdate();
-  document.querySelector<HTMLElement>('.app')!.dataset.screen = library ? 'library' : settings ? 'settings' : 'chat';
+  let screen = 'chat';
+  if (library) screen = 'library';
+  else if (settings) screen = 'settings';
+  document.querySelector<HTMLElement>('.app')!.dataset.screen = screen;
   document.querySelector<HTMLElement>('.sidebar-brand')!.hidden = settings;
   $('sidebarPrimary').hidden = settings;
   $('workspaceSettings').hidden = false;
@@ -317,7 +320,10 @@ $('zoomIn').addEventListener('click', () => void zoom(zoomFactor + .1));
 $('zoomActualSize').addEventListener('click', () => void zoom(1));
 document.addEventListener('keydown', (event) => {
   if (!(event.ctrlKey || event.metaKey) || !['+', '=', '-', '0'].includes(event.key)) return;
-  event.preventDefault(); void zoom(event.key === '0' ? 1 : zoomFactor + (event.key === '-' ? -.1 : .1));
+  event.preventDefault();
+  if (event.key === '0') { void zoom(1); return; }
+  const step = event.key === '-' ? -.1 : .1;
+  void zoom(zoomFactor + step);
 });
 $('tabs').addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-tab]');
@@ -557,13 +563,12 @@ function paintGroups(): void {
     box.indeterminate = !box.checked && on.length > 0;
     box.disabled = usable.length === 0;
 
-    ui(root.querySelector<HTMLElement>('.group-count')!, 'textContent', () => usable.length === 0
-        ? t("off in read-only mode")
-        : on.length === 0
-          ? 'off'
-          : on.length === group.caps.length
-            ? t(on.length === 1 ? '{0} permission' : '{0} permissions', [on.length])
-            : t("{0} of {1} permissions", [on.length, group.caps.length]));
+    ui(root.querySelector<HTMLElement>('.group-count')!, 'textContent', () => {
+      if (usable.length === 0) return t("off in read-only mode");
+      if (on.length === 0) return 'off';
+      if (on.length === group.caps.length) return t(on.length === 1 ? '{0} permission' : '{0} permissions', [on.length]);
+      return t("{0} of {1} permissions", [on.length, group.caps.length]);
+    });
 
     root.classList.toggle('is-on', on.length > 0);
     root.classList.toggle('is-locked', usable.length === 0);
@@ -1074,17 +1079,18 @@ function updateSummary({ bridge, update, config, status }: AppState): { text: st
     // `latest` set with a stage of `idle` is the deliberate case: a new version exists and this
     // installation - a Linux .deb, macOS, a development tree, an architecture with no artifact -
     // is not one the app can update by itself. That is when the button matters.
-    lines.push(
-      update.stage === 'checking'
-        ? t("Checking for the latest update…")
-        : update.stage === 'ready'
-        ? t("Chat On Steroids {0} is downloaded and ready. Install it now, or it installs the next time you quit.", [update.latest])
-        : update.stage === 'downloading'
-          ? t("Chat On Steroids {0} is downloading. Keep working; you can install it when it lands.", [update.latest])
-          : update.stage === 'failed'
-            ? t("Chat On Steroids {0} could not be downloaded: {1}.", [update.latest, update.error ?? t("the download stopped")])
-            : t("Chat On Steroids {0} is out. This installation has to be updated by hand.", [update.latest])
-    );
+    let stageLine: string;
+    if (update.stage === 'checking') stageLine = t("Checking for the latest update…");
+    else if (update.stage === 'ready') {
+      stageLine = t("Chat On Steroids {0} is downloaded and ready. Install it now, or it installs the next time you quit.", [update.latest]);
+    } else if (update.stage === 'downloading') {
+      stageLine = t("Chat On Steroids {0} is downloading. Keep working; you can install it when it lands.", [update.latest]);
+    } else if (update.stage === 'failed') {
+      stageLine = t("Chat On Steroids {0} could not be downloaded: {1}.", [update.latest, update.error ?? t("the download stopped")]);
+    } else {
+      stageLine = t("Chat On Steroids {0} is out. This installation has to be updated by hand.", [update.latest]);
+    }
+    lines.push(stageLine);
     if (update.stage === 'failed') tone = 'bad';
   } else if (update.stage === 'failed') {
     lines.push(t("Could not check for a newer version: {0}.", [update.error ?? t("the check stopped")]));
@@ -1104,7 +1110,11 @@ function updateSummary({ bridge, update, config, status }: AppState): { text: st
     tone = 'bad';
   }
   if (missing) { lines.push(t("Browser extension not connected. Open ChatGPT and check the companion in Setup to load models and send messages.")); tone = 'bad'; }
-  return { text: lines.join(' '), tone, notice: Boolean(update.latest || stale || missing), extensionAction: stale ? t("Update extension") : missing ? t("Check extension") : null };
+  let extensionAction: string | null;
+  if (stale) extensionAction = t("Update extension");
+  else if (missing) extensionAction = t("Check extension");
+  else extensionAction = null;
+  return { text: lines.join(' '), tone, notice: Boolean(update.latest || stale || missing), extensionAction };
 }
 
 /** The header bar, the Activity line and the one notification, from that single sentence. */
@@ -1130,7 +1140,10 @@ function paintUpdate(next: AppState): void {
   $<HTMLButtonElement>('installUpdate').hidden = !installable;
   notice.hidden = !summary.notice;
   ui(line, 'textContent', () => updateSummary(next)?.text ?? '');
-  line.className = `upline${summary.tone === 'ok' ? ' is-ok' : summary.tone === 'bad' ? ' is-bad' : ''}`;
+  let toneClass = '';
+  if (summary.tone === 'ok') toneClass = ' is-ok';
+  else if (summary.tone === 'bad') toneClass = ' is-bad';
+  line.className = `upline${toneClass}`;
   line.hidden = false;
   // One notification per window, on the first answer that is an outcome rather than progress.
   // The Activity line keeps the sentence afterwards, so repeating it as a toast on every state
@@ -1192,8 +1205,10 @@ async function changeSetupProfile(action: 'add' | 'select' | 'remove', id?: stri
     // A failed write retains its draft for retry, but the failure itself is not a
     // permanent profile lock. Clearing the unsaved draft makes profile navigation safe.
     if (setupKeySaveFailed && apiKey.value.trim() !== '') { apiKey.focus(); return; }
-    const next = await run(action === 'add' ? api.addSetupProfile(name)
-      : action === 'remove' ? api.removeSetupProfile(id!) : api.selectSetupProfile(id!));
+    let next: AppState | null | undefined;
+    if (action === 'add') next = await run(api.addSetupProfile(name));
+    else if (action === 'remove') next = await run(api.removeSetupProfile(id!));
+    else next = await run(api.selectSetupProfile(id!));
     if (!next) return;
     requestedSettings = null;
     apiKey.value = '';
@@ -1296,7 +1311,11 @@ function apply(next: AppState): void {
   // Connected, it is a quiet dot. Otherwise it opens to say what to do or what is happening: Connect,
   // Connecting…, or what went wrong. Its label keeps the last words while it closes, so the text
   // fades with the width instead of vanishing first.
-  const connectionTone = connected ? 'is-connected' : offline ? 'is-offline' : busy ? 'is-busy' : failed ? 'is-error' : '';
+  let connectionTone = '';
+  if (connected) connectionTone = 'is-connected';
+  else if (offline) connectionTone = 'is-offline';
+  else if (busy) connectionTone = 'is-busy';
+  else if (failed) connectionTone = 'is-error';
   const sidebarConnection = $('sidebarConnection');
   const wasConnected = sidebarConnection.classList.contains('is-connected');
   // Disconnecting is work in progress like connecting: the capsule says so with the same light and sheen,
@@ -1308,9 +1327,14 @@ function apply(next: AppState): void {
   // anchored right, so it grows to the left, and the new words fade in as it does.
   const wasLabelled = sidebarConnection.classList.contains('has-label');
   const label = $('sidebarConnectionLabel');
-  const capsuleWords = (): string => disconnecting ? t('Disconnecting…') : busy ? t('Connecting…')
+  const capsuleWords = (): string => {
+    if (disconnecting) return t('Disconnecting…');
+    if (busy) return t('Connecting…');
     // A failure says so in one short word; its reason is in the title and the details.
-    : offline ? t(STATUS_TEXT[status.state]) : failed ? t('Failed') : t('Connect');
+    if (offline) return t(STATUS_TEXT[status.state]);
+    if (failed) return t('Failed');
+    return t('Connect');
+  };
   // Connecting sends several updates with the same words: those change nothing, and a morph under way
   // keeps going. New words morph from what is on screen now, the width mid-way included.
   // Opening from the dot (Disconnecting…) morphs the same way, with no old words to fade.
@@ -1383,14 +1407,18 @@ function apply(next: AppState): void {
   ui($('connectionPopoverTitle'), 'textContent', () => t(STATUS_TEXT[status.state]));
 
   const id = config.tunnel.tunnelId;
-  ui($('headerSub'), 'textContent', () => config.tunnel.kind === 'openai'
-      ? TUNNEL_ID_PATTERN.test(id)
-        ? `${id.slice(0, 11)}…${id.slice(-4)}`
-        : t("No tunnel yet")
-      : (status.publicUrl ?? status.localUrl ?? config.tunnel.kind));
+  ui($('headerSub'), 'textContent', () => {
+    if (config.tunnel.kind !== 'openai') return status.publicUrl ?? status.localUrl ?? config.tunnel.kind;
+    if (TUNNEL_ID_PATTERN.test(id)) return `${id.slice(0, 11)}…${id.slice(-4)}`;
+    return t("No tunnel yet");
+  });
 
   const connectBtn = $<HTMLButtonElement>('connectionPopoverToggle');
-  ui(connectBtn, 'textContent', () => disconnecting ? t('Disconnecting…') : running ? t("Disconnect") : t("Connect"));
+  ui(connectBtn, 'textContent', () => {
+    if (disconnecting) return t('Disconnecting…');
+    if (running) return t("Disconnect");
+    return t("Connect");
+  });
   connectBtn.disabled = disconnecting || (!running && missing !== null);
   connectBtn.title = !running && missing ? missing.text : '';
   // One place per action: while the capsule itself says Connect or Disconnecting…, the details only
@@ -1565,17 +1593,27 @@ function apply(next: AppState): void {
   apiKey.disabled = !secureStorageAvailable;
   paintSetupFields();
   paintSetupProfiles(next);
-  ui($('apiKeyState'), 'textContent', () => secureStorageAvailable ? next.hasApiKey
-      ? t("A key is stored with secure OS credential storage. Type a new one to replace it, or use Remove stored API key.")
-      : t("Stored with secure OS credential storage. It is never shown again and never leaves this app.") : next.secureStorage?.detail ?? t("Secure credential storage is unavailable."));
+  ui($('apiKeyState'), 'textContent', () => {
+    if (!secureStorageAvailable) return next.secureStorage?.detail ?? t("Secure credential storage is unavailable.");
+    if (next.hasApiKey) return t("A key is stored with secure OS credential storage. Type a new one to replace it, or use Remove stored API key.");
+    return t("Stored with secure OS credential storage. It is never shown again and never leaves this app.");
+  });
   $('apiKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('removeApiKey').disabled = !next.hasApiKey || !secureStorageAvailable;
 
   // The tunnel's state in one glance: a coloured badge, and the button that changes it. Only a
   // failure says more, since only then is there something to do about it.
   const wizConnect = $<HTMLButtonElement>('wizConnect');
-  const tone = failed ? 'bad' : status.state === 'connected' ? 'ok' : running || disconnecting ? 'wait' : 'off';
-  ui($('wizConnectLabel'), 'textContent', () => disconnecting ? t('Disconnecting…') : running ? t("Disconnect") : t("Connect"));
+  let tone: string;
+  if (failed) tone = 'bad';
+  else if (status.state === 'connected') tone = 'ok';
+  else if (running || disconnecting) tone = 'wait';
+  else tone = 'off';
+  ui($('wizConnectLabel'), 'textContent', () => {
+    if (disconnecting) return t('Disconnecting…');
+    if (running) return t("Disconnect");
+    return t("Connect");
+  });
   wizConnect.disabled = connectBtn.disabled;
   wizConnect.dataset.tone = tone;
   const pill = $('wizStatusPill');
@@ -1614,21 +1652,26 @@ function apply(next: AppState): void {
     'is-warn',
     reachedAt !== null && (ranAt === null || unverified.length > 0)
   );
-  ui(chatgptNote, 'textContent', () => reachedAt === null
-      ? unverified.length < surfaces.filter(surface => surface.available).length
-        ? t("The plugin is in your ChatGPT. It runs the first time a chat asks for it.")
-        : ''
-      : ranAt === null
-        ? t("ChatGPT connected {0} but has never run a tool. Check that the CoS app is enabled in ChatGPT → Plugins.", [ago(reachedAt)])
-        : unverified.length > 0
-          ? // One connector working is not the whole setup. Naming the missing one is the
-            // difference between "something is off" and knowing what to go and create.
-            t(unverified.length === 1
-              ? "ChatGPT ran a tool {0}, but {1} has never been called — create it in ChatGPT to use it."
-              : "ChatGPT ran a tool {0}, but {1} have never been called — create them in ChatGPT to use them.",
-            [ago(ranAt), new Intl.ListFormat(currentLanguage(), { type: 'conjunction' })
-              .format(unverified.map((surface) => `“${surface.connectorName}”`))])
-          : t("ChatGPT ran a tool {0} — the whole chain works.", [ago(ranAt)]));
+  ui(chatgptNote, 'textContent', () => {
+    if (reachedAt === null) {
+      if (unverified.length < surfaces.filter(surface => surface.available).length) {
+        return t("The plugin is in your ChatGPT. It runs the first time a chat asks for it.");
+      }
+      return '';
+    }
+    if (ranAt === null) {
+      return t("ChatGPT connected {0} but has never run a tool. Check that the CoS app is enabled in ChatGPT → Plugins.", [ago(reachedAt)]);
+    }
+    if (unverified.length === 0) return t("ChatGPT ran a tool {0} — the whole chain works.", [ago(ranAt)]);
+    // One connector working is not the whole setup. Naming the missing one is the
+    // difference between "something is off" and knowing what to go and create.
+    const singular = unverified.length === 1;
+    return t(singular
+      ? "ChatGPT ran a tool {0}, but {1} has never been called — create it in ChatGPT to use it."
+      : "ChatGPT ran a tool {0}, but {1} have never been called — create them in ChatGPT to use them.",
+    [ago(ranAt), new Intl.ListFormat(currentLanguage(), { type: 'conjunction' })
+      .format(unverified.map((surface) => `“${surface.connectorName}”`))]);
+  });
 
   const cards = $('connectorCards');
   cards.replaceChildren(...connectorCards(next));
@@ -1706,9 +1749,11 @@ function apply(next: AppState): void {
   paintReady(shown, done, cosBrowser, allSet);
 
   const needsBinary = config.tunnel.kind !== 'manual';
-  ui($('binaryState'), 'textContent', () => needsBinary ? next.resolvedBinary
-      ? t("Using {0}", [next.resolvedBinary])
-      : t("Not found. Install it, or choose the file with Browse.") : t("Not needed for this method."));
+  ui($('binaryState'), 'textContent', () => {
+    if (!needsBinary) return t("Not needed for this method.");
+    if (next.resolvedBinary) return t("Using {0}", [next.resolvedBinary]);
+    return t("Not found. Install it, or choose the file with Browse.");
+  });
   ui($('versionLine'), 'textContent', () => next.bundledTunnelVersion
     ? t("Recent activity only — no file contents, no credentials. Bundled tunnel-client {0}.", [next.bundledTunnelVersion])
     : t("Recent activity only. File contents and credentials are never recorded."));
@@ -1810,19 +1855,20 @@ function connectorCards(next: AppState): HTMLElement[] {
     // connectors a single app-wide "ChatGPT called us" line cannot tell them apart.
     if (surface.state === 'live') {
       const { lastRequestAt, lastToolCallAt } = withEvidence(surface);
-      card.append(
-        lastRequestAt === null
-          ? pluginCreated(surface)
-            ? el('p', 'hint', () => t("Added in ChatGPT. Its tools have not run yet."))
-            : el('p', 'hint is-warn', () => t("Not created in ChatGPT yet — ChatGPT has never called this connector."))
-          : el(
-              'p',
-              'hint',
-              () => lastToolCallAt === null
-                ? t("ChatGPT connected {0} but has not run one of its tools yet.", [ago(lastRequestAt)])
-                : t("ChatGPT ran one of its tools {0}.", [ago(lastToolCallAt)])
-            )
-      );
+      if (lastRequestAt === null) {
+        if (pluginCreated(surface)) card.append(el('p', 'hint', () => t("Added in ChatGPT. Its tools have not run yet.")));
+        else card.append(el('p', 'hint is-warn', () => t("Not created in ChatGPT yet — ChatGPT has never called this connector.")));
+      } else {
+        card.append(
+          el(
+            'p',
+            'hint',
+            () => lastToolCallAt === null
+              ? t("ChatGPT connected {0} but has not run one of its tools yet.", [ago(lastRequestAt)])
+              : t("ChatGPT ran one of its tools {0}.", [ago(lastToolCallAt)])
+          )
+        );
+      }
     }
 
     // The tool list is reference, not a step: it stays on hand as the card title's tooltip.
@@ -1901,29 +1947,48 @@ function paintClock(): void {
 
   const handshake = $('bigHandshake');
   handshake.textContent = shortAgo(status.handshakeAt);
-  handshake.className = connected ? '' : status.state === 'offline' ? 'is-bad' : 'is-cold';
+  let handshakeTone = 'is-cold';
+  if (connected) handshakeTone = '';
+  else if (status.state === 'offline') handshakeTone = 'is-bad';
+  handshake.className = handshakeTone;
 
   const request = $('bigRequest');
   request.textContent = shortAgo(status.lastRequestAt);
   request.className = status.lastRequestAt === null ? 'is-cold' : '';
 
   const core = status.surfaces.find((surface) => surface.id === 'core');
-  ui($('connectionPopoverConnector'), 'textContent', () => disconnecting ? t('Disconnecting…') : running ? core?.lastRequestAt
-      ? t("Reached")
-      : connected
-        ? t("waiting")
-        : t(STATUS_TEXT[status.state]) : t("Not connected"));
-  ui($('connectionPopoverBrowser'), 'textContent', () => bridge.present
-    ? t("Connected")
-    : bridge.paired ? t("Paired · not active") : t("Not connected"));
+  ui($('connectionPopoverConnector'), 'textContent', () => {
+    if (disconnecting) return t('Disconnecting…');
+    if (!running) return t("Not connected");
+    if (core?.lastRequestAt) return t("Reached");
+    if (connected) return t("waiting");
+    return t(STATUS_TEXT[status.state]);
+  });
+  ui($('connectionPopoverBrowser'), 'textContent', () => {
+    if (bridge.present) return t("Connected");
+    if (bridge.paired) return t("Paired · not active");
+    return t("Not connected");
+  });
 
   const connectorRow = $('connectionPopoverConnector').parentElement!;
   const browserRow = $('connectionPopoverBrowser').parentElement!;
-  connectorRow.dataset.tone = connected ? 'ok' : disconnecting ? 'closing' : status.state === 'starting-server' || status.state === 'connecting-tunnel' ? 'wait' : 'bad';
-  browserRow.dataset.tone = bridge.present ? 'ok' : bridge.paired ? 'wait' : 'bad';
+  let connectorTone: string;
+  if (connected) connectorTone = 'ok';
+  else if (disconnecting) connectorTone = 'closing';
+  else if (status.state === 'starting-server' || status.state === 'connecting-tunnel') connectorTone = 'wait';
+  else connectorTone = 'bad';
+  connectorRow.dataset.tone = connectorTone;
+  let browserTone = 'bad';
+  if (bridge.present) browserTone = 'ok';
+  else if (bridge.paired) browserTone = 'wait';
+  browserRow.dataset.tone = browserTone;
   ui(connectorRow, 'title', () => core?.lastRequestAt ? t("Reached {0}", [ago(core.lastRequestAt)]) : $('connectionPopoverConnector').textContent ?? '');
   ui(browserRow, 'title', () => bridge.lastSeenAt ? t("Seen {0}", [ago(bridge.lastSeenAt)]) : $('connectionPopoverBrowser').textContent ?? '');
-  ui($('connectionPopoverTitle'), 'title', () => disconnecting ? t('Closing connection…') : status.handshakeAt === null ? t("no handshake yet") : t("verified {0}", [ago(status.handshakeAt)]));
+  ui($('connectionPopoverTitle'), 'title', () => {
+    if (disconnecting) return t('Closing connection…');
+    if (status.handshakeAt === null) return t("no handshake yet");
+    return t("verified {0}", [ago(status.handshakeAt)]);
+  });
 
   const triggerText = status.handshakeAt !== null && running
     ? `${t(STATUS_TEXT[status.state])} · ${t("verified {0}", [ago(status.handshakeAt)])}`
@@ -2245,19 +2310,17 @@ async function runChecks(): Promise<void> {
     ui($('checksSummary'), 'textContent', () => t(result.summary));
     $('checkList').replaceChildren(
       ...result.checks.map((check) => {
-        const li = el(
-          'li',
-          check.status === 'pass'
-            ? 'check is-ok'
-            : check.status === 'fail'
-              ? 'check is-bad'
-              : `check is-${check.status}`
-        );
-        const mark = el(
-          'span',
-          'check-mark',
-          check.status === 'pass' ? '✓' : check.status === 'fail' ? '!' : check.status === 'skipped' ? '–' : '…'
-        );
+        let itemClass: string;
+        if (check.status === 'pass') itemClass = 'check is-ok';
+        else if (check.status === 'fail') itemClass = 'check is-bad';
+        else itemClass = `check is-${check.status}`;
+        const li = el('li', itemClass);
+        let markText: string;
+        if (check.status === 'pass') markText = '✓';
+        else if (check.status === 'fail') markText = '!';
+        else if (check.status === 'skipped') markText = '–';
+        else markText = '…';
+        const mark = el('span', 'check-mark', markText);
         const body = el('div');
         body.append(el('strong', '', () => t(check.name)), el('p', '', () => t(check.detail)));
         li.append(mark, body);

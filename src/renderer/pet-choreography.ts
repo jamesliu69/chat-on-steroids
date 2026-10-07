@@ -22,7 +22,10 @@ export function carriedText(animation: PetAnimation, elapsed: number, textWidth:
   let index = 0;
   while (index < clip.frames.length - 1 && time >= clip.ms[index]!) time -= clip.ms[index++]!;
   const frame = clip.frames[index]!;
-  const previous = index ? clip.frames[index - 1]! : animation === 'throw' ? 79 : animation === 'carry' ? 71 : frame;
+  let previous = frame;
+  if (index) previous = clip.frames[index - 1]!;
+  else if (animation === 'throw') previous = 79;
+  else if (animation === 'carry') previous = 71;
   const from = anchor(authored, previous, textWidth), to = anchor(authored, frame, textWidth);
   const t = Math.min(1, time / Math.min(70, clip.ms[index]!));
   return { x: lerp(from.x, to.x, t), y: lerp(from.y, to.y, t) };

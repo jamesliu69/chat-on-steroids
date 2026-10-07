@@ -39,18 +39,26 @@ export function paintContextMeter(session: SessionSummary | null, config: Config
   if (compact) {
     ui(compact, 'textContent', () => values || pro ? counts() : `${percent}%`);
   }
+  const compactionLine = (): string => {
+    if (pro) return t('Auto-compaction off for Pro');
+    if (config.compaction.auto) return t('Auto-compaction at {0} tokens', [new Intl.NumberFormat(currentLanguage()).format(config.compaction.autoTokens)]);
+    return t('Auto-compaction off');
+  };
   const description = () => [t('Session context · estimated'), pro
     ? t('{0} tokens used', [tokens()])
     : t('{0} / {1} tokens · {2}% of configured limit', [tokens(), new Intl.NumberFormat(currentLanguage()).format(limit), percent]),
-    pro ? t('Auto-compaction off for Pro') : config.compaction.auto
-      ? t('Auto-compaction at {0} tokens', [new Intl.NumberFormat(currentLanguage()).format(config.compaction.autoTokens)])
-      : t('Auto-compaction off')].join('\n');
+    compactionLine()].join('\n');
   // One fact per row: the estimate, the limit from Settings, the share, and when compaction starts.
   ui(document.getElementById('contextTokens')!, 'textContent', () => short(used));
   const limitRow = document.getElementById('contextLimit');
   if (limitRow) ui(limitRow, 'textContent', () => pro ? '—' : short(limit));
   ui(document.getElementById('contextPercent')!, 'textContent', () => pro ? '—' : `${percent}%`);
-  ui(document.getElementById('contextThreshold')!, 'textContent', () => pro ? t('Auto-compaction off for Pro') : config.compaction.auto ? short(config.compaction.autoTokens) : t('Off'));
+  const thresholdText = (): string => {
+    if (pro) return t('Auto-compaction off for Pro');
+    if (config.compaction.auto) return short(config.compaction.autoTokens);
+    return t('Off');
+  };
+  ui(document.getElementById('contextThreshold')!, 'textContent', thresholdText);
   const progress = panel.querySelector<HTMLElement>('.context-progress')!;
   progress.hidden = pro;
   progress.style.setProperty('--context-used', `${percent}%`);

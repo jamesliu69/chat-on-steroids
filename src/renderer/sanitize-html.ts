@@ -29,7 +29,10 @@ export function sanitizeHtmlTree(parent: ParentNode, options: HtmlSanitizerOptio
     const explicitDir = sourceDir === 'ltr' || sourceDir === 'rtl' || sourceDir === 'auto' ? sourceDir : null;
     const automaticDir = options.preserveDirection === true && !directionOwned && AUTO_DIRECTION_TAGS.has(tag);
     const codeDir = options.preserveDirection === true && CODE_DIRECTION_TAGS.has(tag);
-    const resolvedDir = options.allowedTags.has(tag) ? explicitDir ?? (codeDir ? 'ltr' : automaticDir ? 'auto' : null) : null;
+    let fallbackDir: string | null = null;
+    if (codeDir) fallbackDir = 'ltr';
+    else if (automaticDir) fallbackDir = 'auto';
+    const resolvedDir = options.allowedTags.has(tag) ? explicitDir ?? fallbackDir : null;
 
     sanitizeHtmlTree(element, options, directionOwned || !!resolvedDir);
     if (!options.allowedTags.has(tag)) {

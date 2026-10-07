@@ -605,11 +605,10 @@ function sessionRow(summary: SessionSummary): HTMLElement {
     // exact Trust wins before inherited lineage, then each committed predecessor is considered
     // nearest-first with Block ahead of Trust. An older policy hidden behind a nearer decision is
     // not the current effective state and must not paint this row inconsistently with the kernel.
-    let effectivePolicy: 'blocked' | 'trusted' | null = blockedChats.has(summary.conversationId)
-      ? 'blocked'
-      : strictAllowlist && trustedChats.has(summary.conversationId)
-        ? 'trusted'
-        : null;
+    let effectivePolicy: 'blocked' | 'trusted' | null;
+    if (blockedChats.has(summary.conversationId)) effectivePolicy = 'blocked';
+    else if (strictAllowlist && trustedChats.has(summary.conversationId)) effectivePolicy = 'trusted';
+    else effectivePolicy = null;
     if (strictAllowlist && effectivePolicy === null) {
       for (const conversationId of policyLineage.slice(1)) {
         if (blockedChats.has(conversationId)) { effectivePolicy = 'blocked'; break; }
@@ -1194,8 +1193,16 @@ function paintGoalProgress(): void {
   if (phase === 'retrying') { text = ''; error = undefined; }
   labels.retrying = t("Provider busy · retry {0}{1}", [progress?.attempt ?? '', progress?.retryAt ? t(' at {0}', [new Date(progress.retryAt).toLocaleTimeString(currentLanguage())]) : '']);
   const mode = $<HTMLSelectElement>('chatAutomation').value === 'loop' ? t('Loop') : t('Goal');
-  labels.settling = `${mode} · ${wait?.reason === 'native-busy' ? t('ChatGPT resumed work · waiting before retry') : wait?.reason === 'silence' ? t('Waiting before recovery reload') : wait?.reason === 'quiet' ? t('Waiting for tool inactivity') :
-    wait?.reason === 'workers' ? t('Waiting for this chat’s sub-agents') : wait?.reason === 'tools' ? t('Waiting for running tools') : wait?.reason === 'listening' ? t('Waiting for activity after recovery') : wait?.reason === 'closed' ? t('Paused until this chat is open in the browser') : t('Answer settling')}`;
+  let settlingSuffix: string;
+  if (wait?.reason === 'native-busy') settlingSuffix = t('ChatGPT resumed work · waiting before retry');
+  else if (wait?.reason === 'silence') settlingSuffix = t('Waiting before recovery reload');
+  else if (wait?.reason === 'quiet') settlingSuffix = t('Waiting for tool inactivity');
+  else if (wait?.reason === 'workers') settlingSuffix = t('Waiting for this chat’s sub-agents');
+  else if (wait?.reason === 'tools') settlingSuffix = t('Waiting for running tools');
+  else if (wait?.reason === 'listening') settlingSuffix = t('Waiting for activity after recovery');
+  else if (wait?.reason === 'closed') settlingSuffix = t('Paused until this chat is open in the browser');
+  else settlingSuffix = t('Answer settling');
+  labels.settling = `${mode} · ${settlingSuffix}`;
   // The dock already describes this same silence/listening deadline. Keep the
   // Loop/Goal task controls, but do not present its shared wait as another action.
   const sharedRecoveryWait = phase === 'settling' && wait?.until !== undefined &&
@@ -1246,7 +1253,12 @@ function paintDeliveryControls(): void {
   generate.hidden = !working || !controlledFinishWaiting || queued || controlledStopPending || !!finishGoalDraftView;
   generate.disabled = generate.dataset.busy === `${selectedId}:${controlledTurnId}`;
   const sendOption = $<HTMLSelectElement>('sendMode').querySelector('option[value="auto"]');
-  const immediateLabel = () => nativeFiles && working ? t("After this turn") : canSendDirectly ? t("Send directly") : canInject ? t("Inject now") : t("Send");
+  const immediateLabel = (): string => {
+    if (nativeFiles && working) return t("After this turn");
+    if (canSendDirectly) return t("Send directly");
+    if (canInject) return t("Inject now");
+    return t("Send");
+  };
   if (sendOption) ui(sendOption, 'textContent', immediateLabel);
   ui($('immediateDeliveryLabel'), 'textContent', immediateLabel);
   const immediateAction = $('sendOptions').querySelector<HTMLElement>('[data-delivery="auto"]');
@@ -1266,13 +1278,22 @@ function paintDeliveryControls(): void {
   const planMode = taskPlans.has(draftKey()), preparedPlan = currentPreparedPlan();
   send.disabled = !!preparedPlan && (preparedPlan.sending || preparedPlan.stages.some(stage => !stage.trim()));
   send.dataset.action = stop ? 'stop' : 'send';
-  ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : t("Send message"));
+  ui(send, 'aria-label', () => {
+    if (!stop) return t("Send message");
+    if (controlledStopPending) return t("Stop requested");
+    return t("Stop turn");
+  });
   if (stop && !working && pending) ui(send, 'aria-label', () => t("Cancel delivery"));
   const planAction = selectedId ? t("Queue plan at Session finish") : t("Start full plan");
   if (preparedPlan && !stop) send.setAttribute('aria-label', planAction);
   else if (planMode && !stop) ui(send, 'aria-label', () => t("Generate plan"));
   send.classList.toggle('is-plan-ready', !!preparedPlan && !stop);
-  ui(send, 'title', () => stop && !working && pending ? t("Cancel delivery") : preparedPlan && !stop ? planAction : planMode && !stop ? t("Click to generate plan") : '');
+  ui(send, 'title', () => {
+    if (stop && !working && pending) return t("Cancel delivery");
+    if (preparedPlan && !stop) return planAction;
+    if (planMode && !stop) return t("Click to generate plan");
+    return '';
+  });
   send.classList.toggle('is-stop', stop);
   for (const button of $('sendOptions').querySelectorAll<HTMLElement>('[data-delivery]')) {
     button.setAttribute('aria-checked', String(button.dataset.delivery === (nativeFiles && working && $<HTMLSelectElement>('sendMode').value !== 'tool' ? 'after-turn' : $<HTMLSelectElement>('sendMode').value)));
@@ -1297,7 +1318,13 @@ function paintActiveGoal(): void {
   const objective = $<HTMLTextAreaElement>('sessionObjective').value.trim();
   // A run whose helper decided the goal is met has ended; the objective stays for a later message.
   const reached = mode === 'goal' && goalReachedShown();
-  const label = el('span', 'queue-label', () => `${mode === 'loop' ? t("Loop") : reached ? t("Goal reached") : t("Pursuing goal")}${objective ? ' · ' + objective : ''}`);
+  const label = el('span', 'queue-label', () => {
+    let automationLabel: string;
+    if (mode === 'loop') automationLabel = t("Loop");
+    else if (reached) automationLabel = t("Goal reached");
+    else automationLabel = t("Pursuing goal");
+    return `${automationLabel}${objective ? ' · ' + objective : ''}`;
+  });
   label.title = objective;
   row.replaceChildren(icon(reached ? 'i-check' : 'i-pulse'), label,
     dockAction(() => t("Pause automation"), 'i-power', () => { const select = $<HTMLSelectElement>('chatAutomation'); select.value = 'off'; select.dispatchEvent(new Event('change')); }),
@@ -1354,7 +1381,17 @@ function paintTaskPlan(): void {
     preview.append(error, el('div', 'muted', () => t("Send again to retry, or cancel the plan.")));
   } else if (plan?.requestId) {
     const progress = plan.progress;
-    const label = () => progress ? progress.phase === 'retrying' ? t("Provider busy · retry {0}{1}", [progress.attempt ?? '', progress.retryAt ? t(' at {0}', [new Date(progress.retryAt).toLocaleTimeString(currentLanguage())]) : '']) : progress.phase === 'cancelled' ? t("Plan cancelled") : progress.phase === 'preparing' ? t("Preparing plan…") : progress.phase === 'ready' ? t("Plan ready") : progress.phase === 'failed' ? t("Plan failed") : t("Writing plan…") : t("Creating plan…");
+    const label = (): string => {
+      if (!progress) return t("Creating plan…");
+      if (progress.phase === 'retrying') {
+        return t("Provider busy · retry {0}{1}", [progress.attempt ?? '', progress.retryAt ? t(' at {0}', [new Date(progress.retryAt).toLocaleTimeString(currentLanguage())]) : '']);
+      }
+      if (progress.phase === 'cancelled') return t("Plan cancelled");
+      if (progress.phase === 'preparing') return t("Preparing plan…");
+      if (progress.phase === 'ready') return t("Plan ready");
+      if (progress.phase === 'failed') return t("Plan failed");
+      return t("Writing plan…");
+    };
     preview.append(el('span', 'muted', label));
     if (progress?.text || progress?.error) preview.append(el('pre', 'task-progress-text', progress.error ? () => localizedGoalError(progress.error!) : progress.text));
   }
@@ -1426,7 +1463,11 @@ function paintPreparedPlan(): void {
       if (plan.stages.length) { paintPreparedPlan(); paintDeliveryControls(); } else cancelTaskPlan();
     });
     edit.disabled = remove.disabled = field.disabled = plan.sending;
-    ui(heading, 'title', () => selectedId ? t("Queued at Session finish; edit or delete this checkpoint independently.") : index === 0 ? t("Send includes your complete request and the full plan. Later stages are queued as verification checkpoints.") : t("Included in the first message, then queued as a checkpoint at Session finish or after a completed answer when enabled."));
+    ui(heading, 'title', () => {
+      if (selectedId) return t("Queued at Session finish; edit or delete this checkpoint independently.");
+      if (index === 0) return t("Send includes your complete request and the full plan. Later stages are queued as verification checkpoints.");
+      return t("Included in the first message, then queued as a checkpoint at Session finish or after a completed answer when enabled.");
+    });
     heading.append(label, text, edit, remove); row.append(heading, field, error); return row;
   }));
 }
@@ -1485,7 +1526,11 @@ function paintTaskActions(): void {
   save.hidden = off;
   const saved = objective.dataset.saved === objective.value && !!objective.value.trim();
   save.disabled = objective.disabled || !objective.value.trim() || save.dataset.busy === 'true' || saved;
-  ui(save.querySelector('span')!, 'textContent', () => save.dataset.busy === 'true' ? t("Saving…") : saved ? t("Saved") : t("Save task"));
+  ui(save.querySelector('span')!, 'textContent', () => {
+    if (save.dataset.busy === 'true') return t("Saving…");
+    if (saved) return t("Saved");
+    return t("Save task");
+  });
   for (const id of ['createPlan']) {
     const button = $<HTMLButtonElement>(id);
     const plan = taskPlans.get(draftKey()), planMode = !!plan;
@@ -1512,9 +1557,16 @@ function paintAutomationSwitch(): void {
   paintActiveGoal();
   const select = $<HTMLSelectElement>('chatAutomation');
   const mode = select.value;
-  $('composerModeIcon').className = `ico ph ph-${mode === 'loop' ? 'arrows-clockwise' : mode === 'goal' ? 'target' : 'chat-circle'}`;
+  let modeIcon = 'chat-circle';
+  if (mode === 'loop') modeIcon = 'arrows-clockwise';
+  else if (mode === 'goal') modeIcon = 'target';
+  $('composerModeIcon').className = `ico ph ph-${modeIcon}`;
   $('composerSettings').dataset.mode = mode;
-  ui($('composerModeLabel'), 'textContent', () => mode === 'off' ? t('Normal') : mode === 'goal' ? t('Goal') : t('Loop'));
+  ui($('composerModeLabel'), 'textContent', () => {
+    if (mode === 'off') return t('Normal');
+    if (mode === 'goal') return t('Goal');
+    return t('Loop');
+  });
   for (const button of $('automationSwitch').querySelectorAll<HTMLButtonElement>('[data-mode]')) {
     button.setAttribute('aria-checked', String(button.dataset.mode === select.value));
     button.disabled = select.disabled;
@@ -1600,7 +1652,12 @@ async function refreshSessionControls(): Promise<void> {
   paintAutomationSwitch();
   $<HTMLButtonElement>('compactSession').disabled = !!controls.blocked || !!controls.job?.busy;
   $('cancelCompaction').hidden = !controls.job?.busy;
-  ui($('sessionControlStatus'), 'textContent', () => controls.blocked === 'worker' ? t("This sub-agent is managed by its prime.") : controls.blocked === 'blocked' ? t("This chat is blocked.") : controls.job?.busy ? t("Compaction is running in ChatGPT.") : '');
+  ui($('sessionControlStatus'), 'textContent', () => {
+    if (controls.blocked === 'worker') return t("This sub-agent is managed by its prime.");
+    if (controls.blocked === 'blocked') return t("This chat is blocked.");
+    if (controls.job?.busy) return t("Compaction is running in ChatGPT.");
+    return '';
+  });
 }
 
 async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: number): Promise<boolean> {
@@ -1630,8 +1687,14 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
   if (opening) { historyBefore = null; historyStart = null; }
   // Live deltas must not evict a historical page while the user is reading it.
   const incremental = !prepend && newerFrom === undefined && historyBefore === null && detailFor === wanted && detailCursor !== null;
+  let page: { from?: number; before?: number; after?: number; limit?: number };
+  if (newerFrom !== undefined) page = { after: newerFrom, limit: TIMELINE_BATCH_SIZE };
+  else if (incremental) page = { from: detailCursor!, limit: TIMELINE_BATCH_SIZE };
+  else if (olderBefore !== undefined) page = { before: olderBefore, limit: TIMELINE_BATCH_SIZE };
+  else if (historyBefore !== null) page = { before: historyBefore, limit: TIMELINE_BATCH_SIZE };
+  else page = { limit: TIMELINE_BATCH_SIZE };
   const detail = await run(
-    api.getSession(wanted, newerFrom === undefined ? incremental ? { from: detailCursor!, limit: TIMELINE_BATCH_SIZE } : { ...(olderBefore === undefined ? historyBefore === null ? {} : { before: historyBefore } : { before: olderBefore }), limit: TIMELINE_BATCH_SIZE } : { after: newerFrom, limit: TIMELINE_BATCH_SIZE })
+    api.getSession(wanted, page)
   );
   if (generation !== detailLoadGeneration || selection !== selectionGeneration || selectedId !== wanted) return false;
   if (!detail) {
@@ -1899,7 +1962,9 @@ function citationPills(source: string, capture?: StoredText): Map<number, Citati
   const pillOf = (element: Element): number => captured.indexOf(element);
   const capturedPrefixes = prosePrefixes(template.content, element => {
     const at = pillOf(element);
-    return at >= 0 ? `pill:${at}` : element.hasAttribute('data-content-reference-start') ? 'native' : null;
+    if (at >= 0) return `pill:${at}`;
+    if (element.hasAttribute('data-content-reference-start')) return 'native';
+    return null;
   });
   const probeAttribute = `data-cos-probe-${Math.random().toString(36).slice(2)}`;
   let probes = 0;
@@ -2465,8 +2530,10 @@ function toolBody(event: Extract<SessionEvent, { kind: 'tool_call' }>, context?:
   if (summary.metric) head.append(toolMetric(summary.metric));
   const project = context ? null : selectedLocalProject();
   const sessionId = context ? null : selectedId;
-  const reviewIndices = call.outcome === 'ok' ? (call.changes ?? []).flatMap((change, index) =>
-    change.reviewAssetId ? [index] : []).slice(0, 32) : [];
+  const reviewIndices = call.outcome === 'ok' ? (call.changes ?? []).flatMap((change, index) => {
+    if (!change.reviewAssetId) return [];
+    return [index];
+  }).slice(0, 32) : [];
   const unavailable = call.outcome === 'ok' ? (call.changes ?? []).filter(change => change.reviewUnavailable) : [];
   if (project && sessionId && !reviewIndices.length && unavailable.length) {
     // Say why there is nothing to review instead of leaving the row without an action.
@@ -2535,10 +2602,10 @@ async function fillTimelineHistory(): Promise<void> {
       const pane = $('chatBody'), timeline = $('timelineContent');
       const buffer = Math.min(480, Math.max(160, pane.clientHeight / 2));
       const reserve = Number.parseFloat(timeline.style.getPropertyValue('--timeline-scroll-reserve')) || 0;
-      const nearEdge = demand.opening
-        ? timeline.getBoundingClientRect().height - reserve < pane.clientHeight + buffer
-        : demand.direction < 0 ? pane.scrollTop <= buffer
-          : pane.scrollHeight - reserve - pane.clientHeight - pane.scrollTop <= buffer;
+      let nearEdge: boolean;
+      if (demand.opening) nearEdge = timeline.getBoundingClientRect().height - reserve < pane.clientHeight + buffer;
+      else if (demand.direction < 0) nearEdge = pane.scrollTop <= buffer;
+      else nearEdge = pane.scrollHeight - reserve - pane.clientHeight - pane.scrollTop <= buffer;
       if (pane.clientHeight <= 0 || !nearEdge || (demand.direction > 0 && historyBefore === null)) {
         historyDemand = null;
         break;
@@ -3000,7 +3067,11 @@ function eventRow(event: SessionEvent): HTMLElement {
 function paintAgentFilter(): void {
   const box = $('chatAgentFilter');
   if (!deps.state()?.config.ui.developerMode) { box.hidden = true; agentFilter = null; return; }
-  const named = [...new Set(events.flatMap((event) => (event.agent ? [event.agent] : [])))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const named = [...new Set(events.flatMap((event) => (event.agent ? [event.agent] : [])))].sort((a, b) => {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
   const anyUnattributed = events.some((event) => !event.agent);
   // A filter belongs to the session it was chosen in. Carrying it across a selection
   // change showed the next session's timeline as empty with no chip lit to explain why —
@@ -3239,9 +3310,10 @@ function compactionState(block: CompactionBlock): { text: string; tone: Compacti
     return { text: t("Summary saved{0} — opening the new chat…", [chars]), tone: 'wait' };
   }
   if (block.end && block.end.outcome !== 'completed') {
-    const status = block.end.outcome === 'stopped' ? t("Summary generation stopped")
-      : block.end.outcome === 'failed' ? t("Summary generation failed")
-      : t("Summary generation ended without a completed handoff");
+    let status: string;
+    if (block.end.outcome === 'stopped') status = t("Summary generation stopped");
+    else if (block.end.outcome === 'failed') status = t("Summary generation failed");
+    else status = t("Summary generation ended without a completed handoff");
     return { text: block.end.detail ? t("{0} — {1}", [status, block.end.detail]) : status, tone: 'bad' };
   }
   if (block.brief?.final) {
@@ -4132,8 +4204,12 @@ function paintTurnNow(): void {
   }
   const seconds = now?.since === undefined ? 0 : Math.max(0, Math.floor((Date.now() - now.since) / 1000));
   // Short steps keep no clock; the one worth watching is the one that lasts.
-  turnNowTime.textContent = seconds >= 3
-    ? `${seconds >= 60 ? (t('{0}m', [Math.floor(seconds / 60)]) + " ") : ''}${seconds % 60}s` : '';
+  let clock = '';
+  if (seconds >= 3) {
+    const minutes = seconds >= 60 ? `${t('{0}m', [Math.floor(seconds / 60)])} ` : '';
+    clock = `${minutes}${seconds % 60}s`;
+  }
+  turnNowTime.textContent = clock;
   turnNow.hidden = !text;
 }
 
@@ -4360,9 +4436,11 @@ function stateLine(): { text: string; tone: '' | 'is-live' | 'is-bad'; working?:
     const startedAt = summary.finishTurn?.turnId === turnId ? summary.finishTurn.startedAt
       : events.find(event => event.kind === 'turn_start' && event.turnId === turnId)?.time;
     const endedAt = events.find(event => event.kind === 'turn_end' && event.turnId === turnId)?.time;
-    if (startedAt === undefined) return active
-      ? { text: deps.state()?.config.ui.playfulStatus === true ? `${turnWorkWord(turnId, 0)}…` : t("Working…"), tone: '', working: true }
-      : blind ?? { text: '', tone: '' };
+    if (startedAt === undefined) {
+      if (!active) return blind ?? { text: '', tone: '' };
+      const workingText = deps.state()?.config.ui.playfulStatus === true ? `${turnWorkWord(turnId, 0)}…` : t("Working…");
+      return { text: workingText, tone: '', working: true };
+    }
     if (!active && endedAt === undefined) return blind ?? { text: '', tone: '' };
     if (blind) return blind;
     const seconds = Math.max(0, Math.floor(((active ? Date.now() : endedAt!) - startedAt) / 1000));
@@ -4397,9 +4475,12 @@ function stateLine(): { text: string; tone: '' | 'is-live' | 'is-bad'; working?:
   if (count('finished') > 0) parts.push(t("{0} finished", [count('finished')]));
   if (count('failed') > 0) parts.push(t("{0} failed", [count('failed')]));
   const live = count('invited') + count('active') + count('detached') + count('waking');
+  let tone: '' | 'is-bad' | 'is-live' = '';
+  if (count('failed') > 0) tone = 'is-bad';
+  else if (live > 0) tone = 'is-live';
   return {
     text: `${workers.length === 1 ? t("1 worker") : t("{0} workers", [workers.length])} · ${parts.join(' · ')}`,
-    tone: count('failed') > 0 ? 'is-bad' : live > 0 ? 'is-live' : ''
+    tone
   };
 }
 
@@ -4764,17 +4845,21 @@ function applyGoal(state: AppState, previous?: Config): void {
   const goalKey = $<HTMLInputElement>('goalKey');
   ui(goalKey, 'placeholder', () => state.hasGoalKey ? t("•••••••• stored") : 'sk-or-v1-…');
   goalKey.disabled = !secureStorageAvailable;
-  ui($('goalKeyState'), 'textContent', () => secureStorageAvailable ? state.hasGoalKey
-      ? t("A key is stored with secure OS credential storage. Type a new one to replace it.")
-      : t("Stored with secure OS credential storage. It never leaves this app, and the browser is only ever handed the reply.") : state.secureStorage?.detail ?? t("Secure credential storage is unavailable."));
+  ui($('goalKeyState'), 'textContent', () => {
+    if (!secureStorageAvailable) return state.secureStorage?.detail ?? t("Secure credential storage is unavailable.");
+    if (state.hasGoalKey) return t("A key is stored with secure OS credential storage. Type a new one to replace it.");
+    return t("Stored with secure OS credential storage. It never leaves this app, and the browser is only ever handed the reply.");
+  });
   $('goalKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('goalKeyRemove').disabled = !state.hasGoalKey || !secureStorageAvailable;
   const goalCustomKey = $<HTMLInputElement>('goalCustomKey');
   ui(goalCustomKey, 'placeholder', () => state.hasCustomProviderKey ? t("•••••••• stored") : t("leave empty for a keyless local server"));
   goalCustomKey.disabled = !secureStorageAvailable;
-  ui($('goalCustomKeyState'), 'textContent', () => secureStorageAvailable ? state.hasCustomProviderKey
-      ? t("A key is stored with secure OS credential storage. Type a new one to replace it.")
-      : t("Optional. Stored with secure OS credential storage and sent only by the app to your configured API endpoint. The browser receives only the reply.") : state.secureStorage?.detail ?? t("Secure credential storage is unavailable."));
+  ui($('goalCustomKeyState'), 'textContent', () => {
+    if (!secureStorageAvailable) return state.secureStorage?.detail ?? t("Secure credential storage is unavailable.");
+    if (state.hasCustomProviderKey) return t("A key is stored with secure OS credential storage. Type a new one to replace it.");
+    return t("Optional. Stored with secure OS credential storage and sent only by the app to your configured API endpoint. The browser receives only the reply.");
+  });
   $('goalCustomKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('goalCustomKeyRemove').disabled = !state.hasCustomProviderKey || !secureStorageAvailable;
   paintGoalReasoning(reasoning);
@@ -5032,13 +5117,24 @@ export function chatApply(state: AppState, previous?: Config): void {
   const browserRequired = browserExtensionRequired(config);
   $<HTMLButtonElement>('bridgeUnpair').disabled = !bridge.paired;
   const secureStorageAvailable = state.secureStorage?.available ?? true;
-  ui($('bridgeState'), 'textContent', () => browserRequired ? secureStorageAvailable ? !bridge.running && bridge.error
-      ? t("Browser bridge could not start: {0}", [bridge.error])
-    : bridge.running ? bridge.present
-        ? t("Connected. Listening on 127.0.0.1:{0} · last message {1}.", [bridge.port ?? '?', ago(bridge.lastSeenAt)])
-        : bridge.paired
-          ? t("Authorized, but the browser extension is not currently connected. {0}", [bridge.lastSeenAt === null ? t("It has not checked in since this app started.") : t("Last seen {0}.", [ago(bridge.lastSeenAt)])])
-          : t("Listening on 127.0.0.1:{0} · no browser is authorized or connected yet.", [bridge.port ?? '?']) : t("The local bridge is off even though recording or multi-agent mode needs it.") : state.secureStorage?.detail ?? t("Secure credential storage is unavailable, so the extension cannot pair safely.") : t("Browser-backed features are off. The extension is not needed right now."));
+  ui($('bridgeState'), 'textContent', () => {
+    if (!browserRequired) return t("Browser-backed features are off. The extension is not needed right now.");
+    if (!secureStorageAvailable) {
+      return state.secureStorage?.detail ?? t("Secure credential storage is unavailable, so the extension cannot pair safely.");
+    }
+    if (!bridge.running && bridge.error) return t("Browser bridge could not start: {0}", [bridge.error]);
+    if (!bridge.running) return t("The local bridge is off even though recording or multi-agent mode needs it.");
+    if (bridge.present) {
+      return t("Connected. Listening on 127.0.0.1:{0} · last message {1}.", [bridge.port ?? '?', ago(bridge.lastSeenAt)]);
+    }
+    if (bridge.paired) {
+      const lastSeen = bridge.lastSeenAt === null
+        ? t("It has not checked in since this app started.")
+        : t("Last seen {0}.", [ago(bridge.lastSeenAt)]);
+      return t("Authorized, but the browser extension is not currently connected. {0}", [lastSeen]);
+    }
+    return t("Listening on 127.0.0.1:{0} · no browser is authorized or connected yet.", [bridge.port ?? '?']);
+  });
   $('bridgeState').classList.toggle('is-warn', browserRequired && (!bridge.present || !secureStorageAvailable));
   void showExtensionPath();
 
@@ -5095,7 +5191,16 @@ function inputMessageRow(entry: InputEntry, notice: boolean): HTMLElement {
   if (!visibleInputIds.has(entry.id)) row.classList.add('is-entering');
   visibleInputIds.add(entry.id);
   if (visibleInputIds.size > 100) visibleInputIds.delete(visibleInputIds.values().next().value!);
-  const status = () => entry.error ? t(entry.error) : (entry.state === 'failed' ? t("Delivery not confirmed") : entry.state === 'decision' ? t("Preparing follow-up") : entry.state === 'browser' ? t("Delivery confirmation pending") : entry.state === 'tool' ? t("Sent to the active turn · awaiting receipt") : entry.dueAt > Date.now() ? t("Scheduled {0}", [new Date(entry.dueAt).toLocaleString(currentLanguage())]) : entry.delivery === 'tool' ? t("Waiting for the next tool call") : t("Queued"));
+  const status = (): string => {
+    if (entry.error) return t(entry.error);
+    if (entry.state === 'failed') return t("Delivery not confirmed");
+    if (entry.state === 'decision') return t("Preparing follow-up");
+    if (entry.state === 'browser') return t("Delivery confirmation pending");
+    if (entry.state === 'tool') return t("Sent to the active turn · awaiting receipt");
+    if (entry.dueAt > Date.now()) return t("Scheduled {0}", [new Date(entry.dueAt).toLocaleString(currentLanguage())]);
+    if (entry.delivery === 'tool') return t("Waiting for the next tool call");
+    return t("Queued");
+  };
   const files = el('div', 'message-attachments');
   if (entry.attachments?.length) files.append(...entry.attachments.map(file => attachmentCard(file)));
   for (const image of entry.images ?? []) { const preview = document.createElement('img'); preview.src = image.dataUrl; preview.alt = image.name; files.append(preview); }
@@ -5163,7 +5268,10 @@ function inputMessageRow(entry: InputEntry, notice: boolean): HTMLElement {
 /** Local admission moves the draft; a native receipt alone may mark it sent. */
 async function adoptAcceptedOpening(entry: InputEntry): Promise<boolean> {
   const pending = pendingNewInput;
-  const id = entry.opening ? entry.sessionId : entry.state === 'sent' ? entry.deliveredSessionId : null;
+  let id: string | null;
+  if (entry.opening) id = entry.sessionId;
+  else if (entry.state === 'sent') id = entry.deliveredSessionId ?? null;
+  else id = null;
   if (!id || !pending || pending.id !== entry.id || pending.generation !== selectionGeneration || !newChatSelected || selectedId !== null) return false;
   let summary = sessions.find(row => row.id === id);
   if (!summary) summary = (await run(api.getSession(id, { limit: 1 })))?.summary ?? undefined;
@@ -5259,9 +5367,17 @@ async function refreshInputQueue(): Promise<void> {
     if (projectedIds.has(entry.id)) ui(card, 'aria-label', () => t("Plan stage · waiting for the first message to be sent"));
     if (entry.recovery) ui(card, 'aria-label', () => t('Automatic Continue'));
     const label = el('span', 'queue-label', entry.recovery ? () => `${t('Automatic Continue')} · ${entry.text}` : entry.text);
-    ui(label, 'title', () => `${entry.recovery
-      ? t('Resumes without a final answer. If ChatGPT is still generating, the silent turn is stopped before Continue is sent.')
-      : entry.state === 'queued' ? (entry.mode === 'after-turn' ? t("After the next completed answer") : t("At Session finish or after a completed answer")) : t("Awaiting receipt")} · ${entry.text}`);
+    ui(label, 'title', () => {
+      let prefix: string;
+      if (entry.recovery) {
+        prefix = t('Resumes without a final answer. If ChatGPT is still generating, the silent turn is stopped before Continue is sent.');
+      } else if (entry.state === 'queued') {
+        prefix = entry.mode === 'after-turn' ? t("After the next completed answer") : t("At Session finish or after a completed answer");
+      } else {
+        prefix = t("Awaiting receipt");
+      }
+      return `${prefix} · ${entry.text}`;
+    });
     label.dir = 'auto';
     card.append(icon(entry.recovery ? 'i-pulse' : 'i-clock'), label);
     if (entry.state === 'queued') {
@@ -5477,7 +5593,10 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   const sessionId = selectedId;
   const generation = selectionGeneration;
   const chosenMode = delivery ?? $<HTMLSelectElement>('sendMode').value;
-  const mode = chosenMode === 'tool' ? 'auto' : chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish ? 'finish' : chosenMode;
+  let mode: string;
+  if (chosenMode === 'tool') mode = 'auto';
+  else if (chosenMode === 'after-turn' && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish) mode = 'finish';
+  else mode = chosenMode;
   const dueAt = Date.now();
   const id = crypto.randomUUID();
   const authoredDraft = authoredComposerText();
@@ -5485,9 +5604,16 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
     ...(chosenMode === 'tool' && !plan ? { delivery: 'tool' as const } : {}),
     ...(mode === 'auto' && !plan && selectedId && controlledSessionId === selectedId && controlledSelection === generation &&
       controlledCanInject && images.some(file => 'id' in file) && injectableAttachments(images) ? { attachmentDelivery: 'tool' as const } : {}) };
-  const objective = plan ? planObjective : mode === 'finish' ? undefined : $<HTMLTextAreaElement>('sessionObjective').value.trim() || undefined;
+  let objective: string | undefined;
+  if (plan) objective = planObjective;
+  else if (mode === 'finish') objective = undefined;
+  else objective = $<HTMLTextAreaElement>('sessionObjective').value.trim() || undefined;
   const authoredSource = plan ? 'objective' as const : 'text' as const;
-  startingInputs.set(id, { id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, authoredSource, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn',
+  let outboxMode: 'finish' | 'auto' | 'after-turn';
+  if (mode === 'finish') outboxMode = 'finish';
+  else if (mode === 'auto') outboxMode = 'auto';
+  else outboxMode = 'after-turn';
+  startingInputs.set(id, { id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, authoredSource, mode: outboxMode,
     dueAt, ...modelSettings, state: 'queued', owner: null, createdAt: dueAt, conversationId: null });
   replaceComposerDraft();
   input.value = ''; inputDrafts.delete(key);
@@ -5499,7 +5625,7 @@ async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?
   void refreshInputQueue();
   paintDeliveryControls();
   try {
-    const result = await run(api.sendInput({ id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, authoredSource, automation: mode === 'finish' ? undefined : $<HTMLSelectElement>('chatAutomation').value as InputAutomation, loopAfterTurn: openingLoopDelivery(), mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn', dueAt, ...modelSettings }));
+    const result = await run(api.sendInput({ id, sessionId, projectId, text, ...attachmentPayload, stages: plan?.slice(1), objective, authoredSource, automation: mode === 'finish' ? undefined : $<HTMLSelectElement>('chatAutomation').value as InputAutomation, loopAfterTurn: openingLoopDelivery(), mode: outboxMode, dueAt, ...modelSettings }));
     if (cancelledStarts.has(id)) return;
     if (!result) {
       // A disk failure after outbox commit still owns this input. Keep its exact
@@ -6149,7 +6275,9 @@ export function initChat(next: Deps): void {
   historyPane.addEventListener('pointerdown', () => { pointerScrollTop = historyPane.scrollTop; });
   window.addEventListener('pointerup', () => { pointerScrollTop = null; });
   historyPane.addEventListener('keydown', event => {
-    pendingScrollDirection = ['ArrowUp', 'PageUp', 'Home'].includes(event.key) ? -1 : ['ArrowDown', 'PageDown', 'End'].includes(event.key) ? 1 : 0;
+    if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) pendingScrollDirection = -1;
+    else if (['ArrowDown', 'PageDown', 'End'].includes(event.key)) pendingScrollDirection = 1;
+    else pendingScrollDirection = 0;
     requestHistory(pendingScrollDirection);
   });
   historyPane.addEventListener('scroll', () => {
@@ -6248,13 +6376,11 @@ export function initChat(next: Deps): void {
     const outcome = await run(api.clearAgent(id, button?.dataset.runId));
     if (!outcome) return;
     paintSwarm(outcome.swarm);
-    toast(
-      outcome.cleared === 'run'
-        ? t('Run cleared — every worker ended')
-        : outcome.cleared === 'worker'
-          ? t('{0} cleared — its slot is free', [id])
-          : t(outcome.reason)
-    );
+    let clearedMessage: string;
+    if (outcome.cleared === 'run') clearedMessage = t('Run cleared — every worker ended');
+    else if (outcome.cleared === 'worker') clearedMessage = t('{0} cleared — its slot is free', [id]);
+    else clearedMessage = t(outcome.reason);
+    toast(clearedMessage);
   });
 
   for (const id of CHAT_INPUTS) {

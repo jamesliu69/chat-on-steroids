@@ -1205,11 +1205,15 @@ export interface TokenPressure {
 }
 
 export function tokenPressure(estimated: number, advisory: number, limit: number): TokenPressure {
+  let level: TokenPressure['level'];
+  if (estimated >= limit) level = 'huge';
+  else if (estimated >= advisory) level = 'large';
+  else level = 'ok';
   return {
     estimated,
     advisory,
     limit,
-    level: estimated >= limit ? 'huge' : estimated >= advisory ? 'large' : 'ok'
+    level
   };
 }
 

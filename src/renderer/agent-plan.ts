@@ -47,7 +47,11 @@ export function renderAgentPlan(host: HTMLElement, sessionId: string | null, pla
     row.open = expanded.get(step.step) ?? false;
     const summary = el('summary', 'agent-plan-step-heading');
     const marker = el('span', 'agent-plan-marker', step.status === 'completed' ? '✓' : String(index + 1));
-    ui(marker, 'aria-label', () => step.status === 'in_progress' ? t("In progress") : step.status === 'completed' ? t("Completed") : t("Pending"));
+    ui(marker, 'aria-label', () => {
+      if (step.status === 'in_progress') return t("In progress");
+      if (step.status === 'completed') return t("Completed");
+      return t("Pending");
+    });
     summary.append(marker, el('span', 'agent-plan-step-title', step.step));
     if (!step.details) summary.addEventListener('click', event => event.preventDefault());
     row.append(summary);

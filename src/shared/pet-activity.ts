@@ -46,25 +46,40 @@ export function petActivityForSession(
   // final prose (for example a tool-only answer). Older recordings can have a stable final but
   // no outcome, so retain that legacy evidence without letting a later stopped/failed turn
   // resurrect an earlier green completion.
-  const completedAt = session.lastTurnOutcome === 'completed'
-    ? Math.max(session.lastTurnEndAt ?? 0, session.lastAssistantFinalAt ?? 0)
-    : session.lastTurnOutcome === null || session.lastTurnOutcome === undefined
-      ? (session.lastAssistantFinalAt ?? 0)
-      : 0;
+  let completedAt: number;
+  if (session.lastTurnOutcome === 'completed') {
+    completedAt = Math.max(session.lastTurnEndAt ?? 0, session.lastAssistantFinalAt ?? 0);
+  } else if (session.lastTurnOutcome === null || session.lastTurnOutcome === undefined) {
+    completedAt = session.lastAssistantFinalAt ?? 0;
+  } else {
+    completedAt = 0;
+  }
   const reviewDeadline = completedAt + PET_REVIEW_MS;
   const recentFinal = !session.activeTurnId && completedAt > 0 && reviewDeadline > now;
   if (!blocked && !working && !recentFinal) return null;
   const fallbackActivityDeadline = Math.max(session.startedAt, session.lastToolCallAt ?? 0) + CHAT_ACTIVE_MS;
   const activityDeadline = session.activityExpiresAt === undefined ? fallbackActivityDeadline : (session.activityExpiresAt ?? 0);
+  let body: string;
+  if (blocked) body = 'Blocked by user';
+  else if (working) body = 'Working';
+  else body = 'Ready for review';
+  let level: PetActivityLevel;
+  if (blocked) level = 'failed';
+  else if (working) level = 'running';
+  else level = 'review';
+  let nextAt: number | null;
+  if (blocked) nextAt = null;
+  else if (working) nextAt = activityDeadline;
+  else nextAt = reviewDeadline;
   return {
     activity: {
       id: `session:${session.id}`,
       title: session.title || 'Chat',
-      body: blocked ? 'Blocked by user' : working ? 'Working' : 'Ready for review',
-      level: blocked ? 'failed' : working ? 'running' : 'review',
+      body,
+      level,
       sessionId: session.id
     },
-    nextAt: blocked ? null : working ? activityDeadline : reviewDeadline
+    nextAt
   };
 }
 

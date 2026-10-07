@@ -28,12 +28,17 @@ export function initSkillsLibrary(api: AppApi): () => void {
     const check = checks.get(skill.id);
     const state = checking.has(skill.id) ? 'checking' : check?.state ?? 'unknown';
     source.className = `skill-library-source is-${state}`;
-    const label = state === 'checking' ? 'Checking…'
-      : state === 'available' ? 'Update available'
-        : state === 'current' ? 'Up to date'
-          : state === 'error' ? 'Check failed' : 'GitHub';
-    const marker = state === 'available' ? 'i-retry' : state === 'current' ? 'i-check'
-      : state === 'error' ? 'i-warning' : 'i-globe';
+    let label: string;
+    if (state === 'checking') label = 'Checking…';
+    else if (state === 'available') label = 'Update available';
+    else if (state === 'current') label = 'Up to date';
+    else if (state === 'error') label = 'Check failed';
+    else label = 'GitHub';
+    let marker: string;
+    if (state === 'available') marker = 'i-retry';
+    else if (state === 'current') marker = 'i-check';
+    else if (state === 'error') marker = 'i-warning';
+    else marker = 'i-globe';
     if (state === 'available') {
       const action = el('button', 'skill-library-update') as HTMLButtonElement;
       action.type = 'button';
@@ -230,7 +235,11 @@ export function initSkillsLibrary(api: AppApi): () => void {
           }
         }
         else void update(api.listManagedSkills());
-        toast(result.warning ? t(result.warning) : t(result.status === 'current' ? 'Skill is already up to date' : 'Skill updated from GitHub'));
+        let updateMessage: string;
+        if (result.warning) updateMessage = t(result.warning);
+        else if (result.status === 'current') updateMessage = t('Skill is already up to date');
+        else updateMessage = t('Skill updated from GitHub');
+        toast(updateMessage);
         dialog.close();
       } catch {
         toast(t('Could not reach GitHub. Try again.'));

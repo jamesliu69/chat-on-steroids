@@ -25,8 +25,13 @@ export function renderGoalReasoning(select: HTMLSelectElement, model: GoalModel 
   }
   for (const option of select.options) {
     const value = option.value as GoalReasoning;
-    ui(option, 'textContent', () => option.disabled ? t('{0} (saved; unavailable)', [t(labels[value])])
-      : value === 'default' && model?.reasoning?.defaultEffort ? t('Default ({0})', [t(labels[model.reasoning.defaultEffort])]) : t(labels[value]));
+    ui(option, 'textContent', () => {
+      if (option.disabled) return t('{0} (saved; unavailable)', [t(labels[value])]);
+      if (value === 'default' && model?.reasoning?.defaultEffort) {
+        return t('Default ({0})', [t(labels[model.reasoning.defaultEffort])]);
+      }
+      return t(labels[value]);
+    });
   }
   select.value = selected;
 }

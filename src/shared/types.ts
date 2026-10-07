@@ -847,7 +847,10 @@ const CAPABILITY_TOOLS: Record<Capability, readonly string[]> = {
 
 /** Settings use the same Windows method lists as registration, with explicit host identity. */
 export function capabilityTools(capability: Capability, platform?: PlatformFamily): readonly string[] {
-  const browser = capability === 'screen' ? BROWSER_READ_TOOLS : capability === 'control' ? BROWSER_WRITE_TOOLS : [];
+  let browser: readonly string[];
+  if (capability === 'screen') browser = BROWSER_READ_TOOLS;
+  else if (capability === 'control') browser = BROWSER_WRITE_TOOLS;
+  else browser = [];
   if (!DESKTOP_CAPABILITIES.includes(capability)) return CAPABILITY_TOOLS[capability];
   if (platform === 'macos') return [...browser, ...CAPABILITY_TOOLS[capability]];
   if (platform !== 'windows') return browser;

@@ -296,8 +296,12 @@ export function chronological<T extends Chronological>(entries: readonly T[]): T
   // a turn cannot begin after its own first observation or end before its last, and the times
   // on those two events are the moment the page noticed, not the moment the turn moved. The
   // message that ended the turn sits between the two for the same reason — see `closing()`.
-  const rank = (entry: T, ends: T | null): number =>
-    entry.kind === 'turn_start' ? -1 : entry.kind === 'turn_end' ? 1 : entry === ends ? 0.5 : 0;
+  const rank = (entry: T, ends: T | null): number => {
+    if (entry.kind === 'turn_start') return -1;
+    if (entry.kind === 'turn_end') return 1;
+    if (entry === ends) return 0.5;
+    return 0;
+  };
 
   /*
    * A native ChatGPT step (a web search, a round's recap) carries only the moment it was read,

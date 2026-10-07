@@ -72,15 +72,25 @@ export function applyPluginsState(next: AppState): void {
   ui($('pluginsSetupLink'), 'textContent', () => configured ? t("Plugin setup") : t("Set up plugins"));
   ui($('pluginsRefreshName'), 'textContent', pluginsConnectorName);
   $('pluginsSetupLink').classList.toggle('btn-solid', !configured);
-  ui(status, 'textContent', () => surface?.state === 'live'
-    ? contacted ? t("Connected to ChatGPT") : t("Connector online · waiting for ChatGPT")
-    : configured ? t("Plugins connector offline") : t("Setup required · connect your plugins"));
+  ui(status, 'textContent', () => {
+    if (surface?.state !== 'live') {
+      if (configured) return t("Plugins connector offline");
+      return t("Setup required · connect your plugins");
+    }
+    if (contacted) return t("Connected to ChatGPT");
+    return t("Connector online · waiting for ChatGPT");
+  });
   status.dataset.live = String(surface?.state === 'live');
   ui(status, 'title', () => t(surface?.detail ?? ''));
   const setupStatus = document.getElementById('pluginSetupStatus');
-  if (setupStatus) ui(setupStatus, 'textContent', () => surface?.state === 'live'
-    ? t("{0} tools available · {1}", [surface.tools.length, surface.lastRequestAt ? t("Connected to ChatGPT") : t("Ready to add in ChatGPT")])
-    : surface?.state === 'error' ? t(surface.detail) : t("Save your connection below to make enabled plugins available in ChatGPT."));
+  if (setupStatus) ui(setupStatus, 'textContent', () => {
+    if (surface?.state === 'live') {
+      const chatgptState = surface.lastRequestAt ? t("Connected to ChatGPT") : t("Ready to add in ChatGPT");
+      return t("{0} tools available · {1}", [surface.tools.length, chatgptState]);
+    }
+    if (surface?.state === 'error') return t(surface.detail);
+    return t("Save your connection below to make enabled plugins available in ChatGPT.");
+  });
 }
 function showConnection(): void {
   if (!appState) { toast(t("Connection settings are still loading.")); return; }
@@ -136,17 +146,32 @@ function renderInstalled(): void {
   }
   for (const plugin of snapshot.plugins) {
     const recipe = snapshot.catalog.find(entry => entry.id === plugin.catalogId);
-    const description = recipe ? t(recipe.description) : (plugin.source.kind === 'remote' ? t("Your connected MCP server.") : t("Your local MCP integration."));
+    let description: string;
+    if (recipe) description = t(recipe.description);
+    else if (plugin.source.kind === 'remote') description = t("Your connected MCP server.");
+    else description = t("Your local MCP integration.");
     if (!matches(plugin.name, description)) continue;
     const card = el('article', 'plugin-card');
     const open = button('', () => showPlugin(plugin)); open.className = 'plugin-entry';
     const title = el('div', 'plugin-card-title');
     title.append(el('h2', '', plugin.name));
     ui(open, 'aria-label', () => t("Open {0}", [plugin.name]));
-    const status = () => plugin.status === 'error' ? t("Needs attention") : plugin.status === 'needs-auth' ? t("Sign in needed") : plugin.status === 'authenticating' ? t("Signing in…") : plugin.status === 'ready' && plugin.tools.length ? t("Ready") : plugin.status === 'ready' ? t("Connected · no tools") : plugin.status === 'connecting' ? t("Connecting…") : plugin.status === 'disabled' ? t("Disabled") : t("Check connection");
+    const status = (): string => {
+      if (plugin.status === 'error') return t("Needs attention");
+      if (plugin.status === 'needs-auth') return t("Sign in needed");
+      if (plugin.status === 'authenticating') return t("Signing in…");
+      if (plugin.status === 'ready' && plugin.tools.length) return t("Ready");
+      if (plugin.status === 'ready') return t("Connected · no tools");
+      if (plugin.status === 'connecting') return t("Connecting…");
+      if (plugin.status === 'disabled') return t("Disabled");
+      return t("Check connection");
+    };
     const count = plugin.tools.filter(tool => tool.enabled).length;
     const foot = el('div', 'plugin-card-foot');
-    foot.append(el('span', `pill${plugin.status === 'ready' && plugin.tools.length ? ' is-live' : plugin.status === 'error' ? ' is-error' : ''}`, status));
+    let pillSuffix = '';
+    if (plugin.status === 'ready' && plugin.tools.length) pillSuffix = ' is-live';
+    else if (plugin.status === 'error') pillSuffix = ' is-error';
+    foot.append(el('span', `pill${pillSuffix}`, status));
     if (plugin.error) foot.append(el('span', 'plugin-card-error', plugin.error));
     foot.append(el('span', 'plugin-tool-count', () => t(count === 1 ? '{0} tool enabled' : '{0} tools enabled', [count])));
     title.append(foot); open.append(art(recipe?.icon ?? plugin.catalogId ?? 'custom'), title);

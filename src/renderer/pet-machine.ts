@@ -25,7 +25,12 @@ export function readPreference(raw: string | null, width: number, height: number
 export function animationDuration(name: PetAnimation, authored: PetAnimationManifest = DEFAULT_PET_MANIFEST): number { return authored.animations[name].ms.reduce((a,b)=>a+b,0); }
 export function animationFrame(name: PetAnimation, elapsed: number, reduced=false, authored: PetAnimationManifest = DEFAULT_PET_MANIFEST): number {
   const clip = authored.animations[name];
-  if (reduced) return name === 'held' ? 23 : name === 'poke' ? 28 : name === 'angry' ? 32 : 7;
+  if (reduced) {
+    if (name === 'held') return 23;
+    if (name === 'poke') return 28;
+    if (name === 'angry') return 32;
+    return 7;
+  }
   let time = clip.loop ? elapsed % animationDuration(name, authored) : Math.min(elapsed,animationDuration(name, authored)-1);
   for(let i=0;i<clip.frames.length;i++) { time -= clip.ms[i]!; if(time<0) return clip.frames[i]!; }
   return clip.frames.at(-1)!;

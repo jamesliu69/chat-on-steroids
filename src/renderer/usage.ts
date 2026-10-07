@@ -76,13 +76,33 @@ export async function refreshUsage(): Promise<void> {
       const row = el('div', 'usage-limit');
       const featureLabel = featureLabels[entry.model];
       // Shared pools are told apart by their window; "Shared usage" twice said nothing.
-      const sharedName = () => entry.windowSeconds === 604800 ? t("Weekly limit") : entry.windowSeconds ? t("{0}-hour limit", [Math.round(entry.windowSeconds / 3600)]) : entry.model;
-      const displayName = () => entry.scope === 'feature' && featureLabel ? t(featureLabel) : entry.scope === 'shared' ? sharedName() : entry.model;
+      const sharedName = (): string => {
+        if (entry.windowSeconds === 604800) return t("Weekly limit");
+        if (entry.windowSeconds) return t("{0}-hour limit", [Math.round(entry.windowSeconds / 3600)]);
+        return entry.model;
+      };
+      const displayName = (): string => {
+        if (entry.scope === 'feature' && featureLabel) return t(featureLabel);
+        if (entry.scope === 'shared') return sharedName();
+        return entry.model;
+      };
       const name = el('div'); name.append(el('strong', '', displayName));
       if (entry.scope !== 'model') name.append(el('small', 'muted', () => entry.scope === 'shared' ? t("Shared across all models") : t("Feature quota")));
       const detail = el('div');
-      detail.append(el('b', '', () => stale ? t("Refresh needed") : entry.remaining === null ? entry.remainingPercent === null ? t("Not reported") : t("{0}% remaining", [Math.round(entry.remainingPercent)]) : t("{0} remaining", [entry.remaining.toLocaleString(currentLanguage())])));
-      const window = () => entry.scope === 'shared' ? '' : entry.windowSeconds === 604800 ? t("Weekly · ") : entry.windowSeconds ? t("{0}h window · ", [Math.round(entry.windowSeconds / 3600)]) : '';
+      detail.append(el('b', '', () => {
+        if (stale) return t("Refresh needed");
+        if (entry.remaining === null) {
+          if (entry.remainingPercent === null) return t("Not reported");
+          return t("{0}% remaining", [Math.round(entry.remainingPercent)]);
+        }
+        return t("{0} remaining", [entry.remaining.toLocaleString(currentLanguage())]);
+      }));
+      const window = (): string => {
+        if (entry.scope === 'shared') return '';
+        if (entry.windowSeconds === 604800) return t("Weekly · ");
+        if (entry.windowSeconds) return t("{0}h window · ", [Math.round(entry.windowSeconds / 3600)]);
+        return '';
+      };
       detail.append(el('small', 'muted', () => window() + (entry.resetAt ? t("Resets {0}", [new Date(entry.resetAt).toLocaleString(currentLanguage())]) : t("Reset not reported"))));
       if (entry.remainingPercent !== null && !stale) { const progress = document.createElement('progress'); progress.max = 100; progress.value = entry.remainingPercent; ui(progress, 'aria-label', () => t("{0}: {1}% remaining", [displayName(), entry.remainingPercent])); detail.append(progress); }
       row.append(name, detail); limits.append(row);
@@ -98,7 +118,11 @@ export async function refreshUsage(): Promise<void> {
 function paintRates(): void {
   if (!snapshot) return;
   const host = $('usageRates'); host.replaceChildren();
-  for (const model of [...new Set(snapshot.models.map(row => row.model))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+  for (const model of [...new Set(snapshot.models.map(row => row.model))].sort((a, b) => {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  })) {
     const label = el('label', 'setting'); const text = el('span', 'setting-text');
     text.append(el('b', '', model), el('em', '', () => usageRate(model, DEFAULT_USAGE_FORMULA) === undefined ? t("USD / 1M cached input · enter a verified comparison rate") : t("USD / 1M cached input · editable official baseline, checked 27 September 2026")));
     const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = '0.01'; ui(input, 'placeholder', () => t("Unknown rate")); input.value = usageRate(model, formula)?.toString() ?? '';
