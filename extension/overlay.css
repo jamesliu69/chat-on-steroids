@@ -437,6 +437,21 @@
   --clf-pop-bg: #353535;
   --clf-pop-ink: #fff;
   --clf-tip-bg: #1b1b1b;
+  position: fixed;
+  z-index: 2147483001;
+  max-width: 22rem;
+  padding: 5px 12px;
+  border-radius: 9999px;
+  background: var(--clf-tip-bg);
+  /* White in both themes on purpose: the bubble itself inverts, so it is a dark pill on a
+     light page and a near-black one on a dark page. */
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: clf-pop-in 0.15s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 [data-clf-theme='light'] .clf-tip {
@@ -473,23 +488,6 @@
  * appears after its own delay and looks nothing like the page it is sitting on. Same text,
  * same trigger, drawn the way ChatGPT draws its own.
  */
-.clf-tip {
-  position: fixed;
-  z-index: 2147483001;
-  max-width: 22rem;
-  padding: 5px 12px;
-  border-radius: 9999px;
-  background: var(--clf-tip-bg);
-  /* White in both themes on purpose: the bubble itself inverts, so it is a dark pill on a
-     light page and a near-black one on a dark page. */
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
-  white-space: nowrap;
-  pointer-events: none;
-  animation: clf-pop-in 0.15s cubic-bezier(0.23, 1, 0.32, 1);
-}
 
 /* A sentence rather than a name — the compaction hints, a tool row's origin — wraps instead
    of running off, and keeps the newline the caller wrote. */
@@ -517,6 +515,7 @@
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.12s ease, background-color 0.12s ease;
+  position: relative;
 }
 
 .clf-compact-btn:hover:not(:disabled) {
@@ -565,10 +564,6 @@
 
 .clf-meter[hidden] {
   display: none;
-}
-
-.clf-compact-btn {
-  position: relative;
 }
 
 .clf-meter-fill {
@@ -799,10 +794,14 @@
 
 .clf-stream-progress {
   opacity: 1;
+  align-items: flex-start;
+  margin: 0.2rem 0 0.3rem;
 }
 
 .clf-stream-progress .clf-stream-icon {
   display: none;
+  padding-top: 0.12rem;
+  opacity: 0.58;
 }
 
 /* Public interim prose is projected while the exact closed activity fold has unmounted its
@@ -821,11 +820,6 @@
 /* Reasoning/commentary is a real readable block, not ChatGPT's half-opacity status
    caption. Full snapshots are prefix-collapsed in content.js, so this can preserve the
    visible paragraphs without turning every streaming update into another row. */
-.clf-stream-progress {
-  align-items: flex-start;
-  margin: 0.2rem 0 0.3rem;
-}
-
 .clf-stream-progress .clf-stream-text {
   font-size: 0.91rem;
   line-height: 1.55;
@@ -835,11 +829,6 @@
 
 .clf-stream-progress .clf-when {
   display: none;
-}
-
-.clf-stream-progress .clf-stream-icon {
-  padding-top: 0.12rem;
-  opacity: 0.58;
 }
 
 /* The app's own note that it reloaded or reopened this chat, and why. It sits between
@@ -1088,16 +1077,6 @@
   --clf-menu-ink: #ececec;
   --clf-menu-line: rgb(255 255 255 / 11%);
   --clf-menu-hover: rgb(255 255 255 / 7%);
-}
-
-[data-clf-theme='light'] .clf-menu {
-  --clf-menu-bg: #fff;
-  --clf-menu-ink: #0d0d0d;
-  --clf-menu-line: rgb(0 0 0 / 10%);
-  --clf-menu-hover: rgb(0 0 0 / 5%);
-}
-
-.clf-menu {
   position: fixed;
   z-index: 2147483000;
   display: flex;
@@ -1115,6 +1094,13 @@
   font-size: 14px;
   line-height: 1.35;
   animation: clf-pop-in 0.15s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+[data-clf-theme='light'] .clf-menu {
+  --clf-menu-bg: #fff;
+  --clf-menu-ink: #0d0d0d;
+  --clf-menu-line: rgb(0 0 0 / 10%);
+  --clf-menu-hover: rgb(0 0 0 / 5%);
 }
 
 .clf-menu[hidden] {

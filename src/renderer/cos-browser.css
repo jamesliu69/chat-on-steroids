@@ -121,6 +121,8 @@ html, body {
   border: 2px solid var(--page);
   border-radius: 50%;
   background: var(--accent);
+  opacity: 0;
+  transition: opacity .3s 1s;
 }
 .tab[aria-selected="true"] .activity, .tab:hover .activity { border-color: var(--raise); }
 
@@ -150,7 +152,6 @@ html, body {
 }
 .tab:hover .title, .tab[aria-selected="true"] .title { --title-ink: var(--ink); --title-dim: var(--soft); }
 .tab[data-working="true"] .title { --working: 1; animation-play-state: running; transition-delay: 0s; }
-.activity { opacity: 0; transition: opacity .3s 1s; }
 .tab[data-working="true"] .activity { opacity: 1; transition-delay: 0s; }
 .tab:has(.title:empty) .title { display: none; }
 

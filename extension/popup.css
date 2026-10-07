@@ -44,6 +44,8 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll) transparent;
 }
 
 /*
@@ -87,11 +89,6 @@ body {
  * buttons, drawn from the OS theme rather than this palette, and in a 340px dark panel it
  * is the loudest thing on screen.
  */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scroll) transparent;
-}
-
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -717,7 +714,7 @@ button:focus-visible {
 .done-text span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 @keyframes done-pop { from { opacity: 0; transform: scale(0.6); } }
 @keyframes done-draw { from { stroke-dashoffset: 16; } }
-#signInTransferResult { margin: 8px 0 0; color: var(--red); font-size: 12px; line-height: 1.4; text-align: center; }
+#signInTransferResult { display: block; margin: 8px 0 0; color: var(--red); font-size: 12px; line-height: 1.4; text-align: center; }
 #signInTransferResult:empty { display: none; }
 @keyframes transfer-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) { .transfer, .transfer-done, .done-logo, .done-check { animation: none; } }
