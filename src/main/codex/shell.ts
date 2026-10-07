@@ -119,12 +119,12 @@ const BASH_FALLBACK_PATHS = ['/bin/bash', '/usr/bin/bash'];
 const SH_FALLBACK_PATHS = ['/bin/sh'];
 const PWSH_FALLBACK_PATHS =
   process.platform === 'win32'
-    ? ['C:\\Program Files\\PowerShell\\7\\pwsh.exe']
+    ? [String.raw`C:\Program Files\PowerShell\7\pwsh.exe`]
     : process.platform === 'darwin'
       ? ['/opt/homebrew/bin/pwsh', '/usr/local/bin/pwsh']
       : ['/usr/local/bin/pwsh'];
 const POWERSHELL_FALLBACK_PATHS =
-  process.platform === 'win32' ? ['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'] : [];
+  process.platform === 'win32' ? [String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`] : [];
 
 /**
  * Whether a resolved shell path is Windows PowerShell 5.1 rather than PowerShell 7.
@@ -341,7 +341,7 @@ function shlexQuote(token: string): string {
   // the same thing, it is unbalanced: `'it'''s'` leaves a quote open where `'it'\''s'`
   // reads back as `it's`. This string is the command handed to the model to retry, and our
   // own glob expansion quotes every name it substitutes, so an apostrophe here is routine.
-  return `'${token.replaceAll(/'/g, "'\\''")}'`;
+  return `'${token.replaceAll(/'/g, String.raw`'\''`)}'`;
 }
 
 /**

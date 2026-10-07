@@ -13,20 +13,20 @@ app.whenReady().then(async () => {
     <textarea id="chatInput" rows="1" dir="auto" placeholder="Ask anything…"></textarea>
     <div class="composer-toolbar"><button type="button">+</button></div>
     </form></section>`));
-  const results = await win.webContents.executeJavaScript(`(() => {
+  const results = await win.webContents.executeJavaScript(String.raw`(() => {
     const input = document.getElementById('chatInput'), host = document.getElementById('host');
     const results = [];
     const record = name => results.push({ name, height: input.clientHeight,
       scrollHeight: input.scrollHeight, scrollTop: input.scrollTop,
       overflow: input.scrollHeight > input.clientHeight });
     host.hidden = false; record('initial reveal');
-    input.value = 'Pasted line\\n'.repeat(100); input.scrollTop = input.scrollHeight; record('long paste');
+    input.value = 'Pasted line\n'.repeat(100); input.scrollTop = input.scrollHeight; record('long paste');
     input.value = ''; record('clear');
     input.value = 'one line'; record('short draft');
     input.value = 'wrapped words '.repeat(25); record('wide draft');
     host.style.width = '320px'; record('narrow draft');
     host.style.width = ''; record('wide again');
-    host.hidden = true; input.value = 'restored line\\n'.repeat(5);
+    host.hidden = true; input.value = 'restored line\n'.repeat(5);
     host.hidden = false; record('hidden draft restore');
     input.value = ''; record('empty again');
     return results;

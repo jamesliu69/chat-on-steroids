@@ -112,8 +112,8 @@ app.whenReady().then(async () => {
           })()`);
           // Every section-head button stays readable in both states: Read-only on used to paint its
           // label in the same color as its inverted background (#1039), an empty white or black pill.
-          const contrast = await js(`(() => {
-            const rgb = value => (value.match(/[\\d.]+/g) || []).map(Number);
+          const contrast = await js(String.raw`(() => {
+            const rgb = value => (value.match(/[\d.]+/g) || []).map(Number);
             const lum = ([r, g, b]) => { const c = [r, g, b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
               return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
             const background = el => { for (let node = el; node; node = node.parentElement) {

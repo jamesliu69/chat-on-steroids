@@ -132,7 +132,7 @@ app.whenReady().then(async () => {
     await until(`outputs[${JSON.stringify(homeId)}]?.includes('HOME_')`);
     await js("document.querySelector('#workspaceTerminal .terminal-tab .btn-icon').click()");
     await until('document.getElementById("workDockBottom").hidden');
-    assert.equal((await js(`window.api.terminalWrite(${JSON.stringify(homeId)}, 'echo closed\\r')`)).ok, false);
+    assert.equal((await js(String.raw`window.api.terminalWrite(${JSON.stringify(homeId)}, 'echo closed\r')`)).ok, false);
     await js(`window.setTerminalProject(${JSON.stringify(project)});window.ids=[];document.getElementById('terminalToggle').click()`);
     await until(`ids.length===1 && document.querySelector(".terminal-tab").textContent${TAB_LABEL}`);
     const first = await js('ids[0]');
@@ -145,7 +145,7 @@ app.whenReady().then(async () => {
     // insertText and sendInputEvent take different input paths, so Return could reach the shell
     // first: an empty Enter, then the command typed but never sent (macOS CI, 2026-10-03). Send
     // Return only once the shell has echoed the text.
-    await until(`(outputs[${JSON.stringify(first)}]||'').replace(/\\x1b\\[[0-9;?]*[ -\\/]*[@-~]/g,'').includes('persisted')`);
+    await until(String.raw`(outputs[${JSON.stringify(first)}]||'').replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g,'').includes('persisted')`);
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
     await until(`outputs[${JSON.stringify(first)}]?.includes('PROOF_persisted_child')`);
     assert.ok(await js(`(()=>{const tab=document.querySelector('#workspaceTerminal .terminal-tab').getBoundingClientRect();const plus=document.querySelector('#workspaceTerminal .work-dock-add summary').getBoundingClientRect();return plus.left-tab.right<=12&&plus.left>=tab.right})()`));
@@ -158,7 +158,7 @@ app.whenReady().then(async () => {
     const extraBottom = await js('ids[1]');
     await js("document.querySelector('#workspaceTerminal .terminal-tab:last-child .btn-icon').click()");
     await until('document.querySelectorAll("#workspaceTerminal .terminal-tab").length===1');
-    assert.equal((await js(`window.api.terminalWrite(${JSON.stringify(extraBottom)}, 'echo nope\\r')`)).ok, false);
+    assert.equal((await js(String.raw`window.api.terminalWrite(${JSON.stringify(extraBottom)}, 'echo nope\r')`)).ok, false);
     await click('#workspaceTerminal .terminal-panel-close');
     await until('document.getElementById("workspaceTerminal").hidden');
     await js(`window.api.terminalWrite(${JSON.stringify(first)}, ${JSON.stringify(sh.show('HIDDEN') + '\r')})`);
@@ -187,7 +187,7 @@ app.whenReady().then(async () => {
     await js("document.querySelector('#workDockRight .work-dock-tab[data-terminal-id]:last-child .btn-icon').click()");
     await until('document.querySelectorAll("#workDockRight .work-dock-tab[data-terminal-id]").length===1');
     assert.equal(await js('!document.getElementById("workDockRight").hidden && document.querySelector("#workDockRight .work-dock-tab[data-terminal-id] [aria-selected=true]") !== null'), true);
-    assert.equal((await js(`window.api.terminalWrite(${JSON.stringify(extraRight)}, 'echo closed\\r')`)).ok, false);
+    assert.equal((await js(String.raw`window.api.terminalWrite(${JSON.stringify(extraRight)}, 'echo closed\r')`)).ok, false);
     await js("document.getElementById('terminalToggle').click()");
     await until('!document.getElementById("workspaceTerminal").hidden');
     // Update both the selected and hidden terminal without recreating either shell.
@@ -203,7 +203,7 @@ app.whenReady().then(async () => {
     // PowerShell prints a fresh "PS <drive>:" prompt after Ctrl+C (D: on hosted CI runners); elsewhere the marker below arriving
     // long before the 30 s sleep ends is the proof that the interrupt landed.
     const promptsBeforeInterrupt = WINDOWS ? await js(`(outputs[${JSON.stringify(second)}].match(/PS [A-Z]:/g) || []).length`) : 0;
-    await js(`window.api.terminalWrite(${JSON.stringify(second)}, "\\u0003")`);
+    await js(String.raw`window.api.terminalWrite(${JSON.stringify(second)}, "\u0003")`);
     if (WINDOWS) await until(`(outputs[${JSON.stringify(second)}].match(/PS [A-Z]:/g) || []).length > ${promptsBeforeInterrupt}`);
     await js(`window.api.terminalWrite(${JSON.stringify(second)}, ${JSON.stringify(sh.interrupt + '\r')})`);
     await until(`outputs[${JSON.stringify(second)}]?.includes('INTERRUPT_OK')`);
@@ -211,13 +211,13 @@ app.whenReady().then(async () => {
     const geometry = await js(`(()=>{const p=document.getElementById('workspaceTerminal').getBoundingClientRect();return {width:p.width,height:p.height,left:p.left,top:p.top,right:p.right,bottom:p.bottom,viewportWidth:innerWidth,viewportHeight:innerHeight,fits:p.right<=innerWidth+1&&p.bottom<=innerHeight+1}})()`);
     fs.writeFileSync(path.join(output, 'terminal.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
     assert.ok(geometry.fits, JSON.stringify(geometry));
-    await js(`window.api.terminalWrite(${JSON.stringify(second)}, "exit 7\\r")`); await until(`exits[${JSON.stringify(second)}]===7`);
+    await js(String.raw`window.api.terminalWrite(${JSON.stringify(second)}, "exit 7\r")`); await until(`exits[${JSON.stringify(second)}]===7`);
     await js("document.querySelector('#workDockRight .work-dock-tab[data-terminal-id] .btn-icon').click()");
-    assert.equal((await js(`window.api.terminalWrite(${JSON.stringify(second)}, 'echo closed\\r')`)).ok, false);
+    assert.equal((await js(String.raw`window.api.terminalWrite(${JSON.stringify(second)}, 'echo closed\r')`)).ok, false);
     assert.equal(await js("document.querySelector('#workDockRight .work-dock-bar').hidden && !document.querySelector('#workDockRight .work-dock-empty').hidden && document.getElementById('workspaceTerminalRight').hidden"), true);
     await js("document.querySelector('#workspaceTerminal .terminal-tab .btn-icon').click()");
     await until('document.getElementById("workDockBottom").hidden');
-    assert.equal((await js(`window.api.terminalWrite(${JSON.stringify(first)}, 'echo nope\\r')`)).ok, false);
+    assert.equal((await js(String.raw`window.api.terminalWrite(${JSON.stringify(first)}, 'echo nope\r')`)).ok, false);
     assert.deepEqual(await js('errors'), []);
     const result = { actualPty: true, projectCwd: true, projectlessHomeCwd: true, singleRightTabRow: true, rightTabClosesPty: true, rightPanelHidePreservesPty: true, persistentEnvironmentAndCd: true, keyboardInput: true, hiddenPanelContinuity: true, bottomPanelClose: true, bottomMenuVisible: true, rightMenuClickable: true, rightAndBottomIndependent: true, lastBottomTabClosesPanel: true, multipleTabs: true, ctrlC: true, exitCode: 7, closeRetiresShell: true, geometry };
     fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));

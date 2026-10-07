@@ -100,7 +100,7 @@ async function evaluate(expression) {
     await cdp('Page.navigate', { url: 'https://chatgpt.com/c/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' });
     await delay(200);
     await evaluate(setup);
-    const report = await evaluate(`(async () => {
+    const report = await evaluate(String.raw`(async () => {
       const f = fixture(), checks = [];
       f.entry.turn.status = 'complete'; f.entry.turn.items[2].completed = true;
       const native = liveShellMapping(f, true);
@@ -140,7 +140,7 @@ async function evaluate(expression) {
         }; window.addEventListener('message', receive);
       });
       window.fetch = async () => {
-        const response = new Response('event: delta_encoding\\ndata: "v1"\\n\\nevent: delta\\ndata: ' + JSON.stringify({ v: { conversation_id: THREAD, message: { metadata: { request_id: 'wfr_native_early' }, content: { parts: ['PRIVATE_FIXTURE_VALUE'] } } } }) + '\\n\\n', { headers: { 'content-type': 'text/event-stream' } });
+        const response = new Response('event: delta_encoding\ndata: "v1"\n\nevent: delta\ndata: ' + JSON.stringify({ v: { conversation_id: THREAD, message: { metadata: { request_id: 'wfr_native_early' }, content: { parts: ['PRIVATE_FIXTURE_VALUE'] } } } }) + '\n\n', { headers: { 'content-type': 'text/event-stream' } });
         Object.defineProperty(response, 'url', { value: 'https://chatgpt.com/backend-api/f/conversation' });
         return response;
       };
@@ -150,10 +150,10 @@ async function evaluate(expression) {
       checks.push('native Response clone projected early inherited-header identity without message content');
       await f.ask();
       const box = f.api.composer();
-      const text = '# Worker instructions\\n\\nKeep **literal** markup, C:\\\\work and <example>.\\n';
+      const text = '# Worker instructions\n\nKeep **literal** markup, C:\\work and <example>.\n';
       if (!f.api.insertPrompt(text, true)) throw new Error('Native insertion refused');
       const span = box.querySelector('span[data-prompt-literal-paste]');
-      if (!span || box.querySelector('example') || span.innerText.replace(/\\n$/, '') !== text.replace(/\\n$/, '')) throw new Error('Native HTML normalization lost literal text');
+      if (!span || box.querySelector('example') || span.innerText.replace(/\n$/, '') !== text.replace(/\n$/, '')) throw new Error('Native HTML normalization lost literal text');
       checks.push('native insertHTML retained literal mark, punctuation, line breaks and escaped markup');
       if (!f.api.clearPromptExact(text)) throw new Error('Owned draft clear failed');
       const models = await f.api.inspectModelSettings();
@@ -164,7 +164,7 @@ async function evaluate(expression) {
       if (f.api.generating() || !f.api.composerSubmitReady()) throw new Error('Completed composer remains blocked');
       checks.push('completed shell composer is ready');
       for (let at = 1; at <= 3; at++) {
-        const submitted = '# Native send ' + at + '\\nKeep **literal** text.';
+        const submitted = '# Native send ' + at + '\nKeep **literal** text.';
         const userId = '77777777-1111-4111-8111-' + String(at * 10 + 1).padStart(12, '0');
         const turnId = '77777777-1111-4111-8111-' + String(at * 10 + 2).padStart(12, '0');
         const answerId = '77777777-1111-4111-8111-' + String(at * 10 + 3).padStart(12, '0');

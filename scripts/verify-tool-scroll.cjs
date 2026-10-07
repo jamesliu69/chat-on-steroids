@@ -16,9 +16,9 @@ app.whenReady().then(async () => {
   const css = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
   const scrollCode = require('esbuild').transformSync(fs.readFileSync(path.join(__dirname, '../src/renderer/timeline-scroll.ts'), 'utf8'), { loader: 'ts', format: 'iife', globalName: 'timelineScroll' }).code;
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<style>${css}</style><script>${scrollCode}</script><div id="chatBody" style="height:700px;overflow:auto"><div id="timeline"></div></div>`));
-  const observations = await win.webContents.executeJavaScript(`(async () => {
+  const observations = await win.webContents.executeJavaScript(String.raw`(async () => {
     const timeline = document.getElementById('timeline');
-    timeline.innerHTML = '<div class="ev"><p class="msg">Before</p></div><details class="tool-group" open><summary>Group</summary><div class="tool-group-body">' + Array.from({length:8}, (_,i) => '<div class="ev ev-tool_call"><div class="ev-body"><details class="tool"><summary>Read ' + i + '</summary><div class="raw"><h4>Result</h4><p class="pre">' + ('LINE ' + i + '\\n').repeat(200) + '</p></div></details></div></div>').join('') + '</div></details><div class="ev"><p class="msg">After</p></div>';
+    timeline.innerHTML = '<div class="ev"><p class="msg">Before</p></div><details class="tool-group" open><summary>Group</summary><div class="tool-group-body">' + Array.from({length:8}, (_,i) => '<div class="ev ev-tool_call"><div class="ev-body"><details class="tool"><summary>Read ' + i + '</summary><div class="raw"><h4>Result</h4><p class="pre">' + ('LINE ' + i + '\n').repeat(200) + '</p></div></details></div></div>').join('') + '</div></details><div class="ev"><p class="msg">After</p></div>';
     const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const results = [];
     const tool = timeline.querySelectorAll('.tool')[1], pre = tool.querySelector('.pre');
@@ -75,10 +75,10 @@ app.whenReady().then(async () => {
   // Native wheel routing, including a failed tool and both long compaction sections.
   win.webContents.debugger.attach('1.3');
   for (const kind of ['failed-tool', 'brief-request', 'streaming-summary']) {
-    const point = await win.webContents.executeJavaScript(`(() => {
+    const point = await win.webContents.executeJavaScript(String.raw`(() => {
       const pane = document.getElementById('chatBody'), timeline = document.getElementById('timeline');
       const kind = ${JSON.stringify(kind)};
-      const text = ('A line of recorded output or handoff text.\\n').repeat(180);
+      const text = ('A line of recorded output or handoff text.\n').repeat(180);
       timeline.innerHTML = '<div style="height:200px">Earlier messages</div><div class="ev" data-timeline-key="reading"><div class="ev-body"><details class="tool ' + (kind === 'failed-tool' ? 'tone-bad' : 'compaction') + '" open><summary>' + kind + '</summary><div class="raw"><h4>Content</h4><div class="' + (kind === 'streaming-summary' ? 'msg rich' : 'pre') + '"></div></div></details></div></div><div style="height:800px">Later messages</div>';
       const content = timeline.querySelector('.raw > div');
       if (kind === 'streaming-summary') {

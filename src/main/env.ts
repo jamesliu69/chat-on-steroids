@@ -152,14 +152,14 @@ export function applyEnvOverrides(env: MutableEnvironment, overrides: Record<str
  */
 export function ensureUsablePath(env: MutableEnvironment): void {
   if (process.platform !== 'win32') return;
-  const root = envValue(env, 'SystemRoot') || envValue(env, 'windir') || 'C:\\Windows';
-  const system32 = `${root}\\System32`;
+  const root = envValue(env, 'SystemRoot') || envValue(env, 'windir') || String.raw`C:\Windows`;
+  const system32 = String.raw`${root}\System32`;
   // Each one checked on its own. An earlier version returned as soon as *any* entry ended
   // in `System32`, which reads as "the path is fine" and is not the same statement:
   // Windows PowerShell lives in `System32\WindowsPowerShell\v1.0`, so a path carrying
   // System32 but not that subdirectory passed the test and then failed to start
   // powershell.exe — the exact failure this function exists to prevent.
-  const defaults = [system32, root, `${system32}\\Wbem`, `${system32}\\WindowsPowerShell\\v1.0`];
+  const defaults = [system32, root, String.raw`${system32}\Wbem`, String.raw`${system32}\WindowsPowerShell\v1.0`];
   const held = pathEntries(env);
   const missing = defaults.filter(
     (dir) => !held.some((entry) => entry.toLowerCase() === dir.toLowerCase())

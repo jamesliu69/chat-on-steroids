@@ -31,117 +31,117 @@ function prose(text: string): string {
 
 const words = (list: string): string => list.trim().split(/\s*\|\s*/).join('|');
 // Nouns for a picture, per language (lowercase; matched with and without accents).
-const NOUN = words(`
+const NOUN = words(String.raw`
   images? | pictures? | pics? | photos? | photographs? | illustrations? | drawings? | paintings? | artworks? | logos? | icons? |
   posters? | wallpapers? | banners? | stickers? | portraits? | cartoons? | comics? | memes? | avatars? | thumbnails? | renders? | sketch(?:es)? |
-  \\p{L}*bild(?:er)? | \\p{L}*fotos? | \\p{L}*zeichnung(?:en)? | \\p{L}*gemalde | grafik(?:en)? | \\p{L}*plakat(?:e)? | \\p{L}*logos? | portrat |
+  \p{L}*bild(?:er)? | \p{L}*fotos? | \p{L}*zeichnung(?:en)? | \p{L}*gemalde | grafik(?:en)? | \p{L}*plakat(?:e)? | \p{L}*logos? | portrat |
   imagen(?:es)? | ilustracion(?:es)? | dibujos? | pinturas? | logotipos? | iconos? | cartel(?:es)? | fondo de pantalla | retratos? | caricaturas? | comic |
   dessins? | peintures? | icones? | affiches? | fond d'ecran | bande dessinee |
   imagem | imagens | ilustracao | ilustracoes | desenhos? | papel de parede | cartaz(?:es)? |
-  изображени\\p{L}* | картин\\p{L}* | фото\\p{L}* | иллюстраци\\p{L}* | рисун\\p{L}* | логотип\\p{L}* | иконк\\p{L}* | постер\\p{L}* | плакат\\p{L}* | обои | аватар\\p{L}* |
-  gorsel\\p{L}* | resim\\p{L}* | resm\\p{L}* | fotograf\\p{L}* | illustrasyon\\p{L}* | cizim\\p{L}* | ikon\\p{L}* | afis\\p{L}* | duvar kagidi | duvar kagıdı |
+  изображени\p{L}* | картин\p{L}* | фото\p{L}* | иллюстраци\p{L}* | рисун\p{L}* | логотип\p{L}* | иконк\p{L}* | постер\p{L}* | плакат\p{L}* | обои | аватар\p{L}* |
+  gorsel\p{L}* | resim\p{L}* | resm\p{L}* | fotograf\p{L}* | illustrasyon\p{L}* | cizim\p{L}* | ikon\p{L}* | afis\p{L}* | duvar kagidi | duvar kagıdı |
   hình ảnh | hình | ảnh | bức tranh | tranh | minh họa | biểu tượng | áp phích | hình nền | ảnh đại diện`);
 // Verbs that ask for something new, per language (stems; lowercase, accent-free where Latin).
-const CREATE = words(`
+const CREATE = words(String.raw`
   create | generate | make | draw | paint | design | render | illustrate | sketch | produce | imagine | visuali[sz]e | give me | show me | can i (?:get|have) |
-  erstell\\p{L}* | generier\\p{L}* | mach\\p{L}* | zeichne\\p{L}* | male | malen | entwirf | entwerfen | gestalte\\p{L}* | erzeug\\p{L}* |
-  crea\\p{L}* | genera\\p{L}* | haz(?:me)? | dibuja\\p{L}* | pinta\\p{L}* | disena\\p{L}* |
-  cree\\p{L}* | creer | genere\\p{L}* | fais | faire | dessine\\p{L}* | peins | peindre | concois |
+  erstell\p{L}* | generier\p{L}* | mach\p{L}* | zeichne\p{L}* | male | malen | entwirf | entwerfen | gestalte\p{L}* | erzeug\p{L}* |
+  crea\p{L}* | genera\p{L}* | haz(?:me)? | dibuja\p{L}* | pinta\p{L}* | disena\p{L}* |
+  cree\p{L}* | creer | genere\p{L}* | fais | faire | dessine\p{L}* | peins | peindre | concois |
   crie | criar | gere | gerar | faca | fazer | desenhe | desenhar | pinte | pintar |
-  созда\\p{L}* | сгенерир\\p{L}* | нарису\\p{L}* | сдела\\p{L}* | нарисовать |
-  olustur\\p{L}* | uret\\p{L}* | ciz | cizer | ciz\\p{L}* | yap | yapar | tasarla\\p{L}* |
+  созда\p{L}* | сгенерир\p{L}* | нарису\p{L}* | сдела\p{L}* | нарисовать |
+  olustur\p{L}* | uret\p{L}* | ciz | cizer | ciz\p{L}* | yap | yapar | tasarla\p{L}* |
   tạo | vẽ | thiết kế`);
 // Wishes for a new picture: "I want a poster for …", "ich möchte ein Plakat", "quiero un cartel".
-const WANT = words(`
+const WANT = words(String.raw`
   i want | i'd like | i would like | i'd love | i would love | would love | i need | we need | i'm looking for |
   ich mochte | ich will | ich brauche | ich hatte gern | wir brauchen | quiero | necesito | me gustaria |
   je veux | je voudrais | j'aimerais | il me faut | quero | preciso de | eu gostaria de | gostaria de |
-  я хочу | мне нужн\\p{L}* | хочу | istiyorum | lazim | ihtiyacim var | tôi muốn | tôi cần`);
+  я хочу | мне нужн\p{L}* | хочу | istiyorum | lazim | ihtiyacim var | tôi muốn | tôi cần`);
 const ARTICLE = 'a|an|one|some|ein|eine|einen|einem|un|una|une|des|um|uma|bir|một';
 const BARE_WANT = 'need|want|brauche|brauch|necesito|quiero|veux|voudrais|preciso|quero';
 // Drawing and painting verbs count wherever they stand: "can you draw me …", "kannst du … zeichnen".
-const DRAW = words(`
-  draw | paint | sketch | zeichne | zeichnen | male | malen | dibuja\\p{L}* | dibujar\\p{L}* | pinta | pintar\\p{L}* |
-  dessine\\p{L}* | dessiner | peins | peindre | desenhe | desenhar | pinte | нарису\\p{L}* | нарисовать | ciz | cizer | cizin | vẽ`);
+const DRAW = words(String.raw`
+  draw | paint | sketch | zeichne | zeichnen | male | malen | dibuja\p{L}* | dibujar\p{L}* | pinta | pintar\p{L}* |
+  dessine\p{L}* | dessiner | peins | peindre | desenhe | desenhar | pinte | нарису\p{L}* | нарисовать | ciz | cizer | cizin | vẽ`);
 // Changing a picture that is already there: an attached one, or the one ChatGPT just made.
-const EDIT = words(`
+const EDIT = words(String.raw`
   edit | change | turn | transform | make it | make the | restyle | recolou?r | colou?ri[sz]e | remove the background | replace the background | add |
-  bearbeite\\p{L}* | ander\\p{L}* | verwandle\\p{L}* | mach es | mach das | mach daraus | mach den | mach die | mach ihn | mach sie | mache | entferne den hintergrund | fuge\\p{L}* |
-  edita\\p{L}* | cambia\\p{L}* | convierte | transforma\\p{L}* | quita el fondo | anade | haz el | haz la | haz que | hazlo | hazla | ponle |
-  modifie\\p{L}* | change\\p{L}* | transforme\\p{L}* | retire l'arriere-plan | ajoute\\p{L}* | rends\\p{L}* | fais le | fais la | mets |
+  bearbeite\p{L}* | ander\p{L}* | verwandle\p{L}* | mach es | mach das | mach daraus | mach den | mach die | mach ihn | mach sie | mache | entferne den hintergrund | fuge\p{L}* |
+  edita\p{L}* | cambia\p{L}* | convierte | transforma\p{L}* | quita el fondo | anade | haz el | haz la | haz que | hazlo | hazla | ponle |
+  modifie\p{L}* | change\p{L}* | transforme\p{L}* | retire l'arriere-plan | ajoute\p{L}* | rends\p{L}* | fais le | fais la | mets |
   edite | mude | altere | transforme | remova o fundo | adicione | deixe | deixa | coloque |
-  отредактиру\\p{L}* | измени\\p{L}* | преврати\\p{L}* | убери фон | добавь | сделай |
+  отредактиру\p{L}* | измени\p{L}* | преврати\p{L}* | убери фон | добавь | сделай |
   duzenle | degistir | donustur | arka plani kaldir | arka planı kaldır | kaldir | kaldır | ekle |
   chỉnh sửa | đổi | biến | thêm | làm cho`);
 // A code task, which belongs to this computer's tools whatever it draws.
-const CODE = words(`
+const CODE = words(String.raw`
   code | script | function | component | class | html | css | svg | canvas | matplotlib | pillow | opencv | ffmpeg | imagemagick |
-  program | repo | repository | commit | npm | pip | terminal | command | shell | parser | parseur | парсер\\p{L}* | коммит\\p{L}* | committe\\p{L}* |
+  program | repo | repository | commit | npm | pip | terminal | command | shell | parser | parseur | парсер\p{L}* | коммит\p{L}* | committe\p{L}* |
   struct | enum | crate | endpoint | api | sdk | schema | rust | golang | kotlin | typescript | javascript |
-  docker\\p{L}* | container\\p{L}* | registry | kubernetes | k8s | podman | iso image | ami | virtual machine | vm | disk image | base image |
-  lazy\\p{L}* | srcset | cdn | cache\\p{L}* | og:image | meta tag | img tag | <img | sitemap | urls? | seo |
+  docker\p{L}* | container\p{L}* | registry | kubernetes | k8s | podman | iso image | ami | virtual machine | vm | disk image | base image |
+  lazy\p{L}* | srcset | cdn | cache\p{L}* | og:image | meta tag | img tag | <img | sitemap | urls? | seo |
   branch(?:es)? | merge | pull request | rebase | checkout | stash |
   skript | funktion | komponente | befehl | codigo | funcion | componente | comando | fonction | composant | commande |
-  код\\p{L}* | скрипт\\p{L}* | функци\\p{L}* | команд\\p{L}* | kod | betik | fonksiyon | komut\\p{L}* | mã | lệnh | hàm`);
+  код\p{L}* | скрипт\p{L}* | функци\p{L}* | команд\p{L}* | kod | betik | fonksiyon | komut\p{L}* | mã | lệnh | hàm`);
 // Text about pictures, not a picture: descriptions, captions, ideas, prompts, lists.
-const ABOUT_PICTURES = words(`
+const ABOUT_PICTURES = words(String.raw`
   descriptions? | captions? | alt text | alt-text | ideas | prompts | list | lists | names |
-  \\p{L}*beschreibung\\p{L}* | \\p{L}*unterschrift\\p{L}* | \\p{L}*ideen | \\p{L}*liste\\p{L}* | descripcion\\p{L}* | leyendas? | ideas | lista\\p{L}* |
-  legendes? | idees | liste | descricao | descricoes | legendas? | ideias | описани\\p{L}* | подпис\\p{L}* | иде\\p{L}* | списо\\p{L}* |
-  aciklama\\p{L}* | fikirler | liste\\p{L}* | mô tả | chú thích | ý tưởng | danh sách`);
+  \p{L}*beschreibung\p{L}* | \p{L}*unterschrift\p{L}* | \p{L}*ideen | \p{L}*liste\p{L}* | descripcion\p{L}* | leyendas? | ideas | lista\p{L}* |
+  legendes? | idees | liste | descricao | descricoes | legendas? | ideias | описани\p{L}* | подпис\p{L}* | иде\p{L}* | списо\p{L}* |
+  aciklama\p{L}* | fikirler | liste\p{L}* | mô tả | chú thích | ý tưởng | danh sách`);
 // Files and folders: picture work on files belongs to the tools ("a thumbnail for each file in the folder").
-const FILES = words(`
-  file | files | folder | folders | directory | directories | datei\\p{L}* | ordner\\p{L}* | verzeichnis\\p{L}* | archivo\\p{L}* | carpeta\\p{L}* |
-  fichier\\p{L}* | dossier\\p{L}* | repertoire | arquivo\\p{L}* | pasta\\p{L}* | файл\\p{L}* | папк\\p{L}* | dosya\\p{L}* | klasor\\p{L}* | tệp | thư mục`);
+const FILES = words(String.raw`
+  file | files | folder | folders | directory | directories | datei\p{L}* | ordner\p{L}* | verzeichnis\p{L}* | archivo\p{L}* | carpeta\p{L}* |
+  fichier\p{L}* | dossier\p{L}* | repertoire | arquivo\p{L}* | pasta\p{L}* | файл\p{L}* | папк\p{L}* | dosya\p{L}* | klasor\p{L}* | tệp | thư mục`);
 // "… and save it to the folder": where the picture goes, not file work.
 const SAVE_VERB = /(?<![\p{L}])(?:save[sd]?|saving|stor(?:e[sd]?|ing)|download(?:s|ed|ing)?|export(?:s|ed|ing)?|speicher\p{L}*|herunterladen|exportier\p{L}*|guarda\p{L}*|descarga\p{L}*|enregistre\p{L}*|télécharge\p{L}*|salve|salvar|baixe|сохрани\p{L}*|скача\p{L}*|kaydet\p{L}*|indir|lưu|tải)(?![\p{L}])/u;
 const SAVE_CLAUSE = /(?<![\p{L}])(?:save|store|put|speicher\p{L}*|lege|guarda\p{L}*|enregistre\p{L}*|salve|salvar|сохрани\p{L}*|kaydet\p{L}*|lưu)(?![\p{L}]).*$/u;
 // Files and everyday work: they rule out reading a short follow-up as an image edit, not a clear request.
-const TASK = words(`
-  file | files | folder | directory | screenshot\\p{L}* | run | test | tests | fix | build | install | deploy | push | debug | refactor |
-  datei\\p{L}* | ordner | verzeichnis | teste\\p{L}* | behebe\\p{L}* | archivo\\p{L}* | carpeta\\p{L}* | fichier\\p{L}* | dossier\\p{L}* |
-  arquivo\\p{L}* | pasta\\p{L}* | файл\\p{L}* | папк\\p{L}* | dosya\\p{L}* | klasor\\p{L}* | tệp | thư mục`);
+const TASK = words(String.raw`
+  file | files | folder | directory | screenshot\p{L}* | run | test | tests | fix | build | install | deploy | push | debug | refactor |
+  datei\p{L}* | ordner | verzeichnis | teste\p{L}* | behebe\p{L}* | archivo\p{L}* | carpeta\p{L}* | fichier\p{L}* | dossier\p{L}* |
+  arquivo\p{L}* | pasta\p{L}* | файл\p{L}* | папк\p{L}* | dosya\p{L}* | klasor\p{L}* | tệp | thư mục`);
 // Handling picture files: tools do that exactly, ChatGPT's image tool would redraw them.
-const PROCESS = words(`
+const PROCESS = words(String.raw`
   resize | crop | compress | rotate | rename | optimi[sz]e | upload | download | delete | describe | analy[sz]e | explain | extract | ocr | read |
-  convert (?:\\p{L}+ )?(?:to|into) (?:png|jpe?g|webp|gif|pdf|svg|ico|bmp|tiff?|heic) | what(?:'s| is) in | look at | view |
-  grosse andern | zuschneiden | komprimier\\p{L}* | beschreib\\p{L}* | analysier\\p{L}* | erklar\\p{L}* |
-  redimensiona\\p{L}* | recorta\\p{L}* | comprim\\p{L}* | describ\\p{L}* | analiz\\p{L}* |
-  redimensionne\\p{L}* | recadre\\p{L}* | compresse\\p{L}* | decri\\p{L}* | analyse\\p{L}* |
+  convert (?:\p{L}+ )?(?:to|into) (?:png|jpe?g|webp|gif|pdf|svg|ico|bmp|tiff?|heic) | what(?:'s| is) in | look at | view |
+  grosse andern | zuschneiden | komprimier\p{L}* | beschreib\p{L}* | analysier\p{L}* | erklar\p{L}* |
+  redimensiona\p{L}* | recorta\p{L}* | comprim\p{L}* | describ\p{L}* | analiz\p{L}* |
+  redimensionne\p{L}* | recadre\p{L}* | compresse\p{L}* | decri\p{L}* | analyse\p{L}* |
   descreva | analise | comprima |
   сожми | обрежь | опиши | проанализируй |
   boyutlandir | kirp | sikistir | acikla | analiz et |
   mô tả | phân tích | nén | cắt`);
 
-const WORD_EDGE = '(?<![\\p{L}\\p{N}_])';
-const WORD_END = '(?![\\p{L}\\p{N}_])';
+const WORD_EDGE = String.raw`(?<![\p{L}\p{N}_])`;
+const WORD_END = String.raw`(?![\p{L}\p{N}_])`;
 const anyOf = (list: string): RegExp => new RegExp(`${WORD_EDGE}(?:${list})${WORD_END}`, 'u');
 const aboutRe = anyOf(ABOUT_PICTURES), filesRe = anyOf(FILES);
-const identifierRe = new RegExp(`${WORD_EDGE}(?:${NOUN})[-_](?!(?:style|like|realistic|real|quality|ready|perfect|based|inspired)${WORD_END})[\\p{L}\\p{N}]`, 'u');
+const identifierRe = new RegExp(String.raw`${WORD_EDGE}(?:${NOUN})[-_](?!(?:style|like|realistic|real|quality|ready|perfect|based|inspired)${WORD_END})[\p{L}\p{N}]`, 'u');
 // Tool and variable names built on a picture word ("save_image", "view_image") are technical text.
-const toolNameRe = new RegExp(`[\\p{L}\\p{N}]_(?:${NOUN})${WORD_END}`, 'u');
+const toolNameRe = new RegExp(String.raw`[\p{L}\p{N}]_(?:${NOUN})${WORD_END}`, 'u');
 const nounRe = anyOf(NOUN), codeRe = anyOf(CODE), taskRe = anyOf(TASK), processRe = anyOf(PROCESS), editRe = anyOf(EDIT), createRe = anyOf(CREATE);
 // A request: a creating verb, then a picture noun within a few words ("create a small watercolor image").
 const DEFINITE = 'the|these|those|this|that|my|our|your|its|their|die|den|das|diese|dieses|meine|unsere|las|los|estas|estos|mis|nuestras|les|ces|mes|nos|as|os|estas|estes|minhas|nossas';
-const definiteRequestRe = new RegExp(`${WORD_EDGE}(?:${CREATE})${WORD_END} (?:${DEFINITE}) (?:[\\p{L}-]+ ){0,2}(?:${NOUN})${WORD_END}`, 'u');
-const requestRe = new RegExp(`${WORD_EDGE}(?:${CREATE})${WORD_END}(?:[^.!?;\\n]{0,48}?)${WORD_EDGE}(?:${NOUN})${WORD_END}`, 'u');
+const definiteRequestRe = new RegExp(String.raw`${WORD_EDGE}(?:${CREATE})${WORD_END} (?:${DEFINITE}) (?:[\p{L}-]+ ){0,2}(?:${NOUN})${WORD_END}`, 'u');
+const requestRe = new RegExp(String.raw`${WORD_EDGE}(?:${CREATE})${WORD_END}(?:[^.!?;\n]{0,48}?)${WORD_EDGE}(?:${NOUN})${WORD_END}`, 'u');
 // "An image of …", "a picture showing …": the noun names what is to be shown.
 const pictureOfRe = new RegExp(`${WORD_EDGE}(?:${NOUN})${WORD_END} (?:of|showing|with|von|mit|de|del|com|du|des|с|ile) `, 'u');
 // Imperative drawing on its own: "draw a cat", "zeichne einen Hund", "нарисуй кота".
 const drawRe = /(?:^|[.!?\n]\s*)(?:please |bitte |por favor |s'il te plait |s'il vous plait |пожалуйста |lutfen |làm ơn )?(?:draw|paint|sketch|zeichne|male|dibuja|pinta|dessine|peins|desenhe|pinte|нарисуй|ciz|vẽ)(?![\p{L}])/u;
 // Turkish puts the verb last: "bir kedi resmi oluştur", "bir köpek çiz".
-const verbLastRe = new RegExp(`${WORD_EDGE}(?:${NOUN})${WORD_END}[^.!?;\\n]{0,24}?${WORD_EDGE}(?:olustur|uret|ciz|yap|tasarla)\\p{L}*(?: (?:mu|mi|mı|musun|misin|mısın|musunuz|misiniz))?\\s*$`, 'u');
+const verbLastRe = new RegExp(String.raw`${WORD_EDGE}(?:${NOUN})${WORD_END}[^.!?;\n]{0,24}?${WORD_EDGE}(?:olustur|uret|ciz|yap|tasarla)\p{L}*(?: (?:mu|mi|mı|musun|misin|mısın|musunuz|misiniz))?\s*$`, 'u');
 const drawLastRe = /(?<![\p{L}])(?:ciz|cizer misin|cizin)\s*$/u;
 // Charts and diagrams are drawn with code and data, not by ChatGPT's image tool.
-const NOT_A_PICTURE = anyOf(words(`
+const NOT_A_PICTURE = anyOf(words(String.raw`
   diagrams? | charts? | graphs? | plots? | flowcharts? | tables? | mermaid | uml | wireframes? | slides? | presentations? | spreadsheets? |
-  diagramm\\p{L}* | tabelle\\p{L}* | diagrama\\p{L}* | grafico\\p{L}* | tabla\\p{L}* | diagramme\\p{L}* | graphique\\p{L}* | tableau\\p{L}* |
-  grafico | tabela | диаграмм\\p{L}* | график\\p{L}* | таблиц\\p{L}* | diyagram\\p{L}* | grafi\\p{L}* | tablo\\p{L}* | biểu đồ | sơ đồ | bảng`));
+  diagramm\p{L}* | tabelle\p{L}* | diagrama\p{L}* | grafico\p{L}* | tabla\p{L}* | diagramme\p{L}* | graphique\p{L}* | tableau\p{L}* |
+  grafico | tabela | диаграмм\p{L}* | график\p{L}* | таблиц\p{L}* | diyagram\p{L}* | grafi\p{L}* | tablo\p{L}* | biểu đồ | sơ đồ | bảng`));
 const QUESTION = /^(?:what|why|how|which|where|when|did you|have you|was|warum|wieso|wie|welche\p{L}*|hast du|que|que |qué|por que|por qué|como|cómo|cual|cuál|pourquoi|comment|quel\p{L}*|qu'|o que|qual|что|почему|как|какой|зачем|ne |neden|nasil|nasıl|hangi|gì|tại sao|như thế nào)(?![\p{L}])/u;
-const wantRe = new RegExp(`${WORD_EDGE}(?:${WANT})${WORD_END}(?:[^.!?;\\n]{0,24}?${WORD_EDGE}(?:${ARTICLE})${WORD_END})?[^.!?;\\n]{0,24}?${WORD_EDGE}(?:${NOUN})${WORD_END}`, 'u');
-const bareWantRe = new RegExp(`${WORD_EDGE}(?:${BARE_WANT}) (?:${ARTICLE}) (?:[\\p{L}\\p{N}x-]+ ){0,3}(?:${NOUN})${WORD_END}`, 'u');
+const wantRe = new RegExp(String.raw`${WORD_EDGE}(?:${WANT})${WORD_END}(?:[^.!?;\n]{0,24}?${WORD_EDGE}(?:${ARTICLE})${WORD_END})?[^.!?;\n]{0,24}?${WORD_EDGE}(?:${NOUN})${WORD_END}`, 'u');
+const bareWantRe = new RegExp(String.raw`${WORD_EDGE}(?:${BARE_WANT}) (?:${ARTICLE}) (?:[\p{L}\p{N}x-]+ ){0,3}(?:${NOUN})${WORD_END}`, 'u');
 // German questions put the infinitive last: "kannst du ein Logo für meinen Podcast machen?".
-const germanLastRe = new RegExp(`${WORD_EDGE}(?:${NOUN})${WORD_END}[^.!?;\\n]{0,48}?${WORD_EDGE}(?:machen|erstellen|zeichnen|malen|generieren|entwerfen|gestalten|erzeugen)\\s*$`, 'u');
+const germanLastRe = new RegExp(String.raw`${WORD_EDGE}(?:${NOUN})${WORD_END}[^.!?;\n]{0,48}?${WORD_EDGE}(?:machen|erstellen|zeichnen|malen|generieren|entwerfen|gestalten|erzeugen)\s*$`, 'u');
 const drawAnywhereRe = new RegExp(`${WORD_EDGE}(?:${DRAW})${WORD_END}`, 'u');
 const notARequest = /(?<![\p{L}])(?:make sure|make it work|draw (?:a |the )?conclusions?|draw attention|stelle sicher|asegurate|assure-toi|certifique-se|убедись|emin ol|đảm bảo)(?![\p{L}])/u;
 

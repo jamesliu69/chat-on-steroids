@@ -59,7 +59,7 @@ export function commonBinaryDirsForPlatform(
   if (platform === 'win32') {
     const home = env.USERPROFILE ?? homeDirectory;
     const localAppData = env.LOCALAPPDATA ?? '';
-    const programFiles = env.ProgramFiles ?? 'C:\\Program Files';
+    const programFiles = env.ProgramFiles ?? String.raw`C:\Program Files`;
     return [
       localAppData && platformPath.join(localAppData, 'Programs', 'tunnel-client'),
       localAppData && platformPath.join(localAppData, 'tunnel-client'),

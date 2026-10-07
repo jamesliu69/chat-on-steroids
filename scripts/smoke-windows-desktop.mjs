@@ -42,7 +42,7 @@ function launch(executable, args) {
 }
 
 try {
-  const framework = path.join(process.env.windir ?? 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319');
+  const framework = path.join(process.env.windir ?? String.raw`C:\Windows`, 'Microsoft.NET', 'Framework64', 'v4.0.30319');
   const fixtureFile = path.join(directory, 'fixture.exe');
   await execute(path.join(framework, 'csc.exe'), [
     '/nologo', '/r:System.Xaml.dll', '/r:System.Web.Extensions.dll', '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll',
@@ -64,7 +64,7 @@ try {
   assert.ok(foregroundWindows.target > 0, 'Foreground fixture was not ready');
   const electronFile = path.join(directory, 'electron-probe.cjs');
   await build({
-    stdin: { resolveDir: repository, loader: 'ts', contents: `
+    stdin: { resolveDir: repository, loader: 'ts', contents: String.raw`
 import { app } from 'electron';
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
@@ -110,7 +110,7 @@ app.whenReady().then(async()=>{
     for(const image of defaultState.screenshots){const png=Buffer.from(image.url.split(',')[1],'base64');assert.equal(image.width,png.readUInt32BE(16));assert.equal(image.height,png.readUInt32BE(20));}
     const textState=await api.get_window_state({window,include_text:true});
     assert.ok(textState.accessibility?.tree,'Explicit accessibility tree missing');
-    const invokeLine=textState.accessibility.tree.split('\\n').find(line=>line.includes('"Smoke Invoke"')&&line.includes('[Invoke'));
+    const invokeLine=textState.accessibility.tree.split('\n').find(line=>line.includes('"Smoke Invoke"')&&line.includes('[Invoke'));
     assert.ok(invokeLine,'Owned button/action missing from indexed tree: '+textState.accessibility.tree);
     let elementIndex=Number(invokeLine.trim().split(':')[0]);
     assert.ok(Number.isInteger(elementIndex));
@@ -118,7 +118,7 @@ app.whenReady().then(async()=>{
     assert.equal(textOnly.screenshots.length,0);
     assert.equal(textOnly.accessibility.tree,textState.accessibility.tree);
     const searched=await api.get_window_state({window,query:'Smoke Invoke',role:'Button',max_elements:5,include_screenshot:false});
-    const matches=searched.accessibility.tree.split('\\n').filter(Boolean);
+    const matches=searched.accessibility.tree.split('\n').filter(Boolean);
     assert.equal(matches.length,1,'Native search did not filter controls');
     assert.ok(matches[0].includes('"Smoke Invoke"')&&matches[0].includes('[Invoke'),'Filtered native control lost its action');
     elementIndex=Number(matches[0].trim().split(':')[0]);
@@ -129,7 +129,7 @@ app.whenReady().then(async()=>{
     await api.get_window_state({window});
     await api.click({window,x:(${windows.invokeX}-state.screenshot.region.x)*state.screenshot.scale,y:(${windows.invokeY}-state.screenshot.region.y)*state.screenshot.scale});
     result={ok:true,before:before.window?.id,after:after.window?.id,window:state.window.id,screenshot,related,windowsApi:{app:window.app,catalogCount:apps.length,membershipVerified:true,defaultTextAbsent:true,textIndexesVerified:true,semanticInvocationRequested:true,popupIdentityVerified:true,screenshots:defaultState.screenshots.map(({url,...item})=>item)}};
-   } else if(op==='paste') result={ok:true,result:await act([{type:'paste',text:'a\\nb\\r\\nc'}],{window:target})};
+   } else if(op==='paste') result={ok:true,result:await act([{type:'paste',text:'a\nb\r\nc'}],{window:target})};
    else throw Error('Unknown probe operation');
   }catch(error){result={ok:false,error:String(error)};}
  await writeFile(${JSON.stringify(path.join(directory, 'electron-result.json'))},JSON.stringify(result));

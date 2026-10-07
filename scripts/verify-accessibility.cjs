@@ -48,7 +48,7 @@ app.whenReady().then(async () => {
     const js = script => win.webContents.executeJavaScript(script);
     await js(axe);
     for (const theme of ['dark', 'light']) for (const state of STATES) for (const page of PAGES) {
-      const result = await js(`(async () => {
+      const result = await js(String.raw`(async () => {
         document.documentElement.dataset.theme = ${JSON.stringify(theme)};
         const app = document.querySelector('.app');
         const chat = ${JSON.stringify(page)} === 'chat';
@@ -74,7 +74,7 @@ app.whenReady().then(async () => {
             nodes: v.nodes.filter(n => (n.any || []).some(check => String(check.message).includes(' 1:1 contrast'))) }))
           .filter(v => v.nodes.length);
         return [...run.violations, ...invisible].map(v => ({ id: v.id, impact: v.impact, help: v.help,
-          nodes: v.nodes.map(n => ({ target: n.target.join(' '), summary: (n.failureSummary || '').split('\\n').slice(1, 2).join(' ').trim() })) }));
+          nodes: v.nodes.map(n => ({ target: n.target.join(' '), summary: (n.failureSummary || '').split('\n').slice(1, 2).join(' ').trim() })) }));
       })()`);
       for (const violation of result) report.push({ theme, state: state.name, page, ...violation });
     }

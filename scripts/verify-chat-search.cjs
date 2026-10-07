@@ -11,7 +11,7 @@ const { fixtureConfigSource, BENIGN_RENDERER_ERRORS } = require(path.join(root, 
 app.setPath('userData', path.join(output, 'profile')); app.disableHardwareAcceleration();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 let server, win;
-const fixture = `(() => {
+const fixture = String.raw`(() => {
  const old=window.api,f=composerFixture,ok=data=>Promise.resolve({ok:true,data:structuredClone(data)});
  f.summary.title='Write a haiku about snow'; f.summary.updatedAt=Date.now()-3*3600000; f.summary.lastToolCallAt=null; f.summary.activityExpiresAt=null;
  const chats=['Fix the flaky bridge test','Plan the release notes','Review the dashboard layout'].map((title,n)=>({...f.summary,id:'search-chat-'+n,title,
@@ -40,7 +40,7 @@ const fixture = `(() => {
   getSession:(id,options)=>{if(id!=='search-chat-1')return old.getSession(id,options);window.pages.push(options||{});const events=page(options);
    return ok({summary:{...chats[1],events:long.length},events,total:long.length,nextFrom:(events.at(-1)?.seq??0)+1});},
   locateSearchMatch:(id,query)=>ok(id==='search-chat-1'&&query.toLowerCase().includes('installer')?{seq:37,kind:'user_message',messageId:'long-37',position:37}:null),
-  searchSessions:query=>{window.searches.push(query);const terms=query.toLowerCase().split(/\\s+/).filter(Boolean);
+  searchSessions:query=>{window.searches.push(query);const terms=query.toLowerCase().split(/\s+/).filter(Boolean);
    const results=found.filter(r=>terms.every(t=>(r.title+' '+(r.snippet?.text||'')).toLowerCase().includes(t)));
    return ok({results,indexed:4,total:4});}
  };

@@ -20,7 +20,7 @@ app.whenReady().then(async () => {
       webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
     await win.loadURL('data:text/html,' + encodeURIComponent('<h1>Project preview</h1><p>Local synthetic PDF fixture.</p>'));
     const pdf = await win.webContents.printToPDF({ pageSize: 'A5' });
-    const fixture = `
+    const fixture = String.raw`
       localStorage.clear();
       window.fixtureErrors=[];
       window.addEventListener('error', event => { if (!${JSON.stringify(BENIGN_RENDERER_ERRORS)}.includes(event.message)) window.fixtureErrors.push(event.message); });
@@ -52,7 +52,7 @@ app.whenReady().then(async () => {
       const monitorAgent={runId:'fixture-run',primeConversationId:'prime-fixture',id:'worker-2',role:'worker',label:'Backend',
         task:'Inspect worker activity',reasoningEffort:null,model:null,state:'active',createdAt:monitorNow-90_000,activatedAt:monitorNow-89_000,
         finishedAt:null,result:null,pending:0,awaitingAck:0,delivered:0,conversationId:'chat-worker-monitor',detachedAt:null,lastSeenAt:monitorNow,revivable:true};
-      const files={'README.md':'# Demo workspace\\n\\nProject files, local drafts and bounded previews.\\n','example.ts':'export const value = 1;\\r\\n'};
+      const files={'README.md':'# Demo workspace\n\nProject files, local drafts and bounded previews.\n','example.ts':'export const value = 1;\r\n'};
       const ok=data=>Promise.resolve({ok:true,data});
       const info=(projectId,name)=>({projectId,projectName:projects.find(p=>p.id===projectId).name,path:name,name,
         bytes:files[name]?.length??${pdf.length},modifiedAt:new Date(0).toISOString(),revision:'a'.repeat(64),
@@ -80,7 +80,7 @@ app.whenReady().then(async () => {
           {status:'U',path:'notes.txt',additions:3,deletions:0,binary:false}
         ]}),
         getProjectGitDiff:(id,name)=>ok({projectId:id,status:'M',path:name,additions:2,deletions:1,binary:false,tooLarge:false,
-          baseText:'# Demo workspace\\n',currentText:'# Demo workspace\\n\\nUpdated in the working tree.\\n'}),
+          baseText:'# Demo workspace\n',currentText:'# Demo workspace\n\nUpdated in the working tree.\n'}),
         attachProjectFile:(id,name)=>{window.fixtureAttached.push({id,name});return ok({id:'file-1',name,size:12,mimeType:'text/plain'});},
         saveProjectFile:(id,name,text)=>{files[name]=text;window.fixtureSaves.push({id,name,text});return ok({preview:info(id,name)});},
         writeClipboard:()=>ok(true),connect:()=>{state.status.state='connected';return ok(state)},disconnect:()=>{state.status.state='disconnected';return ok(state)}
@@ -159,7 +159,7 @@ app.whenReady().then(async () => {
     await screenshot('review-branch-compare');
     await js(`document.querySelector('.review-panel .file-branch-trigger').click();document.querySelector('.file-branch-option').click()`);
     await until(`document.querySelectorAll('.review-panel .file-change-row').length===2`);
-    assert.equal(await js('document.querySelector(".review-panel .file-change-row[data-path=\\"README.md\\"] .file-change-status").textContent'),'M');
+    assert.equal(await js(String.raw`document.querySelector(".review-panel .file-change-row[data-path=\"README.md\"] .file-change-status").textContent`),'M');
     assert.ok(await js(`!document.querySelector('.review-panel .file-panel-toolbar') && !!document.querySelector('.review-panel .file-changes-header .file-panel-refresh')`));
     assert.deepEqual(await js(`[...document.querySelectorAll('.header-dock-controls > button')].map(button=>button.id)`),
       ['rightDockExpand','terminalToggle','rightDockToggle']);
@@ -244,7 +244,7 @@ app.whenReady().then(async () => {
     assert.ok(await js('document.getElementById("chatInput").placeholder.includes("Second project")'));
     await js(`document.querySelector('.sess[data-id="task-0"]').click()`);
     await until('document.querySelector(".app").dataset.screen==="chat"');
-    await js(`(()=>{const input=document.getElementById('chatInput');input.value='/re\\nCheck all changes and keep my draft.';input.setSelectionRange(3,3);input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await js(String.raw`(()=>{const input=document.getElementById('chatInput');input.value='/re\nCheck all changes and keep my draft.';input.setSelectionRange(3,3);input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await until('!document.getElementById("skillPicker").hidden && document.querySelector(".skill-choice[data-skill-id=review]")');
     await screenshot('skills-library');
     await js(`document.querySelector('.skill-choice[data-skill-id="review"]').click()`);
@@ -254,7 +254,7 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll(".composer-selected-skill").length===0');
     await js(`document.querySelector('.sess[data-id="task-0"]').click()`);
     await until('document.querySelectorAll(".composer-selected-skill").length===1');
-    await js(`(()=>{const i=document.getElementById('chatInput');i.value='/project\\n'+i.value;i.setSelectionRange(8,8);i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await js(String.raw`(()=>{const i=document.getElementById('chatInput');i.value='/project\n'+i.value;i.setSelectionRange(8,8);i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await until('!document.getElementById("skillPicker").hidden');
     await js(`document.querySelector('.skill-choice[data-skill-id="project-check--repo-fixture"]').click()`);
     assert.equal(await js('document.querySelectorAll(".composer-selected-skill").length'),2);

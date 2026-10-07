@@ -31,13 +31,13 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show, title: 'CoS history scroll verification', width: 1400, height: 1000,
     webPreferences: { sandbox: true, backgroundThrottling: false, offscreen: !show } });
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-  await win.webContents.executeJavaScript(`(() => {
+  await win.webContents.executeJavaScript(String.raw`(() => {
     const ok = data => Promise.resolve({ok:true, data});
     const text = value => ({text:value, truncated:false, chars:value.length});
     let sessionChanged = null;
     const history = [];
     const add = event => { const seq=history.length+1; history.push({seq,time:seq,source:'extension',...event}); };
-    add({kind:'user_message',messageId:'long-task',message:text(('The full earlier task stays above the recent work.\\n\\n').repeat(120))});
+    add({kind:'user_message',messageId:'long-task',message:text(('The full earlier task stays above the recent work.\n\n').repeat(120))});
     for(let i=0;i<200;i++) add({kind:'tool_call',source:'mcp',call:{callId:'tool-'+i,tool:'read',
       args:text('{}'),result:text('Recorded tool output. '.repeat(50)),outcome:'ok',durationMs:1,
       attribution:'request_id',summary:{kind:'read',title:'Read file '+i,tone:'neutral'}}});

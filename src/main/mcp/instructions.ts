@@ -127,7 +127,7 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform, skills: s
       'If output is truncated, narrow the command or read the relevant region.'
     );
     if (windows) lines.push(
-      'PowerShell does not expand * or ? for native programs. Regex \\x22 matches double quotes. Use script files for complex JavaScript; nested -Command/-e can corrupt quotes or expand variables. Pipe loops as @(foreach (...) { ... }) | Format-Table.',
+      String.raw`PowerShell does not expand * or ? for native programs. Regex \x22 matches double quotes. Use script files for complex JavaScript; nested -Command/-e can corrupt quotes or expand variables. Pipe loops as @(foreach (...) { ... }) | Format-Table.`,
       'rg/ripgrep uses the bundled executable. Omit 2>&1 on native programs in PowerShell: stderr is captured; redirecting it can leave $? false after exit 0.',
       ...(LAUNCHES_WINDOWS_POWERSHELL_5 ? ['This is Windows PowerShell 5.1, without && or ||. Use cmds or A; if ($?) { B }.'] : [])
     );

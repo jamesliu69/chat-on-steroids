@@ -8,21 +8,21 @@ const { fixtureConfigSource, BENIGN_RENDERER_ERRORS } = require(path.join(root, 
 app.setPath('userData', path.join(output, 'profile')); app.disableHardwareAcceleration();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 let server, win;
-const fixture = `(() => {
+const fixture = String.raw`(() => {
  const old=window.api,f=composerFixture,now=Date.now(),ok=data=>Promise.resolve({ok:true,data});
  const stored=text=>({text,chars:text.length,truncated:false});
  const tool=(seq,name,args,summary,changes)=>({seq,time:now+seq,source:'mcp',kind:'tool_call',turnId:'t-1',call:{callId:'00000000-0000-4000-8000-00000000000'+seq,tool:name,args:stored(JSON.stringify(args)),result:stored(name==='apply_patch'?'Edited src/app.ts':'Build passed'),summary,changes,outcome:'ok',attribution:'request_id',requestId:'synthetic-request',conversationId:'preview-chat',durationMs:120}});
  f.events.splice(1,0,
   tool(2,'exec_command',{cmd:'npm run build'},{kind:'run',title:'Ran npm run build',tone:'good'}),
   tool(3,'read',{paths:['src/app.ts','package.json']},{kind:'read',title:'Read 2 files',tone:'neutral'}),
-  tool(4,'apply_patch',{patch:'*** Begin Patch\\n*** Update File: src/app.ts\\n@@\\n-old\\n+new\\n*** End Patch'},{kind:'edit',title:'Edited src/app.ts',tone:'good'},[{path:'src/app.ts',added:1,removed:1,approximate:false,reviewAssetId:'synthetic-edit'}]));
+  tool(4,'apply_patch',{patch:'*** Begin Patch\n*** Update File: src/app.ts\n@@\n-old\n+new\n*** End Patch'},{kind:'edit',title:'Edited src/app.ts',tone:'good'},[{path:'src/app.ts',added:1,removed:1,approximate:false,reviewAssetId:'synthetic-edit'}]));
  f.events.at(-1).seq=5;
  const worker={...f.summary,id:'worker-local',title:'Verify the build',conversationId:'worker-chat',toolCalls:3,origin:{kind:'worker',fromSessionId:f.summary.id,agentId:'worker-1',task:'Verify the build'},selectedModel:null,lastTurnOutcome:'completed'};
  window.capturedClipboard=null;
  const methods={
   getState:async()=>{const r=await old.getState();r.data.config=fixtureMerge(fixtureDefaults,r.data.config);return r;},
   listSessions:()=>ok({sessions:[f.summary],activeId:f.summary.id,pressure:[]}),
-  getToolEditReview:()=>ok({callId:'00000000-0000-4000-8000-000000000004',changeIndex:0,path:'src/app.ts',added:1,removed:1,baseText:'const value = "before";\\n',currentText:'const value = "after";\\n'}),
+  getToolEditReview:()=>ok({callId:'00000000-0000-4000-8000-000000000004',changeIndex:0,path:'src/app.ts',added:1,removed:1,baseText:'const value = "before";\n',currentText:'const value = "after";\n'}),
   writeClipboard:value=>{window.capturedClipboard=value;return ok(true);},
   getSession:id=>id==='worker-local'?ok({summary:worker,events:[{seq:1,time:now,source:'extension',kind:'assistant_message',messageId:'synthetic-worker-result',message:stored('Build verified. No regressions found.'),final:true,state:'final'}],total:1,nextFrom:2}):old.getSession(id)
  };

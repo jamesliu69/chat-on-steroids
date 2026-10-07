@@ -128,7 +128,7 @@ export function globToRegExp(pattern: string, caseSensitive: boolean): RegExp {
     } else if (char === '?') {
       out += '[^/]';
     } else {
-      out += char.replaceAll(/[.+^${}()|[\]\\]/g, '\\$&');
+      out += char.replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`);
     }
   }
   return new RegExp(`^${out}$`, caseSensitive ? '' : 'i');
@@ -175,7 +175,7 @@ function ripgrepIncludeGlob(pattern: string): string {
 function ripgrepExcludeGlob(raw: string): string {
   const prefix = raw.endsWith('*');
   const literal = prefix ? raw.slice(0, -1) : raw;
-  const escaped = literal.replaceAll(/[\\*?\[\]{}]/g, '\\$&');
+  const escaped = literal.replaceAll(/[\\*?\[\]{}]/g, String.raw`\$&`);
   return `!**/${escaped}${prefix ? '*' : ''}/**`;
 }
 

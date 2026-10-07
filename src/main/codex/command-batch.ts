@@ -21,7 +21,7 @@ function commandBanner(index: number, count: number, marker: string): string {
 }
 
 function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll(/'/g, `'\\''`)}'`;
+  return `'${value.replaceAll(/'/g, String.raw`'\''`)}'`;
 }
 
 function powershellBatch(commands: readonly string[], marker: string): string {
@@ -67,10 +67,10 @@ function posixBatch(commands: readonly string[], marker: string): string {
   const lines = ['__cos_batch_exit=0'];
   commands.forEach((command, index) => {
     lines.push(
-      `printf '%s\\n' ${shellSingleQuote(commandBanner(index + 1, commands.length, marker))}`,
+      String.raw`printf '%s\n' ${shellSingleQuote(commandBanner(index + 1, commands.length, marker))}`,
       `eval ${shellSingleQuote(command)}`,
       '__cos_batch_code=$?',
-      `printf '%s\\n' "--- exit code $__cos_batch_code --- [clf-batch:${marker}]"`,
+      String.raw`printf '%s\n' "--- exit code $__cos_batch_code --- [clf-batch:${marker}]"`,
       'if [ "$__cos_batch_code" -ne 0 ] && [ "$__cos_batch_exit" -eq 0 ]; then __cos_batch_exit=$__cos_batch_code; fi'
     );
   });
@@ -172,14 +172,14 @@ export function parseCommandBatchSections(output: string, marker: string): Comma
   const sections: CommandBatchSection[] = [];
   const lines = output.split('\n').map((line) => line.replace(/\r$/, ''));
   if (!/^[0-9a-f]{24}$/.test(marker)) return sections;
-  const firstPattern = new RegExp(`^--- command 1\\/(\\d+) --- \\[clf-batch:${marker}\\]$`);
+  const firstPattern = new RegExp(String.raw`^--- command 1\/(\d+) --- \[clf-batch:${marker}\]$`);
   const firstIndex = lines.findIndex((line) => firstPattern.test(line));
   if (firstIndex < 0) return sections;
   const first = firstPattern.exec(lines[firstIndex]!);
   if (!first) return sections;
   const count = Number(first[1]);
-  const pattern = new RegExp(`^--- command (\\d+)\\/${count} --- \\[clf-batch:${marker}\\]$`);
-  const exitPattern = new RegExp(`^--- exit code (-?\\d+) --- \\[clf-batch:${marker}\\]$`);
+  const pattern = new RegExp(String.raw`^--- command (\d+)\/${count} --- \[clf-batch:${marker}\]$`);
+  const exitPattern = new RegExp(String.raw`^--- exit code (-?\d+) --- \[clf-batch:${marker}\]$`);
   const parseFailureMarker = ` [clf-batch:${marker}]`;
   let open: { index: number; body: string[]; parseFailed: boolean } | null = null;
   for (const line of lines.slice(firstIndex)) {

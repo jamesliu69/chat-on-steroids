@@ -249,13 +249,13 @@ app.whenReady().then(async () => {
   proxyServer.close();
 
   const preload = path.join(fixture, 'popup-preload.cjs');
-  fs.writeFileSync(preload, `
+  fs.writeFileSync(preload, String.raw`
     const { contextBridge } = require('electron');
     const locale = process.argv.find(arg => arg.startsWith('--fixture-locale=')).split('=')[1];
     const messages = require(${JSON.stringify(path.join(root, 'extension/_locales'))} + '/' + locale + '/messages.json');
     contextBridge.exposeInMainWorld('__fixtureChrome', {
       i18n: { getUILanguage: () => locale.replace('_', '-'), getMessage: (key, substitutions) =>
-        (messages[key]?.message || '').replaceAll(/\\$([1-9])/g, (_, index) =>
+        (messages[key]?.message || '').replaceAll(/\$([1-9])/g, (_, index) =>
           String((Array.isArray(substitutions) ? substitutions : [substitutions])[Number(index) - 1] ?? '')) },
       permissions: { request: async () => locale === 'pt_BR' },
       storage: { local: { get: async () => ({}) } },

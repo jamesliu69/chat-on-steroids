@@ -128,14 +128,14 @@ let cachedPowerShell: string | null | undefined;
 
 /** Where Windows keeps itself, read the way the OS reads variable names. */
 function windowsRoot(): string {
-  return envValue(process.env, 'SystemRoot') || envValue(process.env, 'windir') || 'C:\\Windows';
+  return envValue(process.env, 'SystemRoot') || envValue(process.env, 'windir') || String.raw`C:\Windows`;
 }
 
 /** Prefers PowerShell 7 when installed, falling back to Windows PowerShell 5.1. */
 export function findPowerShell(): string | null {
   if (cachedPowerShell !== undefined) return cachedPowerShell;
   const candidates = [
-    path.join(envValue(process.env, 'ProgramFiles') ?? 'C:\\Program Files', 'PowerShell', '7', 'pwsh.exe'),
+    path.join(envValue(process.env, 'ProgramFiles') ?? String.raw`C:\Program Files`, 'PowerShell', '7', 'pwsh.exe'),
     windowsPowerShellPath()
   ];
   cachedPowerShell = candidates.find((c) => existsSync(c)) ?? null;

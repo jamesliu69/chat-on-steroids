@@ -62,7 +62,7 @@ app.whenReady().then(async () => {
     let v=await view();
     assert.ok(v.gap<=2 && v.lastVisible, 'opens at the end: '+JSON.stringify(v));
     // The visible area shrinks: a many-line draft grows the message box.
-    await js(`(()=>{const i=document.getElementById('chatInput');i.value='one\\ntwo\\nthree\\nfour\\nfive\\nsix\\nseven\\neight';i.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+    await js(String.raw`(()=>{const i=document.getElementById('chatInput');i.value='one\ntwo\nthree\nfour\nfive\nsix\nseven\neight';i.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
     await pause(700);
     v=await view();
     fs.writeFileSync(path.join(output,'at-end-after-shrink.png'),(await win.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());

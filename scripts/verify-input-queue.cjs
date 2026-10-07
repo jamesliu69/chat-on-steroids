@@ -105,7 +105,7 @@ app.whenReady().then(async () => {
     const seed = async () => {
       await js(`queueFixture.inputs=[{id:'editable-task',sessionId:queueFixture.session.id,text:'Review the attached screenshots',mode:'after-turn',dueAt:0,
         state:'queued',owner:null,createdAt:0,conversationId:'fixture-chat',model:null,reasoningEffort:null}];queueFixture.notify()`);
-      await wait('!!document.querySelector("#finishQueue [aria-label=\\"Edit queued task\\"]")');
+      await wait(String.raw`!!document.querySelector("#finishQueue [aria-label=\"Edit queued task\"]")`);
       await click('#finishQueue [aria-label="Edit queued task"]');
     };
     await seed();
@@ -138,7 +138,7 @@ app.whenReady().then(async () => {
     await wait('document.getElementById("finishQueue").hidden'); checks.push('missing queue row retires editor');
     await js(`queueFixture.inputs=[{id:'deferred-upload',sessionId:queueFixture.session.id,text:'Native upload waiting',mode:'after-turn',requestedMode:'auto',dueAt:0,
       state:'queued',owner:null,createdAt:0,conversationId:'fixture-chat',model:null,reasoningEffort:null}];queueFixture.notify()`);
-    await wait('!!document.querySelector("#inputQueue [data-input-id=\\"deferred-upload\\"] [aria-label=\\"Cancel delivery\\"]")');
+    await wait(String.raw`!!document.querySelector("#inputQueue [data-input-id=\"deferred-upload\"] [aria-label=\"Cancel delivery\"]")`);
     assert.equal(await js('document.getElementById("finishQueue").hidden'), true); checks.push('deferred upload remains visible and cancellable');
     await click('#inputQueue [aria-label="Cancel delivery"]');
     await js(`(() => {
@@ -150,7 +150,7 @@ app.whenReady().then(async () => {
         recovery:{questionId:'fixture-question',pro:false,busyUntil:deadline,phase:'ready'}}];
       queueFixture.notify();
     })()`);
-    await wait('!!document.querySelector("#finishQueue [aria-label=\\"Cancel automatic Continue\\"]") && !!document.querySelector("#recoveryStatus [role=timer]")');
+    await wait(String.raw`!!document.querySelector("#finishQueue [aria-label=\"Cancel automatic Continue\"]") && !!document.querySelector("#recoveryStatus [role=timer]")`);
     for (const width of [1100, 640]) {
       win.setSize(width, 800);
       await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
@@ -193,7 +193,7 @@ app.whenReady().then(async () => {
         recovery:{questionId:'question-'+i,pro:false,busyUntil:start+i*60_000+70_000,phase:'ready'}}));
       queueFixture.notify();
     })()`);
-    await wait('document.querySelectorAll("#timeline [data-input-id^=\\"cancelled-continue-\\"]").length===3');
+    await wait(String.raw`document.querySelectorAll("#timeline [data-input-id^=\"cancelled-continue-\"]").length===3`);
     for (const width of [1100,640]) {
       win.setSize(width,1000);
       await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
@@ -217,7 +217,7 @@ app.whenReady().then(async () => {
       await js(`queueFixture.files=Array.from({length:${count}},(_,i)=>({id:'image-'+i,name:'reference-'+i+'.png',mimeType:'image/png',size:42}))`);
       await click('#attachImages');
       await wait(`document.querySelectorAll('#composerImages .image-remove').length === ${count}`);
-      assert.equal(await js('document.querySelector("[data-delivery=\\"tool\\"]").hidden'), false);
+      assert.equal(await js(String.raw`document.querySelector("[data-delivery=\"tool\"]").hidden`), false);
       await js(`document.getElementById('composer').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))`);
       await wait(`queueFixture.sent.at(-1)?.attachments.length === ${count}`);
       assert.equal(await js('queueFixture.sent.at(-1).delivery'), 'tool'); checks.push(`${count} images select Inject now`);

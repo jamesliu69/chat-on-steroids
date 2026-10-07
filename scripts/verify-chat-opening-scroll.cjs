@@ -41,12 +41,12 @@ app.whenReady().then(async () => {
   assert.equal(await win.webContents.executeJavaScript(`Promise.all(['CoS Phosphor','CoS Phosphor Fill']
     .map(name=>document.fonts.load('16px "'+name+'"'))).then(faces=>faces.every(face=>face.length>0))`), true,
     'The actual bundled icon faces must load before capturing visual evidence');
-  await win.webContents.executeJavaScript(`(() => {
+  await win.webContents.executeJavaScript(String.raw`(() => {
     const ok = data => Promise.resolve({ok:true, data});
     let sessionChanged = null;
     const rows = (id, count) => Array.from({length:count}, (_, i) => ({seq:i+1, time:1+i,
       source:'extension', kind:'user_message', messageId:id+'-'+i,
-      message:{text:('Message '+i+' in '+id+'\\n\\n').repeat(i === 0 ? 400 : 4), truncated:false, chars:100}}));
+      message:{text:('Message '+i+' in '+id+'\n\n').repeat(i === 0 ? 400 : 4), truncated:false, chars:100}}));
     const history = {a:rows('a',160), b:rows('b',5)};
     const sessions = Object.keys(history).map(id => ({id, title:'Chat '+id, conversationId:id,
       chatIds:[id], startedAt:1, updatedAt:1, endedAt:null, events:history[id].length, userMessages:1,

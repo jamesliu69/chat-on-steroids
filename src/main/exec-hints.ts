@@ -696,7 +696,7 @@ export function bindBundledRipgrep(command: string, shellType: ShellType, execut
 
 /** One literal POSIX-shell argument. Single quotes close/reopen around an embedded apostrophe. */
 function quotePosixArgument(value: string): string {
-  return `'${value.replaceAll(/'/g, `'\\''`)}'`;
+  return `'${value.replaceAll(/'/g, String.raw`'\''`)}'`;
 }
 
 /** Where one double-quoted string sits in a command line, read under bash's escape rules. */
@@ -817,7 +817,7 @@ function bashDoubleQuotedRegions(command: string): QuotedRegion[] | null {
  */
 export function repairPowerShellQuoting(cmd: string, shellType: ShellType): NormalizedCommand {
   if (shellType !== 'powershell') return { cmd, notes: [] };
-  if (!cmd.includes('\\"')) return { cmd, notes: [] };
+  if (!cmd.includes(String.raw`\"`)) return { cmd, notes: [] };
   const powerShellBalanced = powershellQuotingTerminates(cmd);
   // A balanced line might be valid PowerShell. The one safe exception below proves the
   // affected token is ripgrep's pattern, but that proof uses the lightweight command parser
@@ -843,7 +843,7 @@ export function repairPowerShellQuoting(cmd: string, shellType: ShellType): Norm
   let repaired = 0;
   let regexQuotes = false;
   for (const region of regions) {
-    if (!region.body.includes('\\"')) continue;
+    if (!region.body.includes(String.raw`\"`)) continue;
     if (powerShellBalanced && !isRipgrepPatternRegion(cmd, region)) continue;
     // Interpolation, an escape this reading does not model, or a backslash whose meaning
     // differs between the two shells. Any of them makes the move lossy; leave it to the hint.
@@ -858,7 +858,7 @@ export function repairPowerShellQuoting(cmd: string, shellType: ShellType): Norm
     const regexPattern = isRipgrepPatternRegion(cmd, region) && !/\\[QE]/.test(region.body) &&
       !/[`$#]/.test(patternCommand) &&
       !tokenize(patternCommand).some(token => token.value === '--fixed-strings' || /^-[^-]*F/.test(token.value));
-    const body = regexPattern ? region.body.replaceAll(/\\"/g, '\\x22') : region.body;
+    const body = regexPattern ? region.body.replaceAll(/\\"/g, String.raw`\x22`) : region.body;
     regexQuotes ||= regexPattern;
     out += cmd.slice(cursor, region.open);
     out += `'${body.replaceAll(/'/g, "''")}'`;
@@ -873,7 +873,7 @@ export function repairPowerShellQuoting(cmd: string, shellType: ShellType): Norm
     cmd: out,
     notes: [
       'PowerShell does not use backslash to escape quotes. Re-quoted the affected argument with single quotes.' +
-        (regexQuotes ? ' In ripgrep regex patterns, literal double quotes use \\x22 to preserve one native argument on Windows PowerShell and pwsh.' :
+        (regexQuotes ? String.raw` In ripgrep regex patterns, literal double quotes use \x22 to preserve one native argument on Windows PowerShell and pwsh.` :
           ' Native embedded-quote handling also depends on the shell; use a script file for complex code arguments.')
     ]
   };
@@ -1235,9 +1235,9 @@ function expandGlob(pattern: string, list: DirectoryLister): { hits: string[]; d
     return null;
   }
   const source = location.leaf
-    .replaceAll(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replaceAll(/\*/g, '[^\\\\/]*')
-    .replaceAll(/\?/g, '[^\\\\/]');
+    .replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
+    .replaceAll(/\*/g, String.raw`[^\\\/]*`)
+    .replaceAll(/\?/g, String.raw`[^\\\/]`);
   // Case-insensitively, which is how Windows matches filenames and therefore how the shell
   // being stood in for would have matched them.
   const matcher = new RegExp(`^${source}$`, 'i');
@@ -1505,7 +1505,7 @@ export function execRecoveryHints(
 
   if (
     powershell &&
-    command.includes('\\"') &&
+    command.includes(String.raw`\"`) &&
     /PositionalParameterNotFound|A positional parameter cannot be found that accepts argument/i.test(outputText) &&
     !/The string (?:is missing the terminator|starting:)/i.test(outputText)
   ) {
@@ -1515,17 +1515,17 @@ export function execRecoveryHints(
     hints.push(
       'PowerShell ended the double-quoted argument at the backslash-quote inside it — a backslash escapes nothing in ' +
         'PowerShell — and handed the rest of the text to the cmdlet as extra positional arguments, which it refused. ' +
-        'For an rg regex, use single quotes and \\x22 for the literal double quote; double any apostrophe. ' +
+        String.raw`For an rg regex, use single quotes and \x22 for the literal double quote; double any apostrophe. ` +
         'Use a script file for complex native arguments: embedded-quote handling differs between PowerShell versions.'
     );
   }
 
-  if (powershell && command.includes('\\"') && /The string (?:is missing the terminator|starting:)/i.test(outputText)) {
+  if (powershell && command.includes(String.raw`\"`) && /The string (?:is missing the terminator|starting:)/i.test(outputText)) {
     hints.push(
       'PowerShell refused that line at a quote and ran none of it, including any earlier ' +
         'statement on the same line. A backslash is not an escape character in PowerShell, so ' +
         'a backslash-quote inside a double-quoted argument ends the argument there. For an rg regex, ' +
-        'use single quotes and \\x22 for the literal double quote; double any apostrophe. ' +
+        String.raw`use single quotes and \x22 for the literal double quote; double any apostrophe. ` +
         'Use a script file for complex native arguments: embedded-quote handling differs between PowerShell versions.'
     );
   }
@@ -1546,7 +1546,7 @@ export function execRecoveryHints(
     );
   }
 
-  const bashQuoteFailure = command.includes('\\"') && /The string (?:is missing the terminator|starting:)/i.test(outputText);
+  const bashQuoteFailure = command.includes(String.raw`\"`) && /The string (?:is missing the terminator|starting:)/i.test(outputText);
   const parserFailure =
     evidence.powershellParseFailed === true ||
     /\bParserError\b/i.test(outputText) ||
@@ -1590,7 +1590,7 @@ export function execRecoveryHints(
   }
 
   if (/cannot find GOROOT/i.test(outputText)) {
-    const executable = powershell || cmd ? 'bin\\go.exe' : 'bin/go';
+    const executable = powershell || cmd ? String.raw`bin\go.exe` : 'bin/go';
     const example = powershell
       ? "`$env:GOROOT='C:\\path\\to\\go'; $env:Path=\"$env:GOROOT\\bin;$env:Path\"`"
       : cmd

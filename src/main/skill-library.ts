@@ -165,7 +165,7 @@ async function locations(scope: SkillLibraryScope): Promise<{ roots: Candidate[]
   const codex = path.resolve(process.env.CODEX_HOME?.trim() || path.join(home, '.codex'));
   const claude = path.resolve(process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(home, '.claude'));
   let projectReal: string | null = null;
-  const admin = process.platform === 'win32' ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex') : '/etc/codex';
+  const admin = process.platform === 'win32' ? path.join(process.env.ProgramData || String.raw`C:\ProgramData`, 'OpenAI', 'Codex') : '/etc/codex';
   const roots: Candidate[] = [];
   const configs = [path.join(admin, 'config.toml'), path.join(codex, 'config.toml')];
   if (scope.projectPath) {

@@ -34,7 +34,7 @@ export function userSkillAreas(): UserSkillArea[] {
     { name: 'claude', base: path.resolve(process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(home(), '.claude')) },
     { name: 'codex', base: path.resolve(process.env.CODEX_HOME?.trim() || path.join(home(), '.codex')) },
     { name: 'agents', base: path.join(home(), '.agents') },
-    { name: 'admin', base: process.platform === 'win32' ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'OpenAI', 'Codex') : '/etc/codex' }
+    { name: 'admin', base: process.platform === 'win32' ? path.join(process.env.ProgramData || String.raw`C:\ProgramData`, 'OpenAI', 'Codex') : '/etc/codex' }
   ];
 }
 

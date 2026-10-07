@@ -252,7 +252,7 @@ function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 /** MSVCRT-style quoting for one argument, for the verbatim `cmd.exe` command line only. */
 function quoteWindowsArgument(argument: string): string {
   if (argument !== '' && !/[\s"]/.test(argument)) return argument;
-  return `"${argument.replaceAll(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  return `"${argument.replaceAll(/(\\*)"/g, String.raw`$1$1\"`).replace(/(\\*)$/, '$1$1')}"`;
 }
 
 /**

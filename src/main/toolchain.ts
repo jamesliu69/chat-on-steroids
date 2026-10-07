@@ -55,8 +55,8 @@ export const realProbe: ToolchainProbe = {
 
 /** Where a JDK lives on Windows when nobody exported JAVA_HOME. */
 function javaCandidates(env: MutableEnvironment): string[] {
-  const programFiles = envValue(env, 'ProgramFiles') ?? 'C:\\Program Files';
-  const programFilesX86 = envValue(env, 'ProgramFiles(x86)') ?? 'C:\\Program Files (x86)';
+  const programFiles = envValue(env, 'ProgramFiles') ?? String.raw`C:\Program Files`;
+  const programFilesX86 = envValue(env, 'ProgramFiles(x86)') ?? String.raw`C:\Program Files (x86)`;
   const localAppData = envValue(env, 'LOCALAPPDATA') ?? '';
 
   // Exact directories first, in the order a developer would expect to win. Android Studio's
@@ -84,12 +84,12 @@ function javaCandidates(env: MutableEnvironment): string[] {
 
 /** Where the Go toolchain lives when nobody exported GOROOT. */
 function goCandidates(env: MutableEnvironment): string[] {
-  const programFiles = envValue(env, 'ProgramFiles') ?? 'C:\\Program Files';
+  const programFiles = envValue(env, 'ProgramFiles') ?? String.raw`C:\Program Files`;
   const localAppData = envValue(env, 'LOCALAPPDATA') ?? '';
   return [
     path.join(programFiles, 'Go'),
     localAppData ? path.join(localAppData, 'Programs', 'Go') : '',
-    'C:\\Go'
+    String.raw`C:\Go`
   ].filter(Boolean);
 }
 

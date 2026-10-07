@@ -38,14 +38,14 @@ app.whenReady().then(async () => {
     webPreferences: { sandbox: true, offscreen: true, backgroundThrottling: false } });
   try {
     await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    await win.webContents.executeJavaScript(`(() => {
+    await win.webContents.executeJavaScript(String.raw`(() => {
       const ok = data => Promise.resolve({ok:true,data});
       const base = (id,title,conversationId) => ({id,title,conversationId,chatIds:[conversationId],startedAt:1,updatedAt:Date.now(),endedAt:null,
         events:0,userMessages:0,toolCalls:0,lastToolCallAt:null,processExitNonzero:0,toolRejected:0,toolInternalErrors:0,errors:0,
         estimatedTokens:0,contextTokens:0,lastHandoffId:null,lastHandoffAt:null,lastTurnOutcome:null,activeTurnId:'turn-'+id,agents:[],origin:null});
       const a=base('process-a','Background process stress','fixture-a'), b=base('process-b','Other chat','fixture-b');
       const now=Date.now();
-      const long='node -e "console.log(\\'background fixture with a deliberately long command that must truncate without pushing Stop off screen\\'); setInterval(() => {}, 1000)"';
+      const long='node -e "console.log(\'background fixture with a deliberately long command that must truncate without pushing Stop off screen\'); setInterval(() => {}, 1000)"';
       window.processFixture={
         sessions:[a,b], stopCalls:[], inputs:Array.from({length:8},(_,i)=>({id:'task-'+i,sessionId:a.id,text:'Queued verification stage '+(i+1)+' with enough descriptive text to exercise wrapping and the bounded task scroller.',
           mode:'after-turn',dueAt:0,state:'queued',owner:null,createdAt:now+i,conversationId:a.conversationId,model:null,reasoningEffort:null})),
@@ -89,7 +89,7 @@ app.whenReady().then(async () => {
       throw new Error('Renderer condition timed out: ' + condition + ' ' + detail);
     };
     await js(`chat.initChat({state:()=>null,save:async()=>{}});chat.chatVisible(true);`);
-    await wait('!!document.querySelector("#sessionList [data-id=\\"process-a\\"]")');
+    await wait(String.raw`!!document.querySelector("#sessionList [data-id=\"process-a\"]")`);
     await js(`document.querySelector('#sessionList [data-id="process-a"]').click()`);
     await wait('!document.getElementById("backgroundExecStatus").hidden && !document.getElementById("finishQueue").hidden');
 

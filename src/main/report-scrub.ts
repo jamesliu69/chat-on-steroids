@@ -45,7 +45,7 @@ function tag(kind: string, value: string): string {
 }
 
 function escapeRegExp(value: string): string {
-  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 /** One path segment: kept when structural or shaped like an id, otherwise tagged, keeping its extension. */
@@ -83,7 +83,7 @@ export function scrubText(text: string, context: ScrubContext): string {
     .replaceAll(/\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, ip => ip === '127.0.0.1' || ip === '0.0.0.0' ? ip : '<ip>');
   if (context.home.length >= 3) {
     const home = escapeRegExp(context.home.replace(/[\\/]+$/, ''));
-    out = out.replace(new RegExp(home.replaceAll(/\\\\|\//g, '[\\\\/]'), 'gi'), '~');
+    out = out.replace(new RegExp(home.replaceAll(/\\\\|\//g, String.raw`[\\\/]`), 'gi'), '~');
   }
   out = out
     // A quoted path may contain spaces ("…/My Documents/report.csv").
