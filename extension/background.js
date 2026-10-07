@@ -364,11 +364,9 @@ async function loadOnce() {
   // Browser-close durability: a send already accepted by ChatGPT is irreversible. Its final ACK
   // therefore has to survive storage.session being cleared on browser restart. Prefer the local
   // copy, while still accepting the old session copy as an upgrade migration path.
-  commandAckOutbox = Array.isArray(stored.commandAckOutbox)
-    ? stored.commandAckOutbox.slice(-200)
-    : Array.isArray(live.commandAckOutbox)
-      ? live.commandAckOutbox.slice(-200)
-      : [];
+  if (Array.isArray(stored.commandAckOutbox)) commandAckOutbox = stored.commandAckOutbox.slice(-200);
+  else if (Array.isArray(live.commandAckOutbox)) commandAckOutbox = live.commandAckOutbox.slice(-200);
+  else commandAckOutbox = [];
   recoveryMonitoring = live.recoveryMonitoring === true;
   const savedDiscardProtection =
     live.discardProtectedTabs && typeof live.discardProtectedTabs === 'object' && !Array.isArray(live.discardProtectedTabs)
@@ -1228,12 +1226,13 @@ function provision(reconnect = false) {
   const intent = connectionEpoch;
   if (pairing && pairingEpoch === intent && pairingReconnect === reconnect) return pairing;
   const work = pairOnce(intent, reconnect).then((result) => {
-    pairingError = result?.ok
-      ? null
-      : {
-          error: result?.error ? String(result.error) : 'pair_failed',
-          message: result?.message ? String(result.message) : ''
-        };
+    if (result?.ok) pairingError = null;
+    else {
+      pairingError = {
+        error: result?.error ? String(result.error) : 'pair_failed',
+        message: result?.message ? String(result.message) : ''
+      };
+    }
     return result;
   });
   const tracked = work.finally(() => {
@@ -1355,16 +1354,22 @@ async function drainCommandAcks(targetId = null) {
         continue;
       }
       const inputReceipt = entry.kind === 'input';
-      const payload = inputReceipt ? { id: entry.id, owner: entry.owner, conversationId: entry.conversationId, messageId: entry.messageId } : commandAckPayload(
-        entry.id,
-        entry.status === 'failed' ? 'failed' : 'sent',
-        entry.error,
-        entry.conversationId,
-        entry.agent,
-        entry.client,
-        entry.turnId,
-        entry.detail
-      );
+      let payload;
+      if (inputReceipt) {
+        payload = { id: entry.id, owner: entry.owner, conversationId: entry.conversationId, messageId: entry.messageId };
+      } else {
+        const status = entry.status === 'failed' ? 'failed' : 'sent';
+        payload = commandAckPayload(
+          entry.id,
+          status,
+          entry.error,
+          entry.conversationId,
+          entry.agent,
+          entry.client,
+          entry.turnId,
+          entry.detail
+        );
+      }
       const result = await call(inputReceipt ? '/input/ack' : '/commands/ack', { method: 'POST', body: JSON.stringify(payload) });
       if (entry.id === targetId) targetResult = result;
 
@@ -2062,7 +2067,8 @@ async function deliverDesktopInputs(inputs, background, reusableConversations = 
       // unresponsive elected document never grants another opening attempt.
       if (elections[input.id] && !recoveredReuse) continue;
       if (Object.keys(elections).length >= 1000) continue;
-      const url = target ? `https://chatgpt.com/c/${encodeURIComponent(target)}` : `https://chatgpt.com/?${input.lifetime === 'temporary-planner' ? 'temporary-chat=true&' : ''}${marker}#${marker}`;
+      const tempParam = input.lifetime === 'temporary-planner' ? 'temporary-chat=true&' : '';
+      const url = target ? `https://chatgpt.com/c/${encodeURIComponent(target)}` : `https://chatgpt.com/?${tempParam}${marker}#${marker}`;
       if (!target && input.lifetime !== 'temporary-planner') {
         const reusable = new Set(reusableConversations);
         const choices = tabs.filter(candidate => !candidate.pinned && !candidate.pendingUrl && modelCatalogTarget?.tab !== candidate.id &&
@@ -2680,9 +2686,10 @@ async function runImageExports(jobs) {
           ? await tabReply(tab.id, { type: 'clf-image-export', conversationId, messageId, assetId }, undefined, IMAGE_EXPORT_PAGE_MS)
           : { error: 'not_open' };
       } catch { answer = null; }
+      const exportError = typeof answer?.error === 'string' ? answer.error.slice(0, 40) : 'not_rendered';
       const body = answer && typeof answer.data === 'string'
         ? { nonce, data: answer.data }
-        : { nonce, error: typeof answer?.error === 'string' ? answer.error.slice(0, 40) : 'not_rendered' };
+        : { nonce, error: exportError };
       await call('/image-export', { method: 'POST', body: JSON.stringify(body) });
     })().catch(() => undefined).finally(() => setTimeout(() => imageExportsInFlight.delete(nonce), 120_000));
   }
@@ -3010,8 +3017,9 @@ async function performBrowserRepairs(repairs, policy) {
         // own busy page is what it may recover, not an ordinary turn to keep idle.
         const inspectTurn = target && !suspended;
         const draftOnly = reason === 'compaction';
+        const checkOptions = documentId ? { documentId } : undefined;
         const check = inspectTurn ? await tabReply(target.id,
-          { type: 'clf-repair-check', conversationId, draftOnly }, documentId ? { documentId } : undefined) : null;
+          { type: 'clf-repair-check', conversationId, draftOnly }, checkOptions) : null;
         if (check?.safe === false) {
           // The repair stays handed for the next pass; the app logs once why the page held it.
           await call(`/status?repairHeld=${encodeURIComponent(token)}&why=${encodeURIComponent(check.why || 'unknown')}`);
@@ -3020,15 +3028,31 @@ async function performBrowserRepairs(repairs, policy) {
         const claim = await call('/repairs/claim', { method: 'POST', body: JSON.stringify({ token }) });
         if (!claim.ok || claim.data?.allowed !== true) continue;
         if (target && !suspended) {
+          const expectedCheck = check?.safe === true ? { expected: { revision: check.revision, turnId: check.turnId, questionId: check.questionId } } : {};
+          const latestOptions = documentId ? { documentId } : undefined;
           const latest = inspectTurn ? await tabReply(target.id, { type: 'clf-repair-check', conversationId, draftOnly,
-            ...(check?.safe === true ? { expected: { revision: check.revision, turnId: check.turnId, questionId: check.questionId } } : {}) },
-            documentId ? { documentId } : undefined) : null;
+            ...expectedCheck },
+            latestOptions) : null;
           const tab = await chrome.tabs.get(target.id);
           // What exactly stopped the action, so the app's log can say it (#1086): the second
           // check's own reason, a first check the page never answered, or the tab itself.
-          const changed = tab.pendingUrl ? 'navigating'
-            : conversationForTab(tab) === conversationId ? tabDocuments[String(target.id)] === documentId ? inspectTurn ? latest?.safe === false ? (latest.why === 'changed' ? repairChangeDetail(latest) : latest.why || 'unknown')
-            : !check?.safe && latest?.safe === true ? 'first-unanswered' : null : null : 'new-document' : 'other-chat';
+          let changed;
+          if (tab.pendingUrl) {
+            changed = 'navigating';
+          } else if (conversationForTab(tab) !== conversationId) {
+            changed = 'other-chat';
+          } else if (tabDocuments[String(target.id)] !== documentId) {
+            changed = 'new-document';
+          } else if (!inspectTurn) {
+            changed = null;
+          } else if (latest?.safe === false) {
+            if (latest.why === 'changed') changed = repairChangeDetail(latest);
+            else changed = latest.why || 'unknown';
+          } else if (!check?.safe && latest?.safe === true) {
+            changed = 'first-unanswered';
+          } else {
+            changed = null;
+          }
           if (changed) {
             // No browser action occurred. Release only this exact claim; a
             // concurrently retired episode cannot be reconstructed by this ACK.
@@ -3039,8 +3063,18 @@ async function performBrowserRepairs(repairs, policy) {
       }
       if (target && suspended && requiresClaim) {
         const tab = await chrome.tabs.get(target.id);
-        const changed = tab.pendingUrl ? 'navigating' : conversationForTab(tab) === conversationId ? tab.discarded !== true && tab.frozen !== true ? 'woke-up'
-          : tabDocuments[String(target.id)] === documentId ? null : 'new-document' : 'other-chat';
+        let changed;
+        if (tab.pendingUrl) {
+          changed = 'navigating';
+        } else if (conversationForTab(tab) !== conversationId) {
+          changed = 'other-chat';
+        } else if (tab.discarded !== true && tab.frozen !== true) {
+          changed = 'woke-up';
+        } else if (tabDocuments[String(target.id)] === documentId) {
+          changed = null;
+        } else {
+          changed = 'new-document';
+        }
         if (changed) {
           await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=${repairAction}&why=changed&detail=${encodeURIComponent(changed)}`);
           continue;
@@ -3087,8 +3121,9 @@ async function performBrowserRepairs(repairs, policy) {
         // or answers is the repair; only a silent one is reloaded.
         const tab = await chrome.tabs.get(target.id);
         const loading = tab.status === 'loading' || Boolean(tab.pendingUrl);
+        const statusOptions = documentId ? { documentId } : undefined;
         const status = loading ? null : await tabReply(target.id, { type: 'clf-page-status' },
-          documentId ? { documentId } : undefined);
+          statusOptions);
         if (loading || status?.ok === true) {
           await call(`/status?repaired=${encodeURIComponent(token)}&repairAction=present`);
           continue;
@@ -3439,7 +3474,13 @@ const HANDLERS = {
       return ownsDocument(source) ? result : { ok: false, error: 'stale_document' };
     }
     if (message.recoveryAction && message.owner !== owner) return { ok: false };
-    const result = await call(typeof message.partial === 'string' ? '/input/progress' : typeof message.response === 'string' ? '/input/answer' : message.fail === true ? '/input/fail' : message.ack === true ? '/input/ack' : '/input/claim', {
+    let route;
+    if (typeof message.partial === 'string') route = '/input/progress';
+    else if (typeof message.response === 'string') route = '/input/answer';
+    else if (message.fail === true) route = '/input/fail';
+    else if (message.ack === true) route = '/input/ack';
+    else route = '/input/claim';
+    const result = await call(route, {
       method: 'POST', body: JSON.stringify({ id, owner, conversationId, recoveryAction: ['stop', 'stopped'].includes(message.recoveryAction) ? message.recoveryAction : undefined, silenceBusyTurnId: typeof message.silenceBusyTurnId === 'string' ? message.silenceBusyTurnId : undefined, recoveryVeto: message.recoveryVeto === 'page-final' ? 'page-final' : undefined, requiresAuthorization: message.requiresAuthorization === true, authorize: message.authorize === true, partial: typeof message.partial === 'string' ? message.partial.slice(-8000) : undefined, messageId: typeof message.messageId === 'string' ? message.messageId : undefined, error: message.error, detail: typeof message.detail === 'string' && /^[a-z-]{1,40}$/.test(message.detail) ? message.detail : undefined, response: typeof message.response === 'string' ? message.response.slice(0, 16001) : undefined })
     });
     if (typeof message.response === 'string' && message.lifetime === 'temporary-planner' && result.ok && result.data?.ok === true && ownsDocument(source)) {
@@ -3822,8 +3863,8 @@ const HANDLERS = {
       `&goalClient=${encodeURIComponent(String(source.tab))}` +
       // Forward only the helper states this document may report; these are diagnostics.
       (['absent', 'empty', 'ok'].includes(message.fiber) ? `&fiber=${message.fiber}` : '') +
-      (typeof message.generating === 'boolean' ? `&generating=${message.generating ? 1 : 0}` : '') +
-      (typeof message.approval === 'boolean' ? `&approval=${message.approval ? 1 : 0}` : '');
+      (typeof message.generating === 'boolean' ? `&generating=${Number(message.generating)}` : '') +
+      (typeof message.approval === 'boolean' ? `&approval=${Number(message.approval)}` : '');
     const result = await call(`/activity${query}`);
     if (ownsDocument(source) && result.ok && result.data && await acceptBrowserRevivals(result.data)) {
       await recoverDeferredRevivals();
@@ -3839,8 +3880,10 @@ const HANDLERS = {
   async live_preview(message, _sender, source) {
     await load();
     const conversationId = cleanConversationId(message.conversationId);
-    const text = message.text === null ? null
-      : typeof message.text === 'string' && message.text.length > 0 && message.text.length <= 300 ? message.text : undefined;
+    let text;
+    if (message.text === null) text = null;
+    else if (typeof message.text === 'string' && message.text.length > 0 && message.text.length <= 300) text = message.text;
+    else text = undefined;
     if (!conversationId || text === undefined) return { ok: false, status: 400, error: 'bad_live_preview' };
     if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
     return call('/live-preview', { method: 'POST', body: JSON.stringify({ conversationId, text }) });
@@ -3882,7 +3925,8 @@ const HANDLERS = {
     // a newer helper from disk. Repairing only MAIN repeats that protocol mismatch
     // forever, so Continue never obtains its required fresh native-final check.
     const repaired = await restoreChatgptTab(source.tab, () => ownsDocument(source), source.documentId);
-    return ownsDocument(source) ? repaired ? { ok: true } : { ok: false, error: 'fiber_repair_failed' } : { ok: false, error: 'stale_document' };
+    if (!ownsDocument(source)) return { ok: false, error: 'stale_document' };
+    return repaired ? { ok: true } : { ok: false, error: 'fiber_repair_failed' };
   },
   async closed(message, _sender, source) {
     // releaseTab drains the queue and posts /closed itself, and only when this was the
@@ -4425,8 +4469,9 @@ chrome.tabs.onUpdated.addListener((id, changeInfo, tab) => {
       if (!targetUrl) {
         try {
           const tab = await chrome.tabs.get(id);
-          targetUrl = typeof tab?.pendingUrl === 'string' && tab.pendingUrl ? tab.pendingUrl :
-            typeof tab?.url === 'string' ? tab.url : '';
+          if (typeof tab?.pendingUrl === 'string' && tab.pendingUrl) targetUrl = tab.pendingUrl;
+          else if (typeof tab?.url === 'string') targetUrl = tab.url;
+          else targetUrl = '';
         } catch {
           targetUrl = '';
         }
@@ -4691,7 +4736,10 @@ async function acceptBrowserRevival(raw) {
  * one as `revival`; taking just that one held the others behind it until their deadline.
  */
 async function acceptBrowserRevivals(data) {
-  const list = Array.isArray(data?.revivals) ? data.revivals.slice(0, 16) : data?.revival ? [data.revival] : [];
+  let list;
+  if (Array.isArray(data?.revivals)) list = data.revivals.slice(0, 16);
+  else if (data?.revival) list = [data.revival];
+  else list = [];
   let accepted = false;
   for (const raw of list) if (await acceptBrowserRevival(raw)) accepted = true;
   return accepted;

@@ -180,17 +180,22 @@ function pipeline(info, ready) {
       ]
     };
   }
+  let whyDetail;
+  if (placed > 0) {
+    if (placed === 1) whyDetail = t('popup_pipeline_request_id_matched_one', '1 request ID matched to recorded tool activity.');
+    else whyDetail = t('popup_pipeline_request_id_matched_many', '$1 request IDs matched to recorded tool activity.', placed);
+  } else if (confirmed > 0) {
+    whyDetail = t('popup_pipeline_owner_confirmed_no_activity', 'Request owner confirmed. No matching tool activity recorded yet.');
+  } else if (received > 0) {
+    whyDetail = t('popup_pipeline_received_waiting_owner', 'App received the ID. Waiting for owner confirmation.');
+  } else {
+    whyDetail = t('popup_pipeline_id_found_waiting_receipt', 'ID found in the latest turn. Waiting for the app to confirm receipt.');
+  }
   return {
     read: ['done', String(calls.length)],
     sent: sentStage,
     proc: [confirmed === calls.length ? 'done' : 'running', `${confirmed}/${calls.length}`],
-    why: ['', placed > 0
-      ? placed === 1
-        ? t('popup_pipeline_request_id_matched_one', '1 request ID matched to recorded tool activity.')
-        : t('popup_pipeline_request_id_matched_many', '$1 request IDs matched to recorded tool activity.', placed)
-      : confirmed > 0 ? t('popup_pipeline_owner_confirmed_no_activity', 'Request owner confirmed. No matching tool activity recorded yet.')
-        : received > 0 ? t('popup_pipeline_received_waiting_owner', 'App received the ID. Waiting for owner confirmation.')
-          : t('popup_pipeline_id_found_waiting_receipt', 'ID found in the latest turn. Waiting for the app to confirm receipt.')]
+    why: ['', whyDetail],
   };
 }
 
@@ -204,10 +209,14 @@ function paintCalls(page) {
     line.className = 'call';
     const pips = document.createElement('span');
     pips.className = 'pips';
+    let thirdPip;
+    if (entry.confirmed || entry.app === 'request_id') thirdPip = 'on';
+    else if (entry.app) thirdPip = 'bad';
+    else thirdPip = '';
     for (const state of [
       entry.read ? 'on' : '',
       entry.sent || entry.app === 'request_id' ? 'on' : '',
-      entry.confirmed || entry.app === 'request_id' ? 'on' : entry.app ? 'bad' : ''
+      thirdPip
     ]) {
       const pip = document.createElement('span');
       pip.className = `pip ${state}`;
@@ -247,15 +256,27 @@ function paintHeader(status) {
   const off = status?.disconnected === true && !paired;
   const ready = connected && paired && status.compatible === true;
 
-  $('pill').className = `pill ${ready ? '' : incompatible ? 'bad' : 'off'}`;
-  $('state').textContent = incompatible
-    ? t('popup_state_version_mismatch', 'Version mismatch')
-    : off
-      ? t('popup_state_disconnected', 'Disconnected')
-      : connected ? ready
-          // Health + pairing prove reachability, not the recorder/command flow.
-          ? t('popup_state_app_reachable_port', 'App reachable · Port $1', status.port)
-          : t('popup_state_port_connecting', 'Port $1 · connecting', status.port) : t('popup_state_app_not_reachable', 'App not reachable');
+  let pillState;
+  if (ready) pillState = '';
+  else if (incompatible) pillState = 'bad';
+  else pillState = 'off';
+  $('pill').className = `pill ${pillState}`;
+  let stateText;
+  if (incompatible) {
+    stateText = t('popup_state_version_mismatch', 'Version mismatch');
+  } else if (off) {
+    stateText = t('popup_state_disconnected', 'Disconnected');
+  } else if (connected) {
+    if (ready) {
+      // Health + pairing prove reachability, not the recorder/command flow.
+      stateText = t('popup_state_app_reachable_port', 'App reachable · Port $1', status.port);
+    } else {
+      stateText = t('popup_state_port_connecting', 'Port $1 · connecting', status.port);
+    }
+  } else {
+    stateText = t('popup_state_app_not_reachable', 'App not reachable');
+  }
+  $('state').textContent = stateText;
 
   // The one state with nothing to click at the top: say what to do instead of a grey pill alone.
   $('appHint').hidden = !(status && !connected && !off);
@@ -269,19 +290,22 @@ function paintAlert(status, info) {
   const incompatible = status?.connected === true && status.compatible === false;
   const pairError = status?.pairError;
   const error = page?.lastError;
-  const text = incompatible
-    ? t(
+  let text;
+  if (incompatible) {
+    text = t(
       'popup_version_mismatch_help',
       "App v$1 (protocol $2); companion v$3 (protocol $4). Open your browser's Extensions page, enable Developer mode, then Update / Reload this companion. If the mismatch remains, use Open extension folder in Chat On Steroids and load that folder. Reload ChatGPT tabs when their active work is finished.",
       [status.appVersion || '?', status.appProtocol ?? '?', status.extensionVersion || '?', status.extensionProtocol ?? '?']
-    )
-    : pairError?.message
-      ? pairError.message
-      : pairError?.error === 'secure_storage_unavailable'
-        ? t('popup_secure_storage_unavailable', 'Secure credential storage is unavailable. Open Chat On Steroids for setup instructions.')
-    : error && Date.now() - error.at < 10 * 60 * 1000
-      ? error.text
-      : '';
+    );
+  } else if (pairError?.message) {
+    text = pairError.message;
+  } else if (pairError?.error === 'secure_storage_unavailable') {
+    text = t('popup_secure_storage_unavailable', 'Secure credential storage is unavailable. Open Chat On Steroids for setup instructions.');
+  } else if (error && Date.now() - error.at < 10 * 60 * 1000) {
+    text = error.text;
+  } else {
+    text = '';
+  }
   $('alert').textContent = text;
   $('alert').hidden = !text;
 }
@@ -327,14 +351,15 @@ function paintDetails(status, info) {
     t('popup_detail_tab', 'tab'),
     info ? t('popup_detail_tab_value', '$1 · epoch $2', [info.tab, info.epoch ?? '—']) : null
   );
+  let ownership;
+  if (!info) ownership = null;
+  else if (info.terminal) ownership = t('popup_status_retired', 'retired');
+  else if (info.bound) ownership = t('popup_status_bound', 'bound');
+  else ownership = t('popup_status_unbound', 'unbound');
   detail(
     grid,
     t('popup_detail_ownership', 'ownership'),
-    info ? (info.terminal
-      ? t('popup_status_retired', 'retired')
-      : info.bound
-        ? t('popup_status_bound', 'bound')
-        : t('popup_status_unbound', 'unbound')) : null,
+    ownership,
     Boolean(info?.terminal)
   );
   detail(
@@ -345,12 +370,14 @@ function paintDetails(status, info) {
       : t('popup_status_not_attached', 'not attached'),
     !page
   );
+  let turnState;
+  if (!page) turnState = null;
+  else if (page.generating) turnState = t('popup_detail_turn_live', '$1 · live', shorten(page.turnId, 8));
+  else turnState = t('popup_status_idle', 'idle');
   detail(
     grid,
     t('popup_detail_turn', 'turn'),
-    page ? (page.generating
-      ? t('popup_detail_turn_live', '$1 · live', shorten(page.turnId, 8))
-      : t('popup_status_idle', 'idle')) : null
+    turnState
   );
   detail(
     grid,
@@ -363,7 +390,10 @@ function paintDetails(status, info) {
     info ? t('popup_detail_browser_queue_value', '$1 held · $2 total', [info.pending, info.pendingAll]) : null,
     Boolean(info?.pendingAll)
   );
-  const deliveryState = sent ? (sent.ok ? t('popup_status_ok', 'ok') : sent.error || t('popup_status_failed', 'failed')) : '';
+  let deliveryState;
+  if (!sent) deliveryState = '';
+  else if (sent.ok) deliveryState = t('popup_status_ok', 'ok');
+  else deliveryState = sent.error || t('popup_status_failed', 'failed');
   detail(
     grid,
     t('popup_detail_last_delivery', 'last delivery'),
@@ -393,25 +423,46 @@ async function refresh() {
   const page = info?.page;
 
   row('tab', isChat ? 'ok' : 'off', isChat ? '' : t('popup_status_none_open', 'none open'));
-  row(
-    'rec',
-    isChat ? info.recorder ? 'ok' : 'no' : 'off',
-    isChat ? info.recorder ? (page.generating ? t('popup_status_answering', 'answering') : '') : t('popup_status_reload', 'reload') : ''
-  );
+  let recState;
+  if (!isChat) recState = 'off';
+  else if (info.recorder) recState = 'ok';
+  else recState = 'no';
+  let recText;
+  if (!isChat) recText = '';
+  else if (!info.recorder) recText = t('popup_status_reload', 'reload');
+  else if (page.generating) recText = t('popup_status_answering', 'answering');
+  else recText = '';
+  row('rec', recState, recText);
 
   const chatId = info?.conversationId;
+  let chatState;
+  if (!isChat) chatState = 'off';
+  else if (chatId) chatState = 'ok';
+  else chatState = 'wait';
+  let chatText;
+  if (!isChat) chatText = '';
+  else if (chatId) chatText = shorten(chatId, 8);
+  else chatText = t('popup_status_new_chat', 'new chat');
   idRow(
     'chat',
-    isChat ? chatId ? 'ok' : 'wait' : 'off',
-    isChat ? chatId ? shorten(chatId, 8) : t('popup_status_new_chat', 'new chat') : '',
+    chatState,
+    chatText,
     chatId
   );
 
   const requestId = page?.requestId;
+  let reqState;
+  if (!isChat) reqState = 'off';
+  else if (requestId) reqState = 'ok';
+  else reqState = 'wait';
+  let reqText;
+  if (!isChat) reqText = '';
+  else if (requestId) reqText = shorten(requestId, 9);
+  else reqText = t('popup_status_none_yet', 'none yet');
   idRow(
     'req',
-    isChat ? requestId ? 'ok' : 'wait' : 'off',
-    isChat ? requestId ? shorten(requestId, 9) : t('popup_status_none_yet', 'none yet') : '',
+    reqState,
+    reqText,
     requestId
   );
 
@@ -425,16 +476,21 @@ async function refresh() {
 
   const broken = state.why[0] === 'bad';
   const flowing = Array.isArray(page?.trace) && page.trace.some(call => call.app === 'request_id');
+  let appState;
+  if (!isChat) appState = 'off';
+  else if (broken) appState = 'no';
+  else if (flowing) appState = 'ok';
+  else appState = 'wait';
+  let appText;
+  if (!isChat) appText = '';
+  else if (broken) appText = t('popup_status_blocked', 'blocked');
+  else if (flowing) appText = t('popup_status_tool_matched', 'tool matched');
+  else if (state.proc[0] === 'done') appText = t('popup_status_id_confirmed', 'ID confirmed');
+  else appText = t('popup_status_waiting', 'waiting');
   row(
     'app',
-    isChat ? broken ? 'no' : flowing ? 'ok' : 'wait' : 'off',
-    isChat ? broken
-        ? t('popup_status_blocked', 'blocked')
-        : flowing
-          ? t('popup_status_tool_matched', 'tool matched')
-          : state.proc[0] === 'done'
-            ? t('popup_status_id_confirmed', 'ID confirmed')
-            : t('popup_status_waiting', 'waiting') : ''
+    appState,
+    appText
   );
   // Opens itself the first time something is actually wrong, so the panel that explains
   // the failure is already open when the popup is opened to look at one.

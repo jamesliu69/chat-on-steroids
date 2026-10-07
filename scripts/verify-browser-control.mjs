@@ -37,7 +37,11 @@ const server = http.createServer(async (req,res) => {
   }
   if (req.url === '/api') {res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({ok:true,fixture:'network-body'}));return;}
   res.writeHead(200,{'content-type':'text/html'});
-  res.end(req.url === '/fixture' ? page : req.url === '/frame' ? '<title>Child</title><label>Frame note<input id=frameNote></label><button id=frameButton onclick="document.body.dataset.clicked=\'yes\'">Frame action</button>' : '<title>Foreground sentinel</title><h1>This tab must remain selected</h1>');
+  let pageBody;
+  if (req.url === '/fixture') pageBody = page;
+  else if (req.url === '/frame') pageBody = '<title>Child</title><label>Frame note<input id=frameNote></label><button id=frameButton onclick="document.body.dataset.clicked=\'yes\'">Frame action</button>';
+  else pageBody = '<title>Foreground sentinel</title><h1>This tab must remain selected</h1>';
+  res.end(pageBody);
 });
 await new Promise(resolve => server.listen(0,'0.0.0.0',resolve));
 const port=server.address().port,base=`http://127.0.0.1:${port}`;

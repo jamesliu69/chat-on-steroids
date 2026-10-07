@@ -92,7 +92,10 @@ export function createActiveTabs(chrome) {
       let retained = false;
       for (const scope of scopes.values()) {
         const keep = scope.tabs.some(previous => previous.id === id) && tab?.id === id && valid(tab) && scope.eligible?.(tab) === true;
-        scope.tabs = scope.tabs.flatMap(previous => previous.id === id ? keep ? [tab] : [] : [previous]);
+        scope.tabs = scope.tabs.flatMap(previous => {
+          if (previous.id !== id) return [previous];
+          return keep ? [tab] : [];
+        });
         retained ||= keep;
       }
       // SPA routing keeps the browser document. Its existing owner can approve

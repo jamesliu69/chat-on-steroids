@@ -126,8 +126,11 @@ var CLF_DOM = (() => {
         // exact-id source used by receipts/recording, never reconstructed HTML.
         const classic = raw.closest('[data-message-author-role="user"]');
         const holder = classic || raw.closest(SHELL_UNIT), id = messageIdOf(holder);
-        const source = !classic && (!id || !readUserText) ? null : readUserText ? readUserText({ role: 'user', id,
-          node: classic ? raw.closest(TURN) : holder, text: messageText(holder, 'user') }) : raw.textContent;
+        let source;
+        if (!classic && (!id || !readUserText)) source = null;
+        else if (readUserText) source = readUserText({ role: 'user', id,
+          node: classic ? raw.closest(TURN) : holder, text: messageText(holder, 'user') });
+        else source = raw.textContent;
         // The native editor can prepend a blank paragraph to the exact provider
         // source. Ignore that outer whitespace only for display; the frame's
         // internal length/boundary and all receipt/recording bytes stay exact.
@@ -651,8 +654,11 @@ var CLF_DOM = (() => {
   // requires the exact user/message stamps before mounting recorded activity.
   const presentationTurns = () => turns();
 
-  const turnNodes = (turn) =>
-    turn && Array.isArray(turn.nodes) && turn.nodes.length > 0 ? turn.nodes : turn?.node ? [turn.node] : [];
+  const turnNodes = (turn) => {
+    if (turn && Array.isArray(turn.nodes) && turn.nodes.length > 0) return turn.nodes;
+    if (turn?.node) return [turn.node];
+    return [];
+  };
 
   /**
    * Visible messages, newest last.
@@ -2425,8 +2431,14 @@ var CLF_DOM = (() => {
       if (box.getAttribute('aria-disabled') === 'true' || box.getAttribute('contenteditable') === 'false') return refused('editor-disabled');
       // Rich editors use adjacent paragraphs for newlines; textContent concatenates
       // their words. Preserve those boundaries when matching the rendered user message.
-      const draftText = () => (typeof box.innerText === 'string' ? box.innerText : [...box.childNodes]
-        .map((node) => (node.textContent || '') + (/^(P|DIV|BR)$/.test(node.nodeName) ? '\n' : '')).join('')).trim();
+      const draftText = () => {
+        if (typeof box.innerText === 'string') return box.innerText.trim();
+        return [...box.childNodes]
+          .map((node) => {
+            const boundary = /^(P|DIV|BR)$/.test(node.nodeName) ? '\n' : '';
+            return (node.textContent || '') + boundary;
+          }).join('').trim();
+      };
       const submitted = draftText();
       if (!submitted) return refused('draft-empty');
       const compact = (value) => String(value || '').replaceAll(/\s+/g, ' ').trim();
@@ -2645,7 +2657,11 @@ var CLF_DOM = (() => {
   }
   function composerAttachmentNames() {
     const host = composerBox() || composerActions()?.host;
-    return host ? [...host.querySelectorAll('button[aria-label]')].map(composerFileName).filter(Boolean).slice(0, 20).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) : [];
+    return host ? [...host.querySelectorAll('button[aria-label]')].map(composerFileName).filter(Boolean).slice(0, 20).sort((a, b) => {
+      if (a < b) return -1;
+      if (a > b) return 1;
+      return 0;
+    }) : [];
   }
   /**
    * This install's connector names in ChatGPT (core, desktop, plugins), as the app reports them.
@@ -2691,9 +2707,12 @@ var CLF_DOM = (() => {
         snapshot.tools.some(tool => !tool || typeof tool.name !== 'string' || !/^[a-z][a-z0-9_]{0,79}$/.test(tool.name) || typeof tool.description !== 'string' || tool.inputSchema?.type !== 'object') ||
         new Set(snapshot.tools.map(tool => tool.name)).size !== snapshot.tools.length) return null;
     const buttons = [...document.querySelectorAll('button[data-clf-plugin-refresh]')].filter(button => button.getAttribute('data-clf-plugin-refresh') === snapshot.appId && button.getClientRects().length > 0);
-    return typeof snapshot.refreshAvailable === 'boolean' && buttons.length === (snapshot.refreshAvailable ? 1 : 0) ? { appId: snapshot.appId, connectorName: snapshot.connectorName, versionId: typeof snapshot.versionId === 'string' ? snapshot.versionId.slice(0, 200) : null,
+    const expectedButtons = snapshot.refreshAvailable ? 1 : 0;
+    const versionId = typeof snapshot.versionId === 'string' ? snapshot.versionId.slice(0, 200) : null;
+    const tunnelId = typeof snapshot.tunnelId === 'string' && /^tunnel_[a-zA-Z0-9]{8,80}$/.test(snapshot.tunnelId) ? snapshot.tunnelId : null;
+    return typeof snapshot.refreshAvailable === 'boolean' && buttons.length === expectedButtons ? { appId: snapshot.appId, connectorName: snapshot.connectorName, versionId,
       tools: snapshot.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })), refresh: buttons[0] || null,
-      tunnelId: typeof snapshot.tunnelId === 'string' && /^tunnel_[a-zA-Z0-9]{8,80}$/.test(snapshot.tunnelId) ? snapshot.tunnelId : null, settled: snapshot.settled === true } : null;
+      tunnelId, settled: snapshot.settled === true } : null;
   }
   function pluginInstalledButtons(connectorName) {
     return safe(() => {
@@ -2819,7 +2838,9 @@ var CLF_DOM = (() => {
     const observed = candidates.filter(node => node.getAttribute('data-clf-picker-route') === location.pathname);
     // Alternate native anchors are actionable only after MAIN identified their
     // model owner. A quoted attribute or an effort value alone cannot authorize it.
-    return observed.length === 1 ? observed[0] : candidates.length === 1 && !candidates[0].matches(reported) ? candidates[0] : null;
+    if (observed.length === 1) return observed[0];
+    if (candidates.length === 1 && !candidates[0].matches(reported)) return candidates[0];
+    return null;
   }
   /** Match the row's leading name, excluding secondary captions and decorations. */
   function pickerVersionNamed(row, expected) {
@@ -3030,8 +3051,11 @@ var CLF_DOM = (() => {
       // Exact provider slug is preferred. Existing saved display slugs may resolve
       // only to an actually observed, available pair; never to an account default.
       const name = normalizeModelLabel(model);
-      const modelRank = choice => !model || choice.familyId === model || choice.id === model ? 2
-        : name && normalizeModelLabel(choice.familyLabel) === name ? 1 : 0;
+      const modelRank = choice => {
+        if (!model || choice.familyId === model || choice.id === model) return 2;
+        if (name && normalizeModelLabel(choice.familyLabel) === name) return 1;
+        return 0;
+      };
       // Every available choice of the requested model, read once across versions, so the effort
       // can be resolved against what the account actually offers before anything is moved.
       const offered = [];

@@ -897,8 +897,11 @@
           const text = (value, max) => typeof value === 'string' ? value.replaceAll(/\s+/g, ' ').trim().slice(0, max) : '';
           const label = text(source.label, 80), snippet = text(source.snippet, 300);
           // ChatGPT keeps publication dates in epoch seconds.
-          const date = typeof source.pubDate === 'number' && isFinite(source.pubDate) && source.pubDate > 0
-            ? Math.round(source.pubDate < 1e10 ? source.pubDate * 1000 : source.pubDate) : 0;
+          let date = 0;
+          if (typeof source.pubDate === 'number' && isFinite(source.pubDate) && source.pubDate > 0) {
+            const pubMs = source.pubDate < 1e10 ? source.pubDate * 1000 : source.pubDate;
+            date = Math.round(pubMs);
+          }
           kept.push({ title: text(source.title, 300), url, ...(label ? { source: label } : {}),
             ...(date ? { date } : {}), ...(snippet ? { snippet } : {}) });
         }
@@ -1952,8 +1955,12 @@
         const final = !user && item.phase === 'final_answer';
         if (final) lastAnswer = item;
         const completed = final && item.completed === true && entry.turn.status === 'complete';
+        let channel;
+        if (user) channel = null;
+        else if (final) channel = 'final';
+        else channel = 'commentary';
         messages.push({ id, author: { role }, content: { content_type: 'text', parts: [typeof text === 'string' ? text : ''] },
-          channel: user ? null : final ? 'final' : 'commentary', end_turn: completed,
+          channel, end_turn: completed,
           status: completed ? 'finished_successfully' : 'in_progress', metadata: {} });
         const key = `${turnId}:${index}:${role}`;
         const nodes = [...section.querySelectorAll('[data-content-search-unit-key]')].filter(node =>
@@ -2090,14 +2097,20 @@
         const shell = section.matches?.(SHELL_TURN) ? shellTurnSource(fiber, section, group.turnId) : null;
         if (section.matches?.(SHELL_TURN) && !shell) continue;
         const viewTurn = group.search ? turnViewOf(fiber) : null;
-        const messages = shell ? shell.messages : viewTurn ? messagesFromTurnView(viewTurn) : turnMessagesOf(fiber);
+        let messages;
+        if (shell) messages = shell.messages;
+        else if (viewTurn) messages = messagesFromTurnView(viewTurn);
+        else messages = turnMessagesOf(fiber);
         const codeReceipts = codeModeReceipts(messages || []);
         const codeModeCalls = (messages || []).filter(message => message?.author &&
           message.author.role === 'assistant' && message.recipient === 'functions.exec').slice(0, MAX_CALLS)
           .map(message => ({ messageId: str(message.id), requestId: str(message.metadata?.request_id),
             answered: codeReceipts.get(message.id) === true }));
         const legacyCalls = shell ? shell.calls : callsOf(messages, codeReceipts);
-        const calls = legacyCalls.length ? legacyCalls : group.search ? viewCallsOf(fiber) : legacyCalls;
+        let calls;
+        if (legacyCalls.length) calls = legacyCalls;
+        else if (group.search) calls = viewCallsOf(fiber);
+        else calls = legacyCalls;
         const queries = shell ? shellQueries(fiber) : [];
         const conversation = shell ? shellConversation(queries, shell.entry.conversationId, conversationEvidenceOf(fiber)) : conversationEvidenceOf(fiber);
         const metadata = shell ? shellRequestMetadata(fiber, queries, shell, conversation) : messages;
@@ -2382,14 +2395,22 @@
       } catch { /* An unrelated native menu is not picker evidence. */ }
     }
     const specific = candidates.filter(candidate => candidate.node.matches(reported));
-    const identified = specific.length === 1 ? specific[0] : candidates.length === 1 ? candidates[0] : null;
+    let identified;
+    if (specific.length === 1) identified = specific[0];
+    else if (candidates.length === 1) identified = candidates[0];
+    else identified = null;
     const native = triggers.filter(trigger => trigger.matches(reported));
-    const fallback = native.length === 1 ? native[0] : triggers.length === 1 ? triggers[0] : null;
+    let fallback;
+    if (native.length === 1) fallback = native[0];
+    else if (triggers.length === 1) fallback = triggers[0];
+    else fallback = null;
     const node = document.querySelector('[data-testid="composer-intelligence-picker-content"], [data-model-picker-view]') || identified?.node || fallback;
     let state = null;
     try { state = identified?.picker || readPickerSnapshot(node); } catch { /* Unknown state invalidates prior proof. */ }
-    const selected = state ? state.choices.find(choice => choice.bucket === state.currentBucket && choice.available)
-      : (node && node === fallback ? closedPickerSelection(node) : null);
+    let selected;
+    if (state) selected = state.choices.find(choice => choice.bucket === state.currentBucket && choice.available);
+    else if (node && node === fallback) selected = closedPickerSelection(node);
+    else selected = null;
     const provenTrigger = identified?.node || (selected && node === fallback ? fallback : null);
     for (const trigger of triggers) {
       if (trigger !== provenTrigger) trigger.removeAttribute('data-clf-picker-route');
@@ -2430,8 +2451,12 @@
       if (typeof current !== 'string' || !/^[a-zA-Z0-9._-]{1,80}$/.test(current) || (model && model !== current)) return null;
       model = current;
     }
+    let machineEffort;
+    if (machine === null) machineEffort = captionEffort;
+    else if (['none','minimal','low','medium','high','xhigh','max','ultra','pro'].includes(machine)) machineEffort = machine;
+    else machineEffort = null;
     const effort = shellProExecutionModel(model) ? 'pro' : (lane?.model === model && lane.effort) ||
-      (machine === null ? captionEffort : ['none','minimal','low','medium','high','xhigh','max','ultra','pro'].includes(machine) ? machine : null);
+      machineEffort;
     if (!effort) return null;
     return model ? { id: model, effort } : null;
   }
@@ -2449,10 +2474,12 @@
       // Native version groups may have spaces; execution slugs retain their strict contract.
       const groupId = value => typeof value === 'string' && value.length <= 80 && /^[\p{L}\p{N}._ -]+$/u.test(value) && value.trim() === value && value.trim() ? value : null;
       const label = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 80 ? value.trim() : null;
-      const effortOf = choice => choice.category?.modelLane === 'pro' ? 'pro'
-        : ['auto', 'instant'].includes(choice.category?.modelLane) ? 'none'
-        : choice.thinkingEffort === 'max' && choice.modelConfig?.isWorkModeModel === true ? 'max'
-        : ({ min: 'low', standard: 'medium', extended: 'high', max: 'xhigh', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', ultra: 'ultra' })[choice.thinkingEffort] || null;
+      const effortOf = choice => {
+        if (choice.category?.modelLane === 'pro') return 'pro';
+        if (['auto', 'instant'].includes(choice.category?.modelLane)) return 'none';
+        if (choice.thinkingEffort === 'max' && choice.modelConfig?.isWorkModeModel === true) return 'max';
+        return ({ min: 'low', standard: 'medium', extended: 'high', max: 'xhigh', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', ultra: 'ultra' })[choice.thinkingEffort] || null;
+      };
       const choices = state.bucketSelections.map(choice => {
         const name = label(choice.category?.shortLabel);
         // Native navigation groups may contain spaces or localized names. Those

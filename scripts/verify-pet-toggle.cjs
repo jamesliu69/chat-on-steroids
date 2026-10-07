@@ -62,6 +62,9 @@ async function nativeGesture(x, y, dx = 0, dy = 0, right = false) {
   const end = screen.dipToScreenPoint({ x: area.x + x + dx, y: area.y + y + dy });
   const ownerArea = owner.getContentBounds();
   const typingPoint = screen.dipToScreenPoint({ x: ownerArea.x + 100, y: ownerArea.y + 90 });
+  let typingSetup = '';
+  if ((dx || dy) && externalKeyboard) typingSetup = "Add-Type -AssemblyName System.Windows.Forms\n$typingForm = New-Object System.Windows.Forms.Form\n$typingForm.Text = 'Pets external keyboard test'\n$typingForm.SetBounds(80,80,500,200)\n$typingBox = New-Object System.Windows.Forms.TextBox\n$typingBox.Dock = 'Fill'\n$typingForm.Controls.Add($typingBox)\n$typingForm.Show()\n# The hidden PowerShell startup flag overrides the first native ShowWindow call.\n# Explicitly show our owned fixture, never a user's existing window.\n[PetMouse]::ShowWindow($typingForm.Handle,5) | Out-Null\n$typingForm.Activate()\n$typingBox.Focus() | Out-Null\n[System.Windows.Forms.Application]::DoEvents()\nif (-not [PetMouse]::IsWindowVisible($typingForm.Handle)) { throw 'External typing target is hidden' }\nif ([PetMouse]::GetForegroundWindow() -ne $typingForm.Handle) { throw 'External typing target did not reach foreground' }";
+  else if (dx || dy) typingSetup = ("[PetMouse]::SetCursorPos(" + typingPoint.x + "," + typingPoint.y + ") | Out-Null\n[PetMouse]::mouse_event(2,0,0,0,[UIntPtr]::Zero)\n[PetMouse]::mouse_event(4,0,0,0,[UIntPtr]::Zero)\nStart-Sleep -Milliseconds 100\nif ([PetMouse]::GetForegroundWindow().ToInt64() -ne " + owner.getNativeWindowHandle().readBigUInt64LE(0) + ") { throw 'Typing owner did not reach native foreground' }");
   const { stdout } = await runFile('powershell.exe', ['-NoProfile', '-Command', `
 Add-Type @'
 using System; using System.Runtime.InteropServices;
@@ -72,9 +75,8 @@ public static class PetMouse {
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int command);
 [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint x,uint y,uint d,UIntPtr e);
 [DllImport("user32.dll")] public static extern void keybd_event(byte k,byte s,uint f,UIntPtr e);
-}
+${typingSetup}
 '@
-${(dx || dy) && externalKeyboard ? "Add-Type -AssemblyName System.Windows.Forms\n$typingForm = New-Object System.Windows.Forms.Form\n$typingForm.Text = 'Pets external keyboard test'\n$typingForm.SetBounds(80,80,500,200)\n$typingBox = New-Object System.Windows.Forms.TextBox\n$typingBox.Dock = 'Fill'\n$typingForm.Controls.Add($typingBox)\n$typingForm.Show()\n# The hidden PowerShell startup flag overrides the first native ShowWindow call.\n# Explicitly show our owned fixture, never a user's existing window.\n[PetMouse]::ShowWindow($typingForm.Handle,5) | Out-Null\n$typingForm.Activate()\n$typingBox.Focus() | Out-Null\n[System.Windows.Forms.Application]::DoEvents()\nif (-not [PetMouse]::IsWindowVisible($typingForm.Handle)) { throw 'External typing target is hidden' }\nif ([PetMouse]::GetForegroundWindow() -ne $typingForm.Handle) { throw 'External typing target did not reach foreground' }" : dx || dy ? ("[PetMouse]::SetCursorPos(" + typingPoint.x + "," + typingPoint.y + ") | Out-Null\n[PetMouse]::mouse_event(2,0,0,0,[UIntPtr]::Zero)\n[PetMouse]::mouse_event(4,0,0,0,[UIntPtr]::Zero)\nStart-Sleep -Milliseconds 100\nif ([PetMouse]::GetForegroundWindow().ToInt64() -ne " + owner.getNativeWindowHandle().readBigUInt64LE(0) + ") { throw 'Typing owner did not reach native foreground' }") : ''}
 $foregroundBefore = [PetMouse]::GetForegroundWindow()
 [PetMouse]::SetCursorPos(${start.x},${start.y}) | Out-Null
 Start-Sleep -Milliseconds 450

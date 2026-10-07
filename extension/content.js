@@ -135,11 +135,10 @@
     }
     if (typeof translated === 'string' && translated) return translated;
     let text = String(fallback || '');
-    const values = Array.isArray(substitutions)
-      ? substitutions
-      : substitutions === undefined || substitutions === null
-        ? []
-        : [substitutions];
+    let values;
+    if (Array.isArray(substitutions)) values = substitutions;
+    else if (substitutions === undefined || substitutions === null) values = [];
+    else values = [substitutions];
     for (let index = 0; index < values.length; index++) {
       text = text.split(`$${index + 1}`).join(String(values[index]));
     }
@@ -843,9 +842,10 @@
     // A current exact-id provider object supersedes display text. If absent, an unchanged
     // plain-text bubble retains the existing exact-text receipt contract; no Markdown stripping.
     const actual = authored.length === 1 ? authored[0].rawText : message.text;
+    const extraAttachments = authored[0]?.attachments?.length ? { attachments: authored[0].attachments } : {};
     return typeof actual === 'string' && actual.length <= 256000 ? { text: actual, canonical: authored.length === 1,
       markdown: authored.length === 1 && authored[0].markdown === true,
-      ...(authored[0]?.attachments?.length ? { attachments: authored[0].attachments } : {}) } : null;
+      ...extraAttachments } : null;
   }
   function userMessagePresent(message) {
     if (message.role !== 'user' || !message.id) return false;
@@ -928,11 +928,15 @@
   window.addEventListener('message', (event) => {
     if (!alive || event.source !== window || event.origin !== location.origin || event.data?.type !== 'cos-core-mention') return;
     const valid = (path) => typeof path === 'string' && /^app:\/\/asdk_app_[A-Za-z0-9_-]{1,160}$/.test(path) ? path : null;
-    coreCandidates = Array.isArray(event.data.candidates)
-      ? event.data.candidates.slice(0, 16).filter(entry => typeof entry?.name === 'string' && entry.name.length <= 80)
-        .map(entry => ({ name: entry.name, path: valid(entry.path) }))
+    if (Array.isArray(event.data.candidates)) {
+      coreCandidates = event.data.candidates.slice(0, 16).filter(entry => typeof entry?.name === 'string' && entry.name.length <= 80)
+        .map(entry => ({ name: entry.name, path: valid(entry.path) }));
+    } else if (event.data.name === 'Chat On Steroids Core') {
       // An observer from before suffixes names only the plain Core.
-      : event.data.name === 'Chat On Steroids Core' ? [{ name: event.data.name, path: valid(event.data.path) }] : [];
+      coreCandidates = [{ name: event.data.name, path: valid(event.data.path) }];
+    } else {
+      coreCandidates = [];
+    }
     corePluginList = event.data.pluginList === true;
     reportCorePlugin();
   });
@@ -946,7 +950,14 @@
   let ownNamesKnown = false;
   function reportCorePlugin() {
     const core = currentCoreMention();
-    const report = core ? core.path : corePluginList && ownNamesKnown && !coreCandidates.some(entry => entry.name === CLF_DOM.connectorNames()[0]) ? 'missing' : null;
+    let report;
+    if (core) {
+      report = core.path;
+    } else if (corePluginList && ownNamesKnown && !coreCandidates.some(entry => entry.name === CLF_DOM.connectorNames()[0])) {
+      report = 'missing';
+    } else {
+      report = null;
+    }
     if (!report || report === reportedCorePlugin) return;
     reportedCorePlugin = report;
     const message = report === 'missing' ? { type: 'core_plugin', missing: true } : { type: 'core_plugin', appId: report.slice('app://'.length) };
@@ -1639,7 +1650,8 @@
       unrecordedGeneratingSince = Date.now();
       return null;
     }
-    return Date.now() - unrecordedGeneratingSince >= (settled ? SETTLED_REGENERATION_MS : TURN_SETTLE_MS) ? newest : null;
+    const settleMs = settled ? SETTLED_REGENERATION_MS : TURN_SETTLE_MS;
+    return Date.now() - unrecordedGeneratingSince >= settleMs ? newest : null;
   }
 
   function adoptOpenTurn(open, questionId = null) {
@@ -2724,17 +2736,20 @@
       // A new user message is an actual boundary, unlike a disappearing Stop control. Once
       // that boundary is proven, authored prose is enough to classify the old turn as a
       // completed answer when no stronger failure/interruption/stall outcome exists.
-      const bounded = result.outcome === 'unknown'
-        ? answerText(ended).length > 0
-          ? { outcome: 'completed' }
-          : {
-            outcome: 'interrupted',
-            detail: t(
-              'content_turn_replaced_by_user_message',
-              'a new user message replaced the unfinished turn'
-            )
-          }
-        : result;
+      let bounded;
+      if (result.outcome !== 'unknown') {
+        bounded = result;
+      } else if (answerText(ended).length > 0) {
+        bounded = { outcome: 'completed' };
+      } else {
+        bounded = {
+          outcome: 'interrupted',
+          detail: t(
+            'content_turn_replaced_by_user_message',
+            'a new user message replaced the unfinished turn'
+          )
+        };
+      }
       finishGeneration(ended, bounded, false);
     }
 
@@ -4756,11 +4771,7 @@
           terminalMessageId &&
             (message.rawMessageId === terminalMessageId || message.messageId === terminalMessageId)
         );
-        const state = terminalMessageId
-          ? exactTerminal
-            ? 'final'
-            : 'streaming'
-          : 'streaming';
+        const state = terminalMessageId && exactTerminal ? 'final' : 'streaming';
         // The transcript is independent of MCP correlation and must be durable as soon as
         // ChatGPT exposes a public message id. A thought parent is a stronger logical anchor
         // when available, but it is not permission to record: waiting for it dropped the
@@ -5056,8 +5067,12 @@
     // placed there rather than by the `create_time` ChatGPT stamped when it *opened* the
     // message — which can precede a connector call the same turn still had to make. See the
     // long note on `closing()` in src/shared/chronology.ts; the two must not disagree.
-    const rank = (entry, ends) =>
-      entry.kind === 'turn_start' ? -1 : entry.kind === 'turn_end' ? 1 : entry === ends ? 0.5 : 0;
+    const rank = (entry, ends) => {
+      if (entry.kind === 'turn_start') return -1;
+      if (entry.kind === 'turn_end') return 1;
+      if (entry === ends) return 0.5;
+      return 0;
+    };
     const closing = (group) => {
       let found = null;
       for (const entry of group) {
@@ -5610,15 +5625,14 @@
     const projected = entry.displayOutcome && typeof entry.displayOutcome.label === 'string'
       ? entry.displayOutcome.label.slice(0, 120)
       : null;
-    const outcome = projected || (entry.outcome === 'ok'
-      ? t('content_tool_outcome_completed', 'completed')
-      : entry.outcome === 'tool_rejected' || entry.outcome === 'rejected'
-        ? t('content_tool_outcome_refused', 'refused')
-        : entry.outcome === 'tool_execution_error' || entry.outcome === 'process_exit_nonzero'
-          ? t('content_tool_outcome_failed', 'failed')
-          : entry.outcome === 'tool_internal_error'
-            ? t('content_tool_outcome_internal_error', 'internal error')
-            : t('content_tool_outcome_unknown', 'unknown'));
+    let outcome = projected;
+    if (!outcome) {
+      if (entry.outcome === 'ok') outcome = t('content_tool_outcome_completed', 'completed');
+      else if (entry.outcome === 'tool_rejected' || entry.outcome === 'rejected') outcome = t('content_tool_outcome_refused', 'refused');
+      else if (entry.outcome === 'tool_execution_error' || entry.outcome === 'process_exit_nonzero') outcome = t('content_tool_outcome_failed', 'failed');
+      else if (entry.outcome === 'tool_internal_error') outcome = t('content_tool_outcome_internal_error', 'internal error');
+      else outcome = t('content_tool_outcome_unknown', 'unknown');
+    }
     const duration = typeof entry.durationMs === 'number' && Number.isFinite(entry.durationMs) && entry.durationMs >= 0
       ? ` · ${Math.round(entry.durationMs)} ms` : '';
     const lines = [{ kind: 'meta', text: `${tool} · ${outcome}${duration}` }];
@@ -5629,7 +5643,8 @@
       if (Number.isFinite(change.added) && change.added >= 0) counts.push(`+${change.added}`);
       if (Number.isFinite(change.removed) && change.removed >= 0) counts.push(`−${change.removed}`);
       const path = change.path.length > 1024 ? `${change.path.slice(0, 1023)}…` : change.path;
-      lines.push({ kind: 'change', text: path + (counts.length ? `  ${change.approximate === true ? '≈ ' : ''}${counts.join(' ')}` : '') });
+      const approx = change.approximate === true ? '≈ ' : '';
+      lines.push({ kind: 'change', text: path + (counts.length ? `  ${approx}${counts.join(' ')}` : '') });
     }
     if (changes.length > 12) {
       const count = changes.length - 12;
@@ -5799,7 +5814,10 @@
     icon.setAttribute('aria-hidden', 'true');
     if (entry.kind === 'tool_call') setToolIcon(icon, entry.summary?.kind);
     else if (entry.kind === 'page_tool') setToolIcon(icon, 'thought');
-    else icon.textContent = entry.kind === 'chat_error' ? '!' : entry.kind === 'agent_message' ? '↔' : entry.kind === 'repair' ? '↻' : '';
+    else if (entry.kind === 'chat_error') icon.textContent = '!';
+    else if (entry.kind === 'agent_message') icon.textContent = '↔';
+    else if (entry.kind === 'repair') icon.textContent = '↻';
+    else icon.textContent = '';
     row.append(icon);
 
     if (entry.agent && entry.agent !== 'prime') {
@@ -6155,7 +6173,8 @@
           if (bottom < 0 || (viewport > 0 && top > viewport)) continue;
           // Prefer the first fully/partly visible turn below the top edge. If every candidate
           // starts above it, choose the one whose top is closest to the viewport.
-          const score = top >= 0 ? top : (viewport > 0 ? viewport : 100000) + Math.abs(top);
+          const offscreenBase = viewport > 0 ? viewport : 100000;
+          const score = top >= 0 ? top : offscreenBase + Math.abs(top);
           if (!best || score < best.score) best = { node, top, score, scrollRoot: presentationScrollContainer(node) };
         }
       }
@@ -6426,9 +6445,10 @@
       // While generationTurn() cannot bind it yet, leave ChatGPT native. A stale Fiber stamp
       // or settled node tombstone can describe the previous turn during React reuse, so
       // website-id reconciliation is deliberately reserved for historical/reloaded turns.
-      const identityRender = activeNewest
-        ? websiteRenderForTurn(turn, groups, localGroup, renderIndex)
-        : localId === null ? websiteRenderForTurn(turn, groups, null, renderIndex) : websiteRenderForTurn(turn, groups, localGroup, renderIndex);
+      let identityRender;
+      if (activeNewest) identityRender = websiteRenderForTurn(turn, groups, localGroup, renderIndex);
+      else if (localId === null) identityRender = websiteRenderForTurn(turn, groups, null, renderIndex);
+      else identityRender = websiteRenderForTurn(turn, groups, localGroup, renderIndex);
       const identity = websiteIdentity(turn, renderIndex);
       const identityConflict = identity.conflict || identity.matches.some(match => match.aliased &&
         match.entries.some(entry => localId && entry.turnId && entry.turnId !== localId));
@@ -6617,13 +6637,21 @@
   const UPSERT_KINDS = new Set(['progress', 'page_tool', 'tool_call']);
 
   /** What a stream entry currently says, including disclosure freshness metadata. */
-  const snapshotText = (entry) => (entry ? (entry.kind === 'tool_call'
-    ? JSON.stringify([entry.summary, entry.detailRevision, entry.displayOutcome, entry.durationMs, entry.changes, entry.process])
-    : entry.kind === 'page_tool' ? entry.label : entry.text) : undefined);
+  const snapshotText = (entry) => {
+    if (!entry) return undefined;
+    if (entry.kind === 'tool_call') {
+      return JSON.stringify([entry.summary, entry.detailRevision, entry.displayOutcome, entry.durationMs, entry.changes, entry.process]);
+    }
+    if (entry.kind === 'page_tool') return entry.label;
+    return entry.text;
+  };
   /** A revision-only detail replacement is presentation, not evidence of fresh model work. */
-  const workSnapshotText = (entry) => (entry ? (entry.kind === 'tool_call'
-    ? JSON.stringify(entry.summary)
-    : entry.kind === 'page_tool' ? entry.label : entry.text) : undefined);
+  const workSnapshotText = (entry) => {
+    if (!entry) return undefined;
+    if (entry.kind === 'tool_call') return JSON.stringify(entry.summary);
+    if (entry.kind === 'page_tool') return entry.label;
+    return entry.text;
+  };
 
   let settingsPulling = false;
 
@@ -6677,13 +6705,18 @@
     const forId = conversationId;
     const forEpoch = epoch;
     const current = () => alive && conversationId === forId && epoch === forEpoch;
+    let fiberHealth;
+    if (fiberPresent === null) fiberHealth = undefined;
+    else if (!fiberPresent) fiberHealth = 'absent';
+    else if (fiberTurns.size === 0) fiberHealth = 'empty';
+    else fiberHealth = 'ok';
     try {
       const reply = await ask({
         type: 'activity',
         conversationId,
         since,
         // Initial/loading state is unknown; only a completed scan or repair can report health.
-        fiber: fiberPresent === null ? undefined : fiberPresent ? fiberTurns.size === 0 ? 'empty' : 'ok' : 'absent',
+        fiber: fiberHealth,
         // This document's own open turn, which it closes itself on end_turn or after ten
         // minutes without progress. Keeps a long-thinking worker from being slept as silent.
         generating,
@@ -7124,46 +7157,88 @@
     const driving = loopOn ? 'loop' : 'goal';
     // The slider's position: the one word for everything above. Off is a real position and not
     // merely "neither switch", which is why `armed` and not `enabled` decides it.
-    const position = blocked ? 'off' : armed ? loopOn ? 'loop' : 'goal' : 'off';
+    let position;
+    if (blocked) position = 'off';
+    else if (!armed) position = 'off';
+    else if (loopOn) position = 'loop';
+    else position = 'goal';
+    const fromSuffix = from ? `, ${from}` : '';
+    let autoTip;
+    if (auto) autoTip = t('content_auto_compaction_on', 'Auto-compaction on$1', fromSuffix);
+    else autoTip = t('content_auto_compaction_off', 'Auto-compaction off');
+    let goalTip;
+    if (blocked === 'worker') {
+      goalTip = t('content_goal_off_prime_writes', 'Goal off — the prime writes this chat');
+    } else if (blocked === 'blocked') {
+      goalTip = t('content_goal_off_blocked', 'Goal off — this chat is blocked in the app');
+    } else if (fresh) {
+      if (!hasKey) goalTip = t('content_goal_no_api_key_unavailable', 'No API key — Goal and Loop unavailable');
+      else if (objective) goalTip = t('content_goal_opening_on_goal', 'Opening this chat on its goal');
+      else goalTip = t('content_goal_add_to_start', 'Add a goal or a loop to start this chat');
+    } else if (position === 'off') {
+      goalTip = t('content_goal_loop_off', 'Goal and Loop off');
+    } else if (position === 'loop') {
+      if (hasKey) goalTip = t('content_loop_on_never_stops', 'Loop on — never stops on its own');
+      else goalTip = t('content_loop_on_no_api_key', 'Loop on — no API key');
+    } else if (hasKey) {
+      if (objective) goalTip = t('content_goal_on_chasing', 'Goal on — chasing this chat’s goal');
+      else goalTip = t('content_goal_on', 'Goal on');
+    } else {
+      goalTip = t('content_goal_on_no_api_key', 'Goal on — no API key');
+    }
+    let autoCompactNote;
+    if (blocked === 'worker') autoCompactNote = t('content_auto_compaction_worker_off', 'off here: worker chats never auto-compact');
+    else if (blocked === 'blocked') autoCompactNote = t('content_auto_compaction_blocked_off', 'off here: this chat is blocked in the app');
+    else if (auto) autoCompactNote = from || t('content_auto_compaction_threshold_app', 'threshold set in the app');
+    else autoCompactNote = t('content_auto_compaction_manual', 'compact this chat by hand');
+    let modeNote;
+    if (blocked === 'worker') modeNote = t('content_mode_note_prime_writes', 'the prime writes here');
+    else if (blocked === 'blocked') modeNote = t('content_mode_note_blocked', 'blocked in the app');
+    else if (!hasKey) modeNote = t('content_mode_note_key_required', 'OpenRouter key required');
+    else if (position === 'loop') modeNote = t('content_mode_note_loop', 'replies for ever');
+    else if (position === 'goal') modeNote = t('content_mode_note_goal', 'replies until goal reached');
+    else modeNote = t('content_mode_note_off', 'no replies written here');
+    const editingGoalMode = editingMode === 'loop' ? 'loop' : 'goal';
+    let drivingLabel;
+    if (driving === 'loop') drivingLabel = t('content_mode_loop', 'Loop');
+    else drivingLabel = t('content_mode_goal', 'Goal');
+    let taskHint;
+    if (position === 'off') {
+      taskHint = t('content_task_pick_mode_first', 'Pick Goal or Loop above first — Off writes nothing.');
+    } else if (objective) {
+      taskHint = t('content_task_change_hint', 'Change or clear what this chat has to reach. It runs as $1.', drivingLabel);
+    } else {
+      taskHint = t('content_task_write_hint', 'Write what this chat has to reach. It runs as $1.', drivingLabel);
+    }
+    let taskUnavailable;
+    if (blocked === 'worker') taskUnavailable = t('content_task_worker_unavailable', 'A worker chat is already driven by its prime.');
+    else if (blocked === 'blocked') taskUnavailable = t('content_task_blocked_unavailable', 'This chat is blocked in the app. Release it there to drive it again.');
+    else if (hasKey) taskUnavailable = '';
+    else taskUnavailable = t('content_task_api_key_unavailable', 'Add an OpenRouter API key in the app first.');
+    let taskLabel;
+    if (objective) taskLabel = t('content_task_edit', 'edit task');
+    else taskLabel = t('content_task_add', 'add task');
+    let compactActionLabel;
+    if (fenced) compactActionLabel = t('content_compact_unavailable', 'Compact & resume unavailable');
+    else if (compact.action === 'cancel') compactActionLabel = t('content_compact_cancel', 'Cancel compaction');
+    else compactActionLabel = t('content_compact_resume_now', 'Compact & resume now');
+    let compactActionHint;
+    if (blocked === 'worker') {
+      compactActionHint = t('content_compact_worker_unavailable_hint', 'Worker chats stay in their existing conversation and are never manually compacted or resumed.');
+    } else if (blocked === 'blocked') {
+      compactActionHint = t('content_compact_blocked_unavailable_hint', 'A blocked chat is never compacted or resumed: the replacement chat would run without its tools. Release it in the app first.');
+    } else {
+      compactActionHint = compact.hint;
+    }
     return {
       // Two short lines rather than a sentence: this is read while reaching for something
       // else, and the only questions it answers are "is it on" and "at what point".
-      tip: [
-        auto
-          ? t('content_auto_compaction_on', 'Auto-compaction on$1', from ? `, ${from}` : '')
-          : t('content_auto_compaction_off', 'Auto-compaction off'),
-        blocked === 'worker'
-          ? t('content_goal_off_prime_writes', 'Goal off — the prime writes this chat')
-          : blocked === 'blocked'
-            ? t('content_goal_off_blocked', 'Goal off — this chat is blocked in the app')
-            : fresh
-            ? hasKey ? objective
-                ? t('content_goal_opening_on_goal', 'Opening this chat on its goal')
-                : t('content_goal_add_to_start', 'Add a goal or a loop to start this chat') : t('content_goal_no_api_key_unavailable', 'No API key — Goal and Loop unavailable')
-            : position === 'off'
-              ? t('content_goal_loop_off', 'Goal and Loop off')
-              : position === 'loop'
-                ? hasKey
-                  ? t('content_loop_on_never_stops', 'Loop on — never stops on its own')
-                  : t('content_loop_on_no_api_key', 'Loop on — no API key')
-                : hasKey
-                  ? objective
-                    ? t('content_goal_on_chasing', 'Goal on — chasing this chat’s goal')
-                    : t('content_goal_on', 'Goal on')
-                  : t('content_goal_on_no_api_key', 'Goal on — no API key')
-      ].join('\n'),
+      tip: [autoTip, goalTip].join('\n'),
       rows: [
         {
           key: 'autoCompact',
           label: t('content_auto_compaction', 'Auto-compaction'),
-          note:
-            blocked === 'worker'
-              ? t('content_auto_compaction_worker_off', 'off here: worker chats never auto-compact')
-              : blocked === 'blocked'
-                ? t('content_auto_compaction_blocked_off', 'off here: this chat is blocked in the app')
-                : auto
-                  ? from || t('content_auto_compaction_threshold_app', 'threshold set in the app')
-                  : t('content_auto_compaction_manual', 'compact this chat by hand'),
+          note: autoCompactNote,
           on: auto,
           warn: false,
           disabled: fenced
@@ -7216,16 +7291,7 @@
             // The one line under the slider: what the position it is at actually does. The
             // missing key and the worker rule are said here too, because they are the answer
             // to the only question somebody reaching for this control has.
-            note:
-              blocked === 'worker'
-                ? t('content_mode_note_prime_writes', 'the prime writes here')
-                : blocked === 'blocked'
-                  ? t('content_mode_note_blocked', 'blocked in the app')
-                  : hasKey ? position === 'loop'
-                    ? t('content_mode_note_loop', 'replies for ever')
-                    : position === 'goal'
-                      ? t('content_mode_note_goal', 'replies until goal reached')
-                      : t('content_mode_note_off', 'no replies written here') : t('content_mode_note_key_required', 'OpenRouter key required'),
+            note: modeNote,
             warn: !hasKey || fenced,
             disabled: fenced
           },
@@ -7252,7 +7318,7 @@
          * in. Above a New Chat there is no slider, so there the link that was pressed is the
          * only thing that knows.
          */
-        mode: fresh ? (editingMode === 'loop' ? 'loop' : 'goal') : driving,
+        mode: fresh ? editingGoalMode : driving,
         /**
          * May this editor save at all? Off is not a mode a task can be written into, and an
          * open editor is the one way a save could otherwise reach past an Off and switch the
@@ -7289,57 +7355,21 @@
                 // Two links would offer the mode a second time and let a text save masquerade
                 // as a mode switch.
                 mode: driving,
-                label: objective
-                  ? t('content_task_edit', 'edit task')
-                  : t('content_task_add', 'add task'),
+                label: taskLabel,
                 // Off is not a mode this task could be saved into, so it is not offered as one.
                 // Picking Goal or Loop first is the same order the slider reads in.
                 disabled: position === 'off',
-                hint:
-                  position === 'off'
-                    ? t('content_task_pick_mode_first', 'Pick Goal or Loop above first — Off writes nothing.')
-                    : objective
-                      ? t(
-                        'content_task_change_hint',
-                        'Change or clear what this chat has to reach. It runs as $1.',
-                        driving === 'loop' ? t('content_mode_loop', 'Loop') : t('content_mode_goal', 'Goal')
-                      )
-                      : t(
-                        'content_task_write_hint',
-                        'Write what this chat has to reach. It runs as $1.',
-                        driving === 'loop' ? t('content_mode_loop', 'Loop') : t('content_mode_goal', 'Goal')
-                      )
+                hint: taskHint
               }
             ],
         available: hasKey && !blocked,
-        unavailable:
-          blocked === 'worker'
-            ? t('content_task_worker_unavailable', 'A worker chat is already driven by its prime.')
-            : blocked === 'blocked'
-              ? t('content_task_blocked_unavailable', 'This chat is blocked in the app. Release it there to drive it again.')
-              : hasKey ? '' : t('content_task_api_key_unavailable', 'Add an OpenRouter API key in the app first.')
+        unavailable: taskUnavailable
       },
       // The button's old job, kept as a row rather than dropped: pressing the gear must not
       // have cost anybody the one thing it used to do.
       action: {
-        label:
-          fenced
-            ? t('content_compact_unavailable', 'Compact & resume unavailable')
-            : compact.action === 'cancel'
-              ? t('content_compact_cancel', 'Cancel compaction')
-              : t('content_compact_resume_now', 'Compact & resume now'),
-        hint:
-          blocked === 'worker'
-            ? t(
-              'content_compact_worker_unavailable_hint',
-              'Worker chats stay in their existing conversation and are never manually compacted or resumed.'
-            )
-            : blocked === 'blocked'
-              ? t(
-                'content_compact_blocked_unavailable_hint',
-                'A blocked chat is never compacted or resumed: the replacement chat would run without its tools. Release it in the app first.'
-              )
-              : compact.hint,
+        label: compactActionLabel,
+        hint: compactActionHint,
         action: fenced ? 'none' : compact.action
       }
     };
@@ -7490,17 +7520,18 @@
     const ceiling = auto ? context.threshold : context.limit;
     if (ceiling <= 0) return null;
     const filled = Math.max(0, Math.min(1, tokens / ceiling));
-    const level = auto
-      ? filled >= 1
-        ? 'full'
-        : filled >= 0.8
-          ? 'near'
-          : 'ok'
-      : tokens >= context.limit
-        ? 'full'
-        : context.warn > 0 && tokens >= context.warn
-          ? 'near'
-          : 'ok';
+    let level;
+    if (auto) {
+      if (filled >= 1) level = 'full';
+      else if (filled >= 0.8) level = 'near';
+      else level = 'ok';
+    } else if (tokens >= context.limit) {
+      level = 'full';
+    } else if (context.warn > 0 && tokens >= context.warn) {
+      level = 'near';
+    } else {
+      level = 'ok';
+    }
     // One compact line is enough in the composer. The meter itself already conveys the rest.
     const status = t(
       'content_meter_status',
@@ -8390,11 +8421,11 @@
     save.dataset.clfGoalMode = objective.mode;
     // Named, not just "Save". This button is the moment the mode is decided, and the two
     // outcomes are a run that may stop and a run that may not.
-    save.textContent = objectiveBusy
-      ? t('content_saving', 'Saving…')
-      : objective.mode === 'loop'
-        ? t('content_loop_save', 'Save as loop')
-        : t('content_goal_save', 'Save as goal');
+    let saveText;
+    if (objectiveBusy) saveText = t('content_saving', 'Saving…');
+    else if (objective.mode === 'loop') saveText = t('content_loop_save', 'Save as loop');
+    else saveText = t('content_goal_save', 'Save as goal');
+    save.textContent = saveText;
     save.disabled = objectiveBusy || !menuDraft.trim() || objective.savable === false;
     save.addEventListener('click', (event) => {
       event.preventDefault();
@@ -8529,12 +8560,10 @@
     // progress, or a failure, is the more urgent thing and takes the line back for as long as
     // it lasts — the pill beside it is already saying so in one word.
     const settings = menuView();
-    const tip =
-      state.mode === 'idle'
-        ? settings.tip
-        : state.hint
-          ? `${state.label} — ${state.hint}`
-          : state.label;
+    let tip;
+    if (state.mode === 'idle') tip = settings.tip;
+    else if (state.hint) tip = `${state.label} — ${state.hint}`;
+    else tip = state.label;
     control.button.setAttribute('data-clf-tip', meter ? `${tip}\n${meter.tip}` : tip);
     if (menuOpen) renderMenu();
     // The pill carries transient run state — progress, the opened chat, a failure. `idle` and
@@ -8697,20 +8726,14 @@
   function stageView(input) {
     const { job, goal, phase = nativePhase, summary } = input;
     if (job?.busy) {
-      const stage =
-        job.stage === 'opening'
-          ? t('content_stage_opening_fresh_chat', 'Opening a fresh chat')
-          : job.stage === 'waiting-for-browser'
-            ? t('content_stage_waiting_for_chrome', 'Waiting for Chrome')
-            : phase === 'delivering'
-              ? t('content_stage_saving_handoff', 'Saving the handoff')
-              : summary?.state === 'stopped'
-                ? t('content_stage_handoff_stopped', 'The handoff response was stopped')
-                : summary?.state === 'failed'
-                  ? t('content_stage_handoff_attention', 'The handoff response needs attention')
-                  : summary?.state === 'writing'
-                    ? t('content_compact_chatgpt_writing', 'ChatGPT is writing the handoff')
-                    : t('content_compact_waiting_response', 'Waiting for the handoff response');
+      let stage;
+      if (job.stage === 'opening') stage = t('content_stage_opening_fresh_chat', 'Opening a fresh chat');
+      else if (job.stage === 'waiting-for-browser') stage = t('content_stage_waiting_for_chrome', 'Waiting for Chrome');
+      else if (phase === 'delivering') stage = t('content_stage_saving_handoff', 'Saving the handoff');
+      else if (summary?.state === 'stopped') stage = t('content_stage_handoff_stopped', 'The handoff response was stopped');
+      else if (summary?.state === 'failed') stage = t('content_stage_handoff_attention', 'The handoff response needs attention');
+      else if (summary?.state === 'writing') stage = t('content_compact_chatgpt_writing', 'ChatGPT is writing the handoff');
+      else stage = t('content_compact_waiting_response', 'Waiting for the handoff response');
       // The prompt's durable position, not this document's memory of typing it. A reload
       // during the compaction turn starts a page whose `phase` is empty while the marked
       // prompt has been with ChatGPT for minutes — and the bar then said "Preparing" about
@@ -8719,14 +8742,11 @@
       const asked =
         job.sourceSend &&
         (job.sourceSend.state === 'dispatched-unresolved' || job.sourceSend.state === 'sent');
-      const at =
-        job.stage === 'opening' || job.stage === 'waiting-for-browser'
-          ? 3
-          : phase === 'delivering'
-            ? 2
-            : phase === 'prompting' || phase === 'waiting' || asked
-              ? 1
-              : 0;
+      let at;
+      if (job.stage === 'opening' || job.stage === 'waiting-for-browser') at = 3;
+      else if (phase === 'delivering') at = 2;
+      else if (phase === 'prompting' || phase === 'waiting' || asked) at = 1;
+      else at = 0;
       return { stage, detail: summary?.detail || '', body: '', kind: 'compact', steps: COMPACT_STEPS, at, done: false };
     }
     const goalView = goalStageView(goal);
@@ -8827,13 +8847,11 @@
     const draft = goal.draft || null;
     const who = modelLabel(draft?.model || goal.model);
     const backend = draft?.backend || goal.backend;
-    const dest = backend === 'chatgpt'
-      ? t('content_goal_backend_chatgpt_helper', 'ChatGPT helper')
-      : backend === 'templates'
-        ? t('content_goal_backend_offline_templates', 'offline templates')
-        : goal.provider === 'custom'
-          ? t('content_goal_backend_custom_endpoint', 'custom endpoint')
-          : 'OpenRouter';
+    let dest;
+    if (backend === 'chatgpt') dest = t('content_goal_backend_chatgpt_helper', 'ChatGPT helper');
+    else if (backend === 'templates') dest = t('content_goal_backend_offline_templates', 'offline templates');
+    else if (goal.provider === 'custom') dest = t('content_goal_backend_custom_endpoint', 'custom endpoint');
+    else dest = 'OpenRouter';
     const bar = (at, done = false) => ({ steps: GOAL_STEPS, at, done });
     const failure = goal.error || (draft?.stage === 'failed'
       ? goalFailureText(draft) || draft.error || t('content_goal_backend_no_answer', '$1 did not answer', dest)
@@ -8902,19 +8920,14 @@
           `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
         )
         : '';
-      const stage = wait?.reason === 'native-busy'
-        ? t('content_goal_wait_resumed', 'ChatGPT resumed work · waiting before retry')
-        : wait?.reason === 'silence'
-          ? t('content_goal_wait_recovery_reload', 'Waiting before recovery reload')
-          : wait?.reason === 'quiet'
-            ? t('content_goal_wait_tool_inactivity', 'Waiting for tool inactivity')
-            : wait?.reason === 'workers'
-              ? t('content_goal_wait_workers', 'Waiting for this chat’s sub-agents')
-              : wait?.reason === 'tools'
-                ? t('content_goal_wait_running_tools', 'Waiting for running tools')
-                : wait?.reason === 'listening'
-                  ? t('content_goal_wait_recovery_activity', 'Waiting for activity after recovery')
-                  : t('content_goal_checking_finished', 'Checking the answer is finished');
+      let stage;
+      if (wait?.reason === 'native-busy') stage = t('content_goal_wait_resumed', 'ChatGPT resumed work · waiting before retry');
+      else if (wait?.reason === 'silence') stage = t('content_goal_wait_recovery_reload', 'Waiting before recovery reload');
+      else if (wait?.reason === 'quiet') stage = t('content_goal_wait_tool_inactivity', 'Waiting for tool inactivity');
+      else if (wait?.reason === 'workers') stage = t('content_goal_wait_workers', 'Waiting for this chat’s sub-agents');
+      else if (wait?.reason === 'tools') stage = t('content_goal_wait_running_tools', 'Waiting for running tools');
+      else if (wait?.reason === 'listening') stage = t('content_goal_wait_recovery_activity', 'Waiting for activity after recovery');
+      else stage = t('content_goal_checking_finished', 'Checking the answer is finished');
       return { stage, detail, body: '', kind: 'goal', ...bar(0) };
     }
     if (goal.phase === 'sending' && draft?.reply) {
@@ -9094,14 +9107,11 @@
     const at = Number.isFinite(view.at) ? view.at : 0;
     const stopped = view.kind === 'goal-error';
     [...host.children].forEach((step, index) => {
-      const state =
-        index < at || (index === at && view.done === true)
-          ? 'done'
-          : index === at
-            ? stopped
-              ? 'stopped'
-              : 'now'
-            : 'next';
+      let state;
+      if (index < at || (index === at && view.done === true)) state = 'done';
+      else if (index !== at) state = 'next';
+      else if (stopped) state = 'stopped';
+      else state = 'now';
       if (step.dataset.clfStep !== state) step.dataset.clfStep = state;
     });
   }
@@ -9345,21 +9355,23 @@
         pressedAt = 0;
         nativeBusy = false;
         nativePhase = '';
-        localError = hydrationCurrent()
-          ? expectedQuestionId && editableSource()
-            ? t(
-              'content_compact_source_not_loaded',
-              'The original question has not loaded yet. Nothing was compacted; waiting for the source conversation.'
-            )
-            : t(
-              'content_chatgpt_message_box_not_ready',
-              'The ChatGPT message box is not ready ($1). Wait for the page to load and retry.',
-              CLF_DOM.composer() ? 'composer_unavailable' : 'composer_missing'
-            )
-          : t(
+        if (!hydrationCurrent()) {
+          localError = t(
             'content_compact_chat_changed_preparing',
             'The chat changed while preparing the handoff. Nothing was sent.'
           );
+        } else if (expectedQuestionId && editableSource()) {
+          localError = t(
+            'content_compact_source_not_loaded',
+            'The original question has not loaded yet. Nothing was compacted; waiting for the source conversation.'
+          );
+        } else {
+          localError = t(
+            'content_chatgpt_message_box_not_ready',
+            'The ChatGPT message box is not ready ($1). Wait for the page to load and retry.',
+            CLF_DOM.composer() ? 'composer_unavailable' : 'composer_missing'
+          );
+        }
         if (!automatic || !hydrationCurrent()) await retireUnsentCompaction(forId, String(filed.data.token || ''), localError, current);
         if (!current()) return;
         renderControl();
@@ -10613,13 +10625,11 @@
     }
     if (draft.stage === 'failed') {
       goalDraft = null;
-      const fallbackDestination = draft.backend === 'chatgpt'
-        ? t('content_goal_backend_chatgpt_helper', 'ChatGPT helper')
-        : draft.backend === 'templates'
-          ? t('content_goal_backend_offline_templates_title', 'Offline templates')
-          : goalConfig?.provider === 'custom'
-            ? t('content_goal_backend_custom_endpoint', 'custom endpoint')
-            : 'OpenRouter';
+      let fallbackDestination;
+      if (draft.backend === 'chatgpt') fallbackDestination = t('content_goal_backend_chatgpt_helper', 'ChatGPT helper');
+      else if (draft.backend === 'templates') fallbackDestination = t('content_goal_backend_offline_templates_title', 'Offline templates');
+      else if (goalConfig?.provider === 'custom') fallbackDestination = t('content_goal_backend_custom_endpoint', 'custom endpoint');
+      else fallbackDestination = 'OpenRouter';
       const why = goalFailureText(draft) || draft.error || t(
         'content_goal_backend_no_answer',
         '$1 did not answer',
@@ -11252,7 +11262,10 @@
     // Once per command rather than once per document. A worker's tab is opened by a bootstrap
     // and then lives on, and the prime waking that worker later is a second command for the
     // same page: a document-wide latch would refuse every revival a worker ever gets.
-    const source = fromUrl ? 'url' : options.deferredRecovery === true ? 'recovery' : 'handoff';
+    let source;
+    if (fromUrl) source = 'url';
+    else if (options.deferredRecovery === true) source = 'recovery';
+    else source = 'handoff';
     const prior = commandAttempt;
     const maySupersede =
       Boolean(id) &&
@@ -12306,12 +12319,18 @@
     const expected = message.expected;
     // Which part moved since the first check, and for progress what moved it, so a refused
     // repair can say why instead of only "the page changed" (#1086).
-    const changed = expected ? expected.turnId === turnId ? expected.questionId === questionId ? expected.revision === turnProgressRevision ? null : 'progress' : 'question' : 'turn' : null;
+    let changed;
+    if (!expected) changed = null;
+    else if (expected.turnId !== turnId) changed = 'turn';
+    else if (expected.questionId !== questionId) changed = 'question';
+    else if (expected.revision !== turnProgressRevision) changed = 'progress';
+    else changed = null;
+    const progressBy = changed === 'progress' && turnProgressSource ? { progressBy: turnProgressSource } : {};
     return verdict([[!current(), 'page-changed'], [stopRequestedAt, 'stop-requested'], [pendingTools !== 0, 'tool-running'],
       [desktopInputBusy, 'sending'], [nativeBusy, 'page-busy'], [job?.busy, 'compaction'], [draft(), 'draft'],
       [changed, 'changed']],
     { revision: turnProgressRevision, turnId, questionId,
-      ...(changed ? { changed, ...(changed === 'progress' && turnProgressSource ? { progressBy: turnProgressSource } : {}) } : {}) });
+      ...(changed ? { changed, ...progressBy } : {}) });
   }
 
   async function acceptDesktopInput(message) {
@@ -12590,6 +12609,14 @@
       // comparison never matched, and that first turn got no ACK, no turn start and no turn end
       // for Goal or Loop to act on. The bootstrap comparison is exact either way (raw, then one
       // unescape); a person's own sends keep the raw comparison in matchesUserSendReceipt.
+      // A person's message asking for a picture goes out without the mention (the app decides:
+      // ChatGPT switches its own image tool off for a message that mentions an app).
+      // Evaluated on each Send: the mention setting and the Core list can arrive late.
+      const mentionForSend = () => {
+        if (input.purpose === 'decision' || (input.coreMention === false && !input.recovery && !agent)) return null;
+        if (input.recovery || agent || mentionCore) return currentCoreMention();
+        return null;
+      };
       const nativeSend = () => sendSubmittedText(sendingTarget, false, async sendCurrent => {
         // Preserve the outbox's revocable claim until the actual native Send is ready.
         if (input.recovery && !await recoveryPageUnfinished(() => sendCurrent() && onTarget() && draft.current(), withdrawWhy)) return false;
@@ -12616,10 +12643,7 @@
         receipt = { conversation, user: { id: user.id } };
         return true;
       }, matchesSubmittedBootstrap, DESKTOP_RECEIPT_MS, noteWithdraw,
-      // A person's message asking for a picture goes out without the mention (the app decides:
-      // ChatGPT switches its own image tool off for a message that mentions an app).
-      input.purpose === 'decision' || (input.coreMention === false && !input.recovery && !agent) ? null
-        : input.recovery || agent || mentionCore ? currentCoreMention() : null,
+      mentionForSend(),
       sentRequestSince);
       // #744: one retry when the editor was replaced before anything asked to send it.
       if (!(await nativeSend()) &&
@@ -12740,7 +12764,8 @@
       if (!next?.settled) return next;
       const control = next.refresh || null;
       if (control !== seen) { seen = control; since = Date.now(); return null; }
-      return Date.now() - since >= (control ? PLUGIN_PAGE_SETTLE_MS : PLUGIN_PAGE_ABSENT_MS) ? next : null;
+      const settleMs = control ? PLUGIN_PAGE_SETTLE_MS : PLUGIN_PAGE_ABSENT_MS;
+      return Date.now() - since >= settleMs ? next : null;
     };
   }
   // The App Id a management page shows, under the old hash or the newer path route.
@@ -12755,7 +12780,18 @@
     const requestEpoch = epoch;
     const ownsRequest = () => epoch === requestEpoch && ownsPluginRefreshPage(request.id);
     const fail = error => ask({ type: 'plugin_refresh', action: 'fail', id: request.id, error });
-    const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).map(key => (JSON.stringify(key) + ":" + canonical(value[key]))).join(',')}}` : JSON.stringify(value);
+    const canonical = value => {
+      if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+      if (value && typeof value === 'object') {
+        const keys = Object.keys(value).sort((a, b) => {
+          if (a < b) return -1;
+          if (a > b) return 1;
+          return 0;
+        });
+        return `{${keys.map(key => (JSON.stringify(key) + ":" + canonical(value[key]))).join(',')}}`;
+      }
+      return JSON.stringify(value);
+    };
     const schemaKey = tools => Array.isArray(tools) ? canonical(tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })).sort((a, b) => a.name.localeCompare(b.name))) : null;
     try {
       const current = () => ownsRequest() && CLF_DOM.pluginManagementIdle();

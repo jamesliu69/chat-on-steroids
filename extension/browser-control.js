@@ -332,9 +332,15 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
     const named = special[key];
     if (!named && key.length !== 1) error('BROWSER_KEY_INVALID: use a character, Enter, Tab, Escape, Backspace, Delete, ArrowLeft/Right/Up/Down, Home, End, PageUp/Down or Space, optionally prefixed by Control/Shift/Alt/Meta. Named keys are case-insensitive.');
     const actual = key === 'Space' ? ' ' : key;
-    const code = named?.[0] || (/^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : '');
+    let code = named?.[0];
+    if (!code) {
+      if (/^[a-z]$/i.test(key)) code = `Key${key.toUpperCase()}`;
+      else if (/^\d$/.test(key)) code = `Digit${key}`;
+      else code = '';
+    }
     const vk = named?.[1] || key.toUpperCase().charCodeAt(0);
-    return { key:actual,code,windowsVirtualKeyCode:vk,modifiers,...(!(modifiers & 7) && (actual.length === 1 || key === 'Enter') ? { text:key === 'Enter' ? '\r' : actual } : {}) };
+    const keyText = key === 'Enter' ? '\r' : actual;
+    return { key:actual,code,windowsVirtualKeyCode:vk,modifiers,...(!(modifiers & 7) && (actual.length === 1 || key === 'Enter') ? { text:keyText } : {}) };
   }
   async function action(state,args,command) {
     const a = args.action;
@@ -485,11 +491,23 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
         for(const tab of matched.slice(args.offset || 0,(args.offset || 0)+(args.limit || 100))) {
           const attached=owns(tabs.get(tab.id),command),claimed=tabs.has(tab.id),protectedPage=protectedTab(tab.id,tab.url,command.conversationId);
           const navigating=!tab.url || !!tab.pendingUrl && tab.pendingUrl!==tab.url;
+          let snapshotAccess;
+          if (navigating) snapshotAccess = 'loading';
+          else if (attached) snapshotAccess = 'interactive';
+          else if (tab.url === 'about:blank') snapshotAccess = 'attach-required';
+          else snapshotAccess = 'inspect';
+          let inputAccess;
+          if (protectedPage) inputAccess = 'protected';
+          else if (claimed && !attached) inputAccess = 'other-owner';
+          else if (!policy.write) inputAccess = 'disabled';
+          else if (navigating) inputAccess = 'loading';
+          else if (attached) inputAccess = 'available';
+          else inputAccess = 'attach-required';
           const value={tabId:handle(tab.id),title:cut(tab.title,300),url:cut(tab.url,2000),urlTruncated:(tab.url?.length || 0)>2000,active:tab.active,pinned:tab.pinned,
             pendingUrl:tab.pendingUrl?cut(tab.pendingUrl,2000):undefined,pendingUrlTruncated:(tab.pendingUrl?.length || 0)>2000,status:tab.status || 'unknown',
             owned:attached,claimed,protected:protectedPage,access:{
-              snapshot:navigating?'loading':attached?'interactive':tab.url==='about:blank'?'attach-required':'inspect',
-              input:protectedPage?'protected':claimed&&!attached?'other-owner':policy.write ? navigating?'loading':attached?'available':'attach-required' : 'disabled'
+              snapshot:snapshotAccess,
+              input:inputAccess
             }};
           size+=JSON.stringify(value).length;if(size>24000){ break; }values.push(value);
         }

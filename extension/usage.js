@@ -275,7 +275,10 @@
         for (;;) {
           const lf = buffer.indexOf('\n\n');
           const crlf = buffer.indexOf('\r\n\r\n');
-          const split = lf < 0 ? crlf : crlf < 0 ? lf : Math.min(lf, crlf);
+          let split;
+          if (lf < 0) split = crlf;
+          else if (crlf < 0) split = lf;
+          else split = Math.min(lf, crlf);
           if (split < 0) break;
           const width = buffer.startsWith('\r\n\r\n', split) ? 4 : 2;
           scan(buffer.slice(0, split));
@@ -368,7 +371,12 @@
       const init = args[1];
       const method = String((init?.method) || (args[0] && typeof args[0] === 'object' && args[0].method) || 'GET').toUpperCase();
       if (method !== 'POST' || !init || typeof init.body !== 'string' || init.body.length > 2_000_000) return;
-      const url = new URL(typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : args[0].url, location.origin);
+      const sendTarget = args[0];
+      let requestUrl;
+      if (typeof sendTarget === 'string') requestUrl = sendTarget;
+      else if (sendTarget instanceof URL) requestUrl = sendTarget.href;
+      else requestUrl = sendTarget.url;
+      const url = new URL(requestUrl, location.origin);
       if (url.origin !== location.origin || !/^\/backend-api\/(?:f\/)?conversation$/.test(url.pathname)) return;
       const body = JSON.parse(init.body);
       const model = typeof body?.model === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(body.model) ? body.model : null;
@@ -387,7 +395,12 @@
     try {
       const init = args[1];
       const method = String(init?.method || args[0]?.method || 'GET').toUpperCase();
-      const url = new URL(typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : args[0].url, location.origin);
+      const resumeTarget = args[0];
+      let resumeUrl;
+      if (typeof resumeTarget === 'string') resumeUrl = resumeTarget;
+      else if (resumeTarget instanceof URL) resumeUrl = resumeTarget.href;
+      else resumeUrl = resumeTarget.url;
+      const url = new URL(resumeUrl, location.origin);
       if (method !== 'POST' || url.origin !== location.origin || url.pathname !== '/backend-api/f/conversation/resume' ||
           typeof init?.body !== 'string' || init.body.length > 16 * 1024) return null;
       const conversationId = JSON.parse(init.body)?.conversation_id;

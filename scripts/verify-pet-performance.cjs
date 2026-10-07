@@ -160,10 +160,13 @@ async function measure() {
       const processes = new Map(app.getAppMetrics().map(m => [m.pid, m.cpu.cumulativeCPUUsage]));
       const started = performance.now(); await delay(milliseconds);
       const seconds = (performance.now() - started) / 1000;
-      const cpu = app.getAppMetrics().filter(m => processes.has(m.pid)).map(m => ({
-        type: m.type, role: m.pid === win.webContents.getOSProcessId() ? 'pet' : owner && m.pid === owner.webContents.getOSProcessId() ? 'owner' : undefined,
-        pid: m.pid, seconds: m.cpu.cumulativeCPUUsage - processes.get(m.pid)
-      }));
+      const cpu = app.getAppMetrics().filter(m => processes.has(m.pid)).map(m => {
+        let role;
+        if (m.pid === win.webContents.getOSProcessId()) role = 'pet';
+        else if (owner && m.pid === owner.webContents.getOSProcessId()) role = 'owner';
+        else role = undefined;
+        return { type: m.type, role, pid: m.pid, seconds: m.cpu.cumulativeCPUUsage - processes.get(m.pid) };
+      });
       const cpuSampleValid = cpu.length === processes.size && cpu.every(m => Number.isFinite(m.seconds) && m.seconds >= 0);
       const after = await perf();
       const result = { name, seconds, cpuSampleValid,

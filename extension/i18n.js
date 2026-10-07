@@ -97,9 +97,13 @@
     }
     try {
       const values = normalizeSubstitutions(substitutions);
+      let messageArg;
+      if (values.length === 0) messageArg = undefined;
+      else if (values.length === 1) messageArg = values[0];
+      else messageArg = values;
       const translated = chrome?.i18n?.getMessage?.(
         key,
-        values.length === 0 ? undefined : values.length === 1 ? values[0] : values
+        messageArg
       );
       return typeof translated === 'string' && translated.length > 0 ? translated : safeFallback;
     } catch {

@@ -24,7 +24,11 @@ const special = {
 };
 
 const scripts = readdirSync(path.join(root, 'scripts'))
-  .filter(name => /^verify-.*\.cjs$/.test(name) && name.includes(filter)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  .filter(name => /^verify-.*\.cjs$/.test(name) && name.includes(filter)).sort((a, b) => {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  });
 // CI runners are shared and uneven: a different check timed out on each run while all of them
 // passed on a real machine. With VERIFY_UI_RETRY a failed check runs once more; a pass on retry
 // counts, and is named as a flake (a GitHub warning in CI) so it stays visible.
@@ -37,8 +41,14 @@ const noise = /sandbox_extension|task_policy|js2c|XPC error|com\.apple\.|Connect
 // A check's own result line is JSON whose keys can read like a reason ("actualPty"); it is never one.
 const resultLine = /^\s*[{[]/;
 // Windows reports a crash as an NTSTATUS such as 3221225477; in hex (0xC0000005) it can be looked up.
-const exitStatus = code => code === 'timeout' ? 'timed out'
-  : typeof code === 'number' ? `exited with ${code}${code > 0xffff ? (" (0x" + (code >>> 0).toString(16).toUpperCase() + ")") : ''}` : String(code);
+const exitStatus = code => {
+  if (code === 'timeout') return 'timed out';
+  if (typeof code === 'number') {
+    const hex = code > 0xffff ? (" (0x" + (code >>> 0).toString(16).toUpperCase() + ")") : '';
+    return `exited with ${code}${hex}`;
+  }
+  return String(code);
+};
 const reasonFor = outcome => {
   const lines = outcome.output.split('\n').filter(line => line.trim() && !noise.test(line));
   const reason = lines.filter(line => !resultLine.test(line) && /Error|assert|Timeout|timed out|expected|actual/i.test(line)).slice(0, 6);

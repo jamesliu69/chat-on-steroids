@@ -45,25 +45,30 @@ app.whenReady().then(async () => {
   for (const width of [920, 420]) for (const zoom of [1, 1.5]) for (const theme of ['dark', 'light']) {
     win.setContentSize(width, 380);
     win.webContents.setZoomFactor(zoom);
-    for (const kind of ['thinking-failed', 'unattributed', 'unattributed-wait', 'assistant-error', 'tab-recovery', 'native-busy', 'silence', 'post-reload'])
-      for (const next of kind === 'post-reload' ? [null, 'queue', 'goal', 'loop', 'continue'] : kind === 'native-busy' ? [null, 'continue'] : [null]) {
-      const measured = await win.webContents.executeJavaScript(`(async () => {
-        document.documentElement.dataset.theme = '${theme}';
-        recovery.renderRecoveryCountdowns(document.getElementById('recoveryStatus'), [{ kind: '${kind}', next: ${JSON.stringify(next)}, generating: ${kind === 'post-reload'}, deadline: ${kind === 'unattributed' ? 15000 : 300000} }], 1000);
-        // Measure the resting layout: the dock's entrance animation would otherwise be caught mid-way.
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        await Promise.race([Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity).map(animation => animation.finished.catch(() => undefined))), new Promise(resolve => setTimeout(resolve, 1500))]);
-        const host = document.getElementById('recoveryStatus'), timer = host.querySelector('.recovery-countdown');
-        const h = host.getBoundingClientRect(), t = timer.getBoundingClientRect();
-        return { hostWidth: h.width, height: h.height, timerWidth: t.width, text: timer.textContent,
-          fits: t.left >= h.left && t.right <= h.right && host.scrollWidth <= host.clientWidth };
-      })()`);
-      assert.ok(measured.fits, JSON.stringify({ width, zoom, theme, kind, ...measured }));
-      assert.ok(measured.height >= 38 && measured.timerWidth > 0, JSON.stringify({ width, zoom, theme, kind, next, ...measured }));
-      results.push({ width, zoom, theme, kind, next, ...measured });
-      if (width === 920 && zoom === 1 && theme === 'dark') {
-        await win.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        await captureOffscreenFrame(win, path.join(output, `${kind}${next ? '-' + next : ''}.png`));
+    for (const kind of ['thinking-failed', 'unattributed', 'unattributed-wait', 'assistant-error', 'tab-recovery', 'native-busy', 'silence', 'post-reload']) {
+      let nextOptions;
+      if (kind === 'post-reload') nextOptions = [null, 'queue', 'goal', 'loop', 'continue'];
+      else if (kind === 'native-busy') nextOptions = [null, 'continue'];
+      else nextOptions = [null];
+      for (const next of nextOptions) {
+        const measured = await win.webContents.executeJavaScript(`(async () => {
+          document.documentElement.dataset.theme = '${theme}';
+          recovery.renderRecoveryCountdowns(document.getElementById('recoveryStatus'), [{ kind: '${kind}', next: ${JSON.stringify(next)}, generating: ${kind === 'post-reload'}, deadline: ${kind === 'unattributed' ? 15000 : 300000} }], 1000);
+          // Measure the resting layout: the dock's entrance animation would otherwise be caught mid-way.
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          await Promise.race([Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity).map(animation => animation.finished.catch(() => undefined))), new Promise(resolve => setTimeout(resolve, 1500))]);
+          const host = document.getElementById('recoveryStatus'), timer = host.querySelector('.recovery-countdown');
+          const h = host.getBoundingClientRect(), t = timer.getBoundingClientRect();
+          return { hostWidth: h.width, height: h.height, timerWidth: t.width, text: timer.textContent,
+            fits: t.left >= h.left && t.right <= h.right && host.scrollWidth <= host.clientWidth };
+        })()`);
+        assert.ok(measured.fits, JSON.stringify({ width, zoom, theme, kind, ...measured }));
+        assert.ok(measured.height >= 38 && measured.timerWidth > 0, JSON.stringify({ width, zoom, theme, kind, next, ...measured }));
+        results.push({ width, zoom, theme, kind, next, ...measured });
+        if (width === 920 && zoom === 1 && theme === 'dark') {
+          await win.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          await captureOffscreenFrame(win, path.join(output, `${kind}${next ? '-' + next : ''}.png`));
+        }
       }
     }
   }
