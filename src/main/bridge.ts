@@ -5579,7 +5579,7 @@ function commandSnapshot(options: {
 function persistCommands(): void {
   if (commandWrites.size) {
     // Never capture a stale full-ledger snapshot while a lease/receipt is staged.
-    void Promise.allSettled([...commandWrites.values()]).then(() => persistCommands());
+    void Promise.allSettled(commandWrites.values()).then(() => persistCommands());
     return;
   }
   writeDurableSoon(COMMANDS_STATE, commandSnapshot());
@@ -5588,7 +5588,7 @@ function persistCommands(): void {
 /** Browser operations are independent; their shared durable ledger commits serially. */
 async function writeCommandTransition(command: Command, transition: () => Promise<boolean>): Promise<boolean> {
   if (commandWrites.size) {
-    await Promise.allSettled([...commandWrites.values()]);
+    await Promise.allSettled(commandWrites.values());
     return writeCommandTransition(command, transition);
   }
   const work = Promise.resolve().then(transition);

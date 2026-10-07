@@ -152,7 +152,7 @@ export async function runCodeMode(
     ended = true;
     await worker?.terminate();
     // Do not allow fire-and-forget scripts to evade the global host-work bound.
-    if (pending.size) void Promise.allSettled([...pending]).then(() => { activeRuns--; });
+    if (pending.size) void Promise.allSettled(pending).then(() => { activeRuns--; });
     else activeRuns--;
   }
 }

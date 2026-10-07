@@ -231,7 +231,7 @@ async function routingRules(scope: SkillLibraryScope): Promise<{
   let includeInstructions = true, maxContextTokens: number | undefined;
   if (!effectiveCapabilities(getConfig()).read) return { valid: true, rules, includeInstructions };
   const search = await locations(scope);
-  for (const file of [...new Set(search.configs)]) {
+  for (const file of new Set(search.configs)) {
     try { await approved(file, true); } catch { continue; }
     try {
       const candidate = await approved(file, true);
@@ -409,7 +409,7 @@ export async function listSkillLibrary(scope: SkillLibraryScope = {}, runtime: S
   const configurationFingerprint = createHash('sha256');
   let invalidConfiguration = false;
   const search = effectiveCapabilities(getConfig()).read ? await locations(scope) : { roots: [], configs: [], codexHome: '', claudeHome: '', projectReal: null };
-  for (const file of [...new Set(search.configs)]) {
+  for (const file of new Set(search.configs)) {
     try { await approved(file, true); } catch { continue; }
     try {
       // Resolve a missing optional path only to its approved ancestor before stat;

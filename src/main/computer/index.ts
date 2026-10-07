@@ -765,7 +765,7 @@ export async function stopComputerHelper(): Promise<void> {
     await retireMacOSAddon(addonRuntime);
   }
   if (!runtime) {
-    await Promise.allSettled([...helperRetirements]);
+    await Promise.allSettled(helperRetirements);
     return;
   }
 
@@ -781,7 +781,7 @@ export async function stopComputerHelper(): Promise<void> {
     // The helper may already have closed its pipe.
   }
   await retireHelper(runtime);
-  await Promise.allSettled([...helperRetirements]);
+  await Promise.allSettled(helperRetirements);
 }
 
 async function sendHelperRequest(request: Record<string, unknown>, expected?: ExpectedHelper): Promise<Record<string, any>> {

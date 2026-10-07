@@ -1277,7 +1277,7 @@ export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | n
 export async function flushRecorder(): Promise<void> {
   // Admission is synchronous even while a request is still waiting for its owner. Include work
   // admitted during a flush too; endpoint/bridge shutdown closes producers before this barrier.
-  while (pendingRecordings.size) await Promise.all([...pendingRecordings]);
+  while (pendingRecordings.size) await Promise.all(pendingRecordings);
   if (attributionRepairTimer) {
     clearTimeout(attributionRepairTimer);
     attributionRepairTimer = null;

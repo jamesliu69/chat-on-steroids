@@ -187,7 +187,7 @@ function checkHistory() {
 
 function fail(failures) {
   console.error('Public-history privacy check failed:');
-  for (const failure of [...new Set(failures)]) console.error(`- ${failure}`);
+  for (const failure of new Set(failures)) console.error(`- ${failure}`);
   process.exitCode = 1;
 }
 
