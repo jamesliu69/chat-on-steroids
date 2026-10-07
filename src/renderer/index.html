@@ -81,7 +81,7 @@
                   <span class="sidebar-session-label"><svg class="disclosure-chevron sidebar-section-chev" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.5 10.5 8 6 12.5"></path></svg>Projects</span>
                   <span class="acts"><button class="btn" id="addProject" type="button" title="Add a project folder" aria-label="Add a project folder"><i class="ico ph ph-plus" aria-hidden="true"></i></button></span>
                 </summary>
-                <div id="projectList"><p class="empty" role="status">Loading projects…</p></div>
+                <div id="projectList"><output class="empty" style="display:block">Loading projects…</output></div>
                 <p class="empty sidebar-section-empty" id="projectsEmpty" hidden>No projects yet.</p>
               </details>
               <details class="sidebar-session-section" id="chatsSection" open>
@@ -89,7 +89,7 @@
                   <span class="sidebar-session-label"><svg class="disclosure-chevron sidebar-section-chev" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.5 10.5 8 6 12.5"></path></svg>Chats</span>
                   <span class="acts"><button class="btn" id="chatRefresh" type="button" title="Refresh chats" aria-label="Refresh chats"><i class="ico ph ph-arrow-clockwise" aria-hidden="true"></i></button></span>
                 </summary>
-                <div id="chatList"><p class="empty" role="status">Loading chats…</p></div>
+                <div id="chatList"><output class="empty" style="display:block">Loading chats…</output></div>
                 <p class="empty sidebar-section-empty" id="sessionsEmpty" hidden>No chats outside projects yet.</p>
               </details>
             </div>
@@ -112,7 +112,7 @@
               <span class="sidebar-connection-dot" aria-hidden="true"></span>
               <span class="sidebar-connection-label" aria-hidden="true"><span id="sidebarConnectionLabel">Connect</span></span>
             </button>
-            <span class="sr-only" id="connectionAnnounce" role="status" aria-live="polite"></span>
+            <output class="sr-only" id="connectionAnnounce" aria-live="polite"></output>
             <section class="connection-popover scroll" id="connectionPopover" role="dialog" aria-label="Connection" hidden>
               <div class="connection-popover-head">
                 <strong id="connectionPopoverTitle">Not connected</strong>
@@ -166,10 +166,10 @@
       <div class="notices">
       <!-- A new macOS build asks once for the Keychain password; everything that needs saved keys
            waits for the answer. See src/renderer/keychain-notice.ts. -->
-      <div class="notice" id="keychainNotice" role="status" hidden>
+      <output class="notice" id="keychainNotice" hidden>
         <i class="ico ph ph-lock-key" aria-hidden="true"></i>
         <span>macOS asks for your password once after each update, so this version can open its saved keys. Enter your Mac login password and choose “Always Allow”. Chats and the browser connection continue as soon as you answer.</span>
-      </div>
+      </output>
       <div class="notice" id="updateNotice" hidden>
         <i class="ico ph ph-lightning" aria-hidden="true"></i>
         <span id="updateText"></span>
@@ -177,11 +177,11 @@
         <button class="btn btn-quiet" id="updateInstall" type="button" hidden>Install now</button>
         <button class="btn btn-quiet" id="updateExtension" type="button" hidden>Update extension</button>
       </div>
-      <div class="notice" id="pluginRefreshReminder" role="status" hidden>
+      <output class="notice" id="pluginRefreshReminder" hidden>
         <i class="ico ph ph-activity" aria-hidden="true"></i>
         <span>Chat On Steroids connector tools changed. Refresh the affected connector in ChatGPT; this is separate from the browser extension.</span>
         <button class="btn btn-icon" id="dismissPluginRefreshReminder" type="button" title="Dismiss reminder" aria-label="Dismiss reminder"><i class="ico ph ph-x" aria-hidden="true"></i></button>
-      </div>
+      </output>
       </div>
 
       <main>
@@ -276,7 +276,7 @@
           <div class="plugins-content">
           <header class="plugin-page-head"><div><h1>Plugins</h1><p>Bring your favorite tools into the conversation.</p></div><div class="plugin-search-actions"><label class="plugin-search"><i class="ico ph ph-magnifying-glass" aria-hidden="true"></i><input id="pluginsSearch" type="search" placeholder="Search plugins" aria-label="Search plugins" /></label><button class="btn plugin-add" id="pluginsAdd" type="button" aria-label="Add a plugin" title="Add a plugin"><i class="ico ph ph-plus" aria-hidden="true"></i></button></div></header>
           <section class="plugin-connection" aria-labelledby="pluginsSetupTitle">
-            <div><h2 id="pluginsSetupTitle">Set up plugins before your first use</h2><p id="pluginsSetupHint">Add the Chat On Steroids Plugins connector in ChatGPT once so it can use your installed plugins.</p><span id="pluginsConnectionStatus" role="status">Setup required · connect your plugins</span></div>
+            <div><h2 id="pluginsSetupTitle">Set up plugins before your first use</h2><p id="pluginsSetupHint">Add the Chat On Steroids Plugins connector in ChatGPT once so it can use your installed plugins.</p><output id="pluginsConnectionStatus">Setup required · connect your plugins</output></div>
             <button class="btn btn-solid" id="pluginsSetupLink" type="button">Set up plugins</button>
           </section>
           <div class="plugin-refresh-guide"><p>After installing, updating or changing enabled plugins, refresh <strong id="pluginsRefreshName" translate="no">Chat On Steroids Plugins</strong> in ChatGPT to make its tools available.</p><button class="btn" id="pluginsOpenChatGPT" type="button">Open ChatGPT plugins</button></div>
@@ -349,7 +349,7 @@
                   <button class="btn" id="refreshUsage" type="button"><i class="ico ph ph-arrow-clockwise" aria-hidden="true"></i>Refresh</button>
                 </header>
                 <div class="settings-surface usage-message-surface">
-                  <p class="muted usage-status" id="usageStatus" role="status">Updating usage in the background. After an update, this can take a few minutes. You can keep using the app.</p>
+                  <output class="muted usage-status" id="usageStatus" style="display:block">Updating usage in the background. After an update, this can take a few minutes. You can keep using the app.</output>
                   <dl class="usage-message-counts" id="usageMessageCounts" aria-live="polite">
                     <div class="usage-limit"><dt translate="no">GPT-5.6</dt><dd><strong id="usageMessages56" translate="no">—</strong><span class="muted">sent</span></dd></div>
                     <div class="usage-limit"><dt translate="no">GPT-6</dt><dd><strong id="usageMessages6" translate="no">—</strong><span class="muted">sent</span></dd></div>
@@ -601,7 +601,7 @@
                     </div>
 
                     <div class="browser-stage-footer">
-                      <div class="status-banner" id="extensionStatusBox" data-tone="wait" role="status" aria-live="polite"><span class="status-banner-title" id="extensionStatus"></span><span class="status-banner-detail" id="extensionSetupDetail"></span></div>
+                      <output class="status-banner" id="extensionStatusBox" data-tone="wait" aria-live="polite"><span class="status-banner-title" id="extensionStatus"></span><span class="status-banner-detail" id="extensionSetupDetail"></span></output>
                       <button class="btn step-next" id="browserContinue" type="button" disabled><span>Continue</span><i class="ico ph ph-arrow-right" aria-hidden="true"></i></button>
                     </div>
                   </section>
@@ -613,8 +613,8 @@
                         <button class="browser-option" id="useCosBrowser" type="button" role="radio" data-browser-choice="cos"><img src="./browser-icons/cos.png" alt="" /><b>In Chat On Steroids</b><em>Use the app’s built-in browser.</em></button>
                         <button class="browser-option" id="useExtensionBrowser" type="button" role="radio" data-browser-choice="extension"><img id="setupExternalIcon" src="./browser-icons/chrome.svg" alt="" /><b>In your browser</b><em id="setupExternalLabel"></em></button>
                       </div>
-                      <div data-browser-variant="cos" class="browser-action"><button class="btn btn-solid" id="showCosBrowser" type="button"><i class="ico ph ph-sign-in" aria-hidden="true"></i><span>Sign in to ChatGPT</span></button><span class="status-pill" id="cosBrowserState" data-tone="off" role="status"></span></div>
-                      <div data-browser-variant="extension" class="browser-action"><button class="btn btn-solid" id="openSelectedChatGpt" type="button"><i class="ico ph ph-sign-in" aria-hidden="true"></i><span>Sign in to ChatGPT</span></button><span class="status-pill" id="externalBrowserState" data-tone="off" role="status"></span></div>
+                      <div data-browser-variant="cos" class="browser-action"><button class="btn btn-solid" id="showCosBrowser" type="button"><i class="ico ph ph-sign-in" aria-hidden="true"></i><span>Sign in to ChatGPT</span></button><output class="status-pill" id="cosBrowserState" data-tone="off"></output></div>
+                      <div data-browser-variant="extension" class="browser-action"><button class="btn btn-solid" id="openSelectedChatGpt" type="button"><i class="ico ph ph-sign-in" aria-hidden="true"></i><span>Sign in to ChatGPT</span></button><output class="status-pill" id="externalBrowserState" data-tone="off"></output></div>
                       <div id="browserConnectionLost" class="browser-connection-lost" role="status" hidden><p>Reconnect or update your browser extension to continue.</p><button id="browserReviewExtension" class="btn btn-quiet" type="button">Review extension</button></div>
                       <button class="btn step-back browser-back" id="browserBack" type="button"><i class="ico ph ph-arrow-left" aria-hidden="true"></i><span>Back</span></button>
                     </div>
@@ -1192,7 +1192,7 @@
 
               </div>
             </div>
-            <div class="composer-dock" id="composerDock"><div class="composer-dock-body"><div class="background-exec-status" id="backgroundExecStatus" role="status" hidden><i class="ico ph ph-terminal-window" aria-hidden="true"></i><span class="queue-label"></span><span class="background-exec-time"></span><svg class="disclosure-chevron background-exec-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" hidden><path d="M6 3.5 10.5 8 6 12.5"></path></svg><button class="background-exec-stop" type="button"><i class="ico ph ph-power" aria-hidden="true"></i><span></span></button></div><div class="sr-only" id="backgroundExecLiveStatus" role="status" aria-live="polite" hidden></div><div class="background-exec-list" id="backgroundExecList" role="list" hidden></div><section class="agent-plan" id="agentPlan" aria-label="Agent task plan" hidden></section><div id="recoveryStatus" role="status" hidden></div><div id="taskPlanPreview" aria-label="Plan stages" hidden></div><div id="finishQueue" aria-label="Queued tasks" hidden></div><div id="activeGoalRow" hidden></div></div></div>
+            <div class="composer-dock" id="composerDock"><div class="composer-dock-body"><output class="background-exec-status" id="backgroundExecStatus" hidden><i class="ico ph ph-terminal-window" aria-hidden="true"></i><span class="queue-label"></span><span class="background-exec-time"></span><svg class="disclosure-chevron background-exec-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false" hidden><path d="M6 3.5 10.5 8 6 12.5"></path></svg><button class="background-exec-stop" type="button"><i class="ico ph ph-power" aria-hidden="true"></i><span></span></button></output><output class="sr-only" id="backgroundExecLiveStatus" aria-live="polite" hidden></output><div class="background-exec-list" id="backgroundExecList" role="list" hidden></div><section class="agent-plan" id="agentPlan" aria-label="Agent task plan" hidden></section><output id="recoveryStatus" style="display:block" hidden></output><div id="taskPlanPreview" aria-label="Plan stages" hidden></div><div id="finishQueue" aria-label="Queued tasks" hidden></div><div id="activeGoalRow" hidden></div></div></div>
             <form class="composer" id="composer">
               <div id="skillPicker" class="skill-autocomplete" aria-label="Skills" hidden></div>
               <div id="composerSelectedSkills" class="composer-selected-skills" aria-label="Selected skills" hidden></div>
@@ -1243,13 +1243,13 @@
                     <button type="button" class="context-action" id="contextDisplay"><i class="ico ph ph-arrows-clockwise" aria-hidden="true"></i><span>Show token values</span></button>
                     <button id="compactSession" class="context-action" type="button" hidden><i class="ico ph ph-copy" aria-hidden="true"></i><span>Compact &amp; resume</span></button>
                     <button id="cancelCompaction" class="context-action" type="button" hidden><i class="ico ph ph-x" aria-hidden="true"></i><span>Cancel compaction</span></button>
-                    <p id="sessionControlStatus" role="status"></p>
+                    <output id="sessionControlStatus"></output>
                   </div>
                 </div>
                 <details class="composer-menu model-menu" id="modelMenu">
                   <summary><span id="composerModelLabel">Model</span><svg class="disclosure-chevron dropdown-chevron picker-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.5 10.5 8 6 12.5"></path></svg></summary>
                   <div class="composer-popover">
-                    <p id="composerModelStatus" class="muted" role="status" hidden></p>
+                    <output id="composerModelStatus" class="muted" style="display:block" hidden></output>
                     <div class="power-header">
                       <button id="composerSpark" class="power-spark" data-keep-menu="true" data-action="min" type="button" title="Thinking effort" aria-label="Thinking effort" disabled>
                         <i class="ico ph ph-lightning spark-lightning" aria-hidden="true"></i><i class="ico ph ph-brain spark-brain" aria-hidden="true"></i>
@@ -1278,7 +1278,7 @@
                   <button class="send-button" id="chatSend" type="submit" aria-label="Send message"><i class="ph ph-arrow-up send-icon" aria-hidden="true"></i></button>
                 </div>
               </div>
-              <p id="composerStatus" role="status" aria-live="polite"></p>
+              <output id="composerStatus" aria-live="polite"></output>
             </form>
             <p class="foot" id="chatFoot" hidden></p>
           </section>
