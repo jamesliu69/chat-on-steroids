@@ -21,7 +21,7 @@ app.whenReady().then(async () => {
     const js = code => win.webContents.executeJavaScript(code);
     await js(`document.fonts.ready;`);
     assert.equal(await js(`document.fonts.check('16px "CoS Phosphor"')`), true);
-    await win.webContents.debugger.attach('1.3');
+    win.webContents.debugger.attach('1.3');
     for (const reduced of [false, true]) {
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-reduced-motion', value: reduced ? 'reduce' : 'no-preference' }]

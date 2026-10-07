@@ -156,7 +156,7 @@ app.whenReady().then(async () => {
     await js(`window.savedUi=structuredClone(window.fixtureState.config.ui);window.pushState()`);
     await change('appearance-sidebar-hex','#331155');
     const savedUi = await js('window.fixtureState.config.ui');
-    await win.reload();
+    win.reload();
     for(let i=0;i<100 && !(await js('!!window.fixtureReady'));i++) await new Promise(r=>setTimeout(r,25));
     await js(`window.fixtureState.config.ui=${JSON.stringify(savedUi)};window.pushState();document.querySelector('[data-tab="appearance"]').click()`);
     assert.equal(await js(`document.getElementById('appearance-sidebar-hex').value`),'#331155');

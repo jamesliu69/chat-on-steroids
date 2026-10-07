@@ -586,8 +586,9 @@ export function skillLibraryInstructions(library: SkillLibrary): string {
     ['user-agents', 'codex-home', 'codex-plugin', 'claude-home', 'claude-plugin'].includes(skill.source) ? skill.source : 'own';
   const queues = new Map<string, LibrarySkill[]>();
   for (const skill of implicit) queues.set(family(skill), [...queues.get(family(skill)) ?? [], skill]);
+  const rounds = Math.max(0, ...[...queues.values()].map((queue) => queue.length));
   const turns: LibrarySkill[] = [];
-  for (let round = 0; turns.length < implicit.length; round++)
+  for (let round = 0; round < rounds; round++)
     for (const queue of queues.values()) { const next = queue[round]; if (next) turns.push(next); }
   const split = (skill: LibrarySkill): { folder: string; entry: string } => {
     const match = /^(.*)\/([^/]+)\/SKILL\.md$/.exec(skill.path);

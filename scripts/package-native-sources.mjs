@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,7 +51,7 @@ await Promise.all(Array.from({ length: 8 }, async () => {
       if (!response.ok) throw new Error(`Native source download failed: ${source.file}: HTTP ${response.status}`);
       const chunks = [];
       let size = 0;
-      for await (const chunk of response.body) {
+      for await (const chunk of Readable.fromWeb(response.body)) {
         size += chunk.length;
         if (size > source.bytes) throw new Error(`Native source exceeds reviewed size: ${source.file}`);
         chunks.push(chunk);

@@ -11391,12 +11391,14 @@
     // redeem is idempotent, and the app's own deadline still ends the command.
     const redeemStarted = Date.now();
     let reply = await redeemOnce();
-    for (let delay = 1_000; (!reply || (reply.ok !== true && reply.retryable === true)) &&
-        Date.now() - redeemStarted < REDEEM_RETRY_WINDOW_MS; delay = Math.min(delay * 2, 4_000)) {
+    let delay = 1_000;
+    while ((!reply || (reply.ok !== true && reply.retryable === true)) &&
+        Date.now() - redeemStarted < REDEEM_RETRY_WINDOW_MS) {
       if (!redeemStillCurrent()) break;
       await new Promise(resolve => setTimeout(resolve, delay));
       if (!redeemStillCurrent()) break;
       reply = await redeemOnce();
+      delay = Math.min(delay * 2, 4_000);
     }
     if (!reply || reply.ok !== true) {
       // The app could not be reached at all, so there is nothing to acknowledge and nothing

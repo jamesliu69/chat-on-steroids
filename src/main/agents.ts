@@ -1949,9 +1949,11 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   // even though maxWorkers is only a *concurrency* limit. The first free positive suffix is
   // bounded by history size + this request, so this loop remains finite without an artificial
   // lifetime ceiling.
-  for (let n = 1; ids.length < planned.length; n++) {
+  let n = 1;
+  while (ids.length < planned.length) {
     const id = `worker-${n}`;
     if (!activeRun.agents.has(id)) ids.push(id);
+    n++;
   }
 
   const created: AgentInfo[] = [];

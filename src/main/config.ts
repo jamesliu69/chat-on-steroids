@@ -219,9 +219,11 @@ function uniqueStoredRoots(roots: Root[]): Root[] {
     const reserved = RESERVED_ROOT_NAMES.has(wanted);
     const base = reserved ? `${wanted}-folder` : wanted;
     let candidate = base.slice(0, 32);
-    for (let suffix = 2; RESERVED_ROOT_NAMES.has(candidate) || used.has(candidate); suffix++) {
+    let suffix = 2;
+    while (RESERVED_ROOT_NAMES.has(candidate) || used.has(candidate)) {
       const tail = `-${suffix}`;
       candidate = `${base.slice(0, Math.max(1, 32 - tail.length))}${tail}`;
+      suffix++;
     }
     return candidate;
   };

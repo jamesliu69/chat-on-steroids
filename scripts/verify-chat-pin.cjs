@@ -71,7 +71,7 @@ app.whenReady().then(async () => {
   assert.equal(await js(`document.activeElement===${row('other-chat-3')}.querySelector('.row-menu-button')`),true,'Focus stays on the same chat\'s menu button');
   assert.equal(await pinLabel('other-chat-3'),'Unpin chat');
   // The mark shows when the row is at rest (not hovered or focused).
-  await js(`document.activeElement.blur()`); await win.webContents.sendInputEvent({type:'mouseMove',x:900,y:400}); await settle();
+  await js(`document.activeElement.blur()`); win.webContents.sendInputEvent({type:'mouseMove',x:900,y:400}); await settle();
   assert.notEqual(await js(`getComputedStyle(${row('other-chat-3')}.querySelector('.sess-pin-mark')).display`),'none','The pin mark is visible at rest');
   assert.equal(await js(`!!${row('other-chat-2')}.querySelector('.sess-pin-mark')`),false,'Unpinned chats have no mark');
   // Both glyphs are in the bundled icon font, not blank boxes.
@@ -91,7 +91,7 @@ app.whenReady().then(async () => {
   for (const theme of ['dark','light']) {
     await js(`setTheme(${JSON.stringify(theme)})`);
     await until(`document.documentElement.dataset.theme===${JSON.stringify(theme)}`);
-    await win.webContents.sendInputEvent({type:'mouseMove',x:900,y:400});
+    win.webContents.sendInputEvent({type:'mouseMove',x:900,y:400});
     await capture(`${theme}-pinned.png`);
     await openMenu('other-chat-3'); await settle();
     // Opened without the pointer on the row, the menu still opens beside its button.
@@ -103,7 +103,7 @@ app.whenReady().then(async () => {
   }
 
   // A local preference: it survives reloading the window.
-  await win.webContents.reload();
+  win.webContents.reload();
   await until(`!!${row('other-chat-3')}?.querySelector('.row-menu-button')`); await settle();
   assert.deepEqual(await order(),pinnedTwo,'Pins survive a reload');
 
