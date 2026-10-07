@@ -1698,7 +1698,7 @@ function scrubActivityDetailBinary(text: string): string {
     // prefixes are cut before this projection, so requiring a terminator leaks the final
     // partial binary field precisely when its full body was already bounded away.
     .replace(/data:[^;,\s"']{1,100};base64,[a-z0-9+/=\r\n]+/gi, replace)
-    .replace(/(["'](?:data|blob|dataBase64)["']\s*:\s*)(["'])([\s\S]*?)(\2|$)/gi,
+    .replaceAll(/(["'](?:data|blob|dataBase64)["']\s*:\s*)(["'])([\s\S]*?)(\2|$)/gi,
       (_all, head: string, quote: string, payload: string, tail: string) =>
         `${head}${quote}${BINARY_OMISSION(payload.length)}${tail}`)
     // An unlabelled long base64 body still needs removal, but ordinary long prose made only
@@ -7660,7 +7660,7 @@ async function noteRecoveryObservations(
 ): Promise<void> {
   const accessLimit = (item: ChatObservation): boolean => item.kind === 'chat_error' &&
     (item.blocking === true ||
-      /^too many requests\b.*temporarily limited.*access.*few minutes/i.test((item.text ?? '').replace(/\s+/g, ' ')));
+      /^too many requests\b.*temporarily limited.*access.*few minutes/i.test((item.text ?? '').replaceAll(/\s+/g, ' ')));
   // The recorder owns idempotency. Raw batches may contain a historical user row or turn_start
   // beside a newly accepted title, so inferring activity from `stored > 0` re-armed completed
   // chats on every recovery reload. Only the recorder's per-event acceptance verdict may move

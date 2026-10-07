@@ -321,7 +321,7 @@ export async function readImageFile(
 }
 
 export function decodeBase64Data(input: string): Buffer {
-  const clean = input.replace(/\s+/g, '');
+  const clean = input.replaceAll(/\s+/g, '');
   if (clean.length === 0) throw new FsOpError('Binary data is empty');
   if (clean.length > MAX_BINARY_BASE64_CHARS) {
     throw new FsOpError(`Base64 payload is too large (limit ${MAX_BINARY_BASE64_CHARS} characters)`);
@@ -329,7 +329,7 @@ export function decodeBase64Data(input: string): Buffer {
   if (!/^[A-Za-z0-9+/_-]*={0,2}$/.test(clean) || /=/.test(clean.slice(0, -2))) {
     throw new FsOpError('Binary data is not valid base64');
   }
-  const standard = clean.replace(/-/g, '+').replace(/_/g, '/');
+  const standard = clean.replaceAll(/-/g, '+').replaceAll(/_/g, '/');
   if (standard.length % 4 === 1) throw new FsOpError('Binary data is not valid base64');
   const data = Buffer.from(standard, 'base64');
   const canonical = data.toString('base64').replace(/=+$/, '');

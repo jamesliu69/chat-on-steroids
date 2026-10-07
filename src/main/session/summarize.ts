@@ -88,7 +88,7 @@ function scriptLabel(script: string | null): string {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith('#'));
-  const first = (lines[0] ?? '').replace(/\s+/g, ' ');
+  const first = (lines[0] ?? '').replaceAll(/\s+/g, ' ');
   if (!first) return 'a command';
   const shown = first.slice(0, 70);
   return lines.length > 1 || shown.length < first.length ? `${shown} …` : shown;

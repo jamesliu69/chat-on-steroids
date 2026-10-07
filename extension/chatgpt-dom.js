@@ -64,7 +64,7 @@ var CLF_DOM = (() => {
   };
 
   const text = (node, cap = 256_000) =>
-    node ? (node.textContent || '').replace(/ /g, ' ').trim().slice(0, cap) : '';
+    node ? (node.textContent || '').replaceAll(/ /g, ' ').trim().slice(0, cap) : '';
 
   // A ChatGPT app mention renders as an inline chip (#861). It is how a message attached the app,
   // not what its author wrote, so readers comparing authored text never count it.
@@ -103,7 +103,7 @@ var CLF_DOM = (() => {
   // exactly first, as everywhere else; only a frame that cannot be read as sent is read as one
   // the page escaped. It also writes an indented line's first space as `&#x20;` (#821).
   // Keep in sync with asTyped() in shared/user-prompt.ts.
-  const promptAsTyped = value => value.replace(/\\\n/g, '\n').replace(/\\([!-/:-@[-`{-~])/g, '$1').replace(/(^|\n)&#x20;/g, '$1 ');
+  const promptAsTyped = value => value.replaceAll(/\\\n/g, '\n').replace(/\\([!-/:-@[-`{-~])/g, '$1').replaceAll(/(^|\n)&#x20;/g, '$1 ');
   function readPromptFrame(value) {
     const identity = promptContinuation(value);
     const header = /^\[\[COS_CONTEXT:(\d{1,6})\]\]\n/.exec(value.slice(identity.length));
@@ -113,7 +113,7 @@ var CLF_DOM = (() => {
     return value.startsWith(boundary, end) ? identity + value.slice(end + boundary.length) : null;
   }
   function userPromptText(value) {
-    value = value.replace(/\r\n?/g, '\n');
+    value = value.replaceAll(/\r\n?/g, '\n');
     const exact = readPromptFrame(value);
     if (exact !== null) return exact;
     const typed = promptAsTyped(value);
@@ -341,7 +341,7 @@ var CLF_DOM = (() => {
   // occurred. Please check your connection and try again.", "Resume stream unavailable", and
   // "Stream cache expired" (2026-10-05).
   function transportFailure(value) {
-    const line = String(value || '').replace(/\s+/g, ' ').trim();
+    const line = String(value || '').replaceAll(/\s+/g, ' ').trim();
     return /^(?:message delivery timed out(?:\. please try again\.?)?|connection interrupted\.? waiting for the complete answer\.?|chatgpt stream recovery polling timed out\.?|stream cache expired\.?|unknown error occurred\.?|there was an error generating (?:a|the) response\.?|error in message stream\.?|network error\.?|a network error occurred\.?(?: please check your connection and try again\.?)?|resume stream unavailable\.?|something went wrong\.?|something went wrong while generating the response(?:\. if this issue persists please contact us through our help center at help\.openai\.com\.?)?\.?)(?: retry)?$/i.test(line);
   }
 
@@ -359,9 +359,9 @@ var CLF_DOM = (() => {
     return safe(() => {
       // Exclude navigation/composer controls before rendered-text reads on each recorder tick.
       // An exact English Retry keeps its earlier reach: its card was never tied to one region.
-      const quick = (button.textContent || '').replace(/\s+/g, ' ').trim();
+      const quick = (button.textContent || '').replaceAll(/\s+/g, ' ').trim();
       if (!/^retry$/i.test(quick) && button.closest('nav, aside, header, form, [role="navigation"], [role="menu"]')) return null;
-      const label = (button.innerText || button.textContent || '').replace(/\s+/g, ' ').trim();
+      const label = (button.innerText || button.textContent || '').replaceAll(/\s+/g, ' ').trim();
       // A transport card can keep its English message while localizing its button; this was
       // observed with "Reintentar". The label cannot be the anchor. Another language's
       // button counts only as the single labelled control that ends a notice whose
@@ -374,7 +374,7 @@ var CLF_DOM = (() => {
         if (node.closest && node.closest(OWN_SURFACES)) return null;
         const content = node.textContent || '';
         if (content.length >= 500) return null;
-        const value = (node.innerText || content).replace(/\s+/g, ' ').trim();
+        const value = (node.innerText || content).replaceAll(/\s+/g, ' ').trim();
         if (value.length >= 500) return null;
         if (!displayed(node)) continue;
         if (english) {
@@ -781,7 +781,7 @@ var CLF_DOM = (() => {
     // Native rich-text normalization moves line breaks into paragraph structure.
     // Keep the same text comparison used by send receipts; editor identity and
     // trusted edits still revoke the lease even when a user only changes spacing.
-    const compact = text => String(text || '').replace(/\s+/g, '');
+    const compact = text => String(text || '').replaceAll(/\s+/g, '');
     const insertedText = compact(box?.textContent);
     let touched = false;
     let files = [];
@@ -1192,7 +1192,7 @@ var CLF_DOM = (() => {
    */
   const MARKDOWN_CHAR = /[*_`#>~[\]()]/;
   const SPACE_CHAR = /\s/;
-  const bareText = (value) => value.replace(/[*_`#>~[\]()]/g, '').replace(/\s+/g, ' ').trim();
+  const bareText = (value) => value.replaceAll(/[*_`#>~[\]()]/g, '').replaceAll(/\s+/g, ' ').trim();
 
   /** Shortest repeated opening that is taken as a streaming double-write rather than prose. */
   const MIN_ECHO_CHARS = 12;
@@ -1387,7 +1387,7 @@ var CLF_DOM = (() => {
     if (node.querySelector && node.querySelector('.markdown')) return false;
     // The semantic icon pile owns the new status row even before its caption arrives.
     if (node.matches?.(STATUS_V5)) return true;
-    const label = (node.textContent || '').replace(/\s+/g, ' ').trim();
+    const label = (node.textContent || '').replaceAll(/\s+/g, ' ').trim();
     return label.length > 0 && label.length <= 200;
   }
 
@@ -1494,7 +1494,7 @@ var CLF_DOM = (() => {
           });
           markerBase += slots.length;
 
-          const text = (clone.innerText || clone.textContent || '').replace(/\u00a0/g, ' ');
+          const text = (clone.innerText || clone.textContent || '').replaceAll(/\u00a0/g, ' ');
           const pattern = /\[\[CLF_ACTIVITY_(\d+)\]\]/g;
           let at = 0;
           let match;
@@ -1667,7 +1667,7 @@ var CLF_DOM = (() => {
         if (node.closest(OWN_SURFACES) || node.closest('[hidden],[inert],[aria-hidden="true"]') || !node.getClientRects().length) continue;
         const heading = node.querySelector('h1,h2,h3,[role="heading"]');
         const headingText = (heading?.textContent || '').trim();
-        const value = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+        const value = (node.innerText || node.textContent || '').replaceAll(/\s+/g, ' ').trim();
         const english = /^too many requests$/i.test(headingText) && /temporarily limited.*access/i.test(value) && /few minutes/i.test(value);
         const korean = headingText === '요청이 너무 많습니다' && value.includes('데이터를 보호하기 위해 대화에 대한 액세스가 일시적으로 제한되었습니다.') && value.includes('몇 분 후 다시 시도해 주세요.');
         if (value.length >= 500 || (!english && !korean)) continue;
@@ -1688,7 +1688,7 @@ var CLF_DOM = (() => {
         if (out.some(error => error.blocking && error.node.contains(node))) continue;
         if (node.closest && node.closest(OWN_SURFACES)) continue;
         if (!displayed(node)) continue;
-        const value = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+        const value = (node.innerText || node.textContent || '').replaceAll(/\s+/g, ' ').trim();
         if (value.length <= 2 || value.length >= 500) continue;
         // Provider live regions also announce successful settings/actions changes. Only the
         // existing transport classifier makes an announcement a chat error. A failed send
@@ -1726,7 +1726,7 @@ var CLF_DOM = (() => {
               reason: 'thinking_failed', recoverable: false });
           }
           for (const markdown of section.querySelectorAll('.markdown')) {
-            const value = text(markdown, 500).replace(/\s+/g, ' ').trim();
+            const value = text(markdown, 500).replaceAll(/\s+/g, ' ').trim();
             if (!value || !transportFailure(value) || texts.has(value)) continue;
             texts.add(value);
             out.push({ text: value, node: markdown, turnId: turn.id, turn, recoverable: true });
@@ -1794,7 +1794,7 @@ var CLF_DOM = (() => {
       if (!conversationId() || composer() || document.querySelector(`${TURN},[data-turn-key]`)) return null;
       const area = document.querySelector('[data-app-shell-focus-area="main"]') || document.querySelector('main');
       if (!area || area.querySelector('[contenteditable="true"],textarea,[role="textbox"],form')) return null;
-      const text = (area.textContent || '').replace(/\s+/g, ' ').trim();
+      const text = (area.textContent || '').replaceAll(/\s+/g, ' ').trim();
       if (!text || text.length > 300) return null;
       const buttons = [...area.querySelectorAll('button')].filter(button =>
         !button.closest(`${OWN_SURFACES},[hidden],[inert],[aria-hidden="true"]`) && button.getClientRects().length > 0);
@@ -1845,7 +1845,7 @@ var CLF_DOM = (() => {
     return safe(() => {
       const box = composer();
       if (!composerWritable() || generating() || stopButton() || hasComposerAttachments()) return false;
-      const text = String(box.textContent || '').replace(/\\(?=[!-/:-@[-`{-~])/g, '').replace(/\s+/g, '');
+      const text = String(box.textContent || '').replace(/\\(?=[!-/:-@[-`{-~])/g, '').replaceAll(/\s+/g, '');
       if (!text || !REVIVAL_RESIDUE.test(text)) return false;
       box.focus();
       const selection = document.getSelection();
@@ -2071,7 +2071,7 @@ var CLF_DOM = (() => {
     const label = text(block, 240);
     for (const control of block.parentElement?.querySelectorAll?.(ACTIVITY_CONTROL) || []) {
       const semantics = [control.getAttribute?.('aria-label'), control.getAttribute?.('title'), text(control, 240)]
-        .map(value => String(value || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+        .map(value => String(value || '').replaceAll(/\s+/g, ' ').trim()).filter(Boolean);
       if (label && semantics.includes(label)) own.add(control);
     }
     return own;
@@ -2298,7 +2298,7 @@ var CLF_DOM = (() => {
       // refuse every later attempt by the same delivery — one recovery ticket spent thirteen hours
       // that way on 2026-09-26, blocked by its own 352 characters. Compared with the same whitespace
       // normalisation the send receipt uses, so both agree on "the same message".
-      const sameAsValue = String(existing).replace(/\s+/g, '') === String(value || '').replace(/\s+/g, '');
+      const sameAsValue = String(existing).replaceAll(/\s+/g, '') === String(value || '').replaceAll(/\s+/g, '');
       if (existing !== '' && mode === false && !sameAsValue) return reject('existing_draft');
       box.focus();
       const selection = document.getSelection();
@@ -2333,7 +2333,7 @@ var CLF_DOM = (() => {
       });
       if (value === '') host.append(document.createElement('br'));
       if (!document.execCommand('insertHTML', false, paragraph.innerHTML)) return reject('native_edit_rejected');
-      const compact = text => String(text || '').replace(/\s+/g, '');
+      const compact = text => String(text || '').replaceAll(/\s+/g, '');
       const expected = mode === 'append' ? existing + value : value;
       if (!box.isConnected || composer() !== box) return reject('editor_replaced');
       if (compact(box.textContent) !== compact(expected)) return reject('text_mismatch');
@@ -2347,7 +2347,7 @@ var CLF_DOM = (() => {
   function clearPromptExact(value) {
     return safe(() => {
       const box = composer();
-      const compact = (text) => String(text || '').replace(/\s+/g, '');
+      const compact = (text) => String(text || '').replaceAll(/\s+/g, '');
       if (!box || compact(box.textContent) !== compact(value)) return false;
       box.focus();
       document.execCommand('selectAll', false);
@@ -2361,7 +2361,7 @@ var CLF_DOM = (() => {
   function promptWithoutMentions(box) {
     const clone = box.cloneNode(true);
     for (const chip of clone.querySelectorAll(APP_MENTION_CHIP)) chip.remove();
-    return String(clone.textContent || '').replace(/\s+/g, '');
+    return String(clone.textContent || '').replaceAll(/\s+/g, '');
   }
 
   /**
@@ -2379,7 +2379,7 @@ var CLF_DOM = (() => {
     try {
       const path = typeof mention?.path === 'string' && /^app:\/\/asdk_app_[A-Za-z0-9_-]{1,160}$/.test(mention.path) ? mention.path : null;
       const name = typeof mention?.name === 'string' ? mention.name.trim() : '';
-      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const slug = name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-+|-+$/g, '');
       if (!path || !name || name.length > 80 || !slug) return null;
       const plain = () => promptWithoutMentions(box);
       const token = document.createElement('span');
@@ -2429,7 +2429,7 @@ var CLF_DOM = (() => {
         .map((node) => (node.textContent || '') + (/^(P|DIV|BR)$/.test(node.nodeName) ? '\n' : '')).join('')).trim();
       const submitted = draftText();
       if (!submitted) return refused('draft-empty');
-      const compact = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+      const compact = (value) => String(value || '').replaceAll(/\s+/g, ' ').trim();
       const expected = compact(submitted);
       const beforeConversation = conversationId();
       const beforeGenerating = generating();
@@ -2782,7 +2782,7 @@ var CLF_DOM = (() => {
     });
   }
 
-  const normalizeModelLabel = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}.]/gu, '');
+  const normalizeModelLabel = value => String(value || '').normalize('NFKC').toLowerCase().replaceAll(/[^\p{L}\p{N}.]/gu, '');
   /** One bounded read through the existing MAIN-world helper; no provider API or setters. */
   function readPickerState() {
     return new Promise(resolve => {
@@ -2823,8 +2823,8 @@ var CLF_DOM = (() => {
   }
   /** Match the row's leading name, excluding secondary captions and decorations. */
   function pickerVersionNamed(row, expected) {
-    const text = node => String(node.textContent || '').replace(/\s+/g, ' ').trim();
-    const name = expected.replace(/\s+/g, ' ').trim();
+    const text = node => String(node.textContent || '').replaceAll(/\s+/g, ' ').trim();
+    const name = expected.replaceAll(/\s+/g, ' ').trim();
     for (let node = row, depth = 0; node && depth < 8; depth++) {
       if (text(node) === name) return true;
       node = [...node.childNodes].find(child => text(child) &&

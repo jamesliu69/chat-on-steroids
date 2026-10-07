@@ -20,7 +20,7 @@ const SURFACE_WORD: Record<ConnectorSurface, string> = { core: 'Core', desktop: 
 /** A usable suffix, or '' for anything empty, too long or outside the allowed characters. */
 export function normalizeConnectorSuffix(value: unknown): string {
   if (typeof value !== 'string') return '';
-  const trimmed = value.trim().replace(/\s+/g, ' ');
+  const trimmed = value.trim().replaceAll(/\s+/g, ' ');
   return trimmed.length <= CONNECTOR_SUFFIX_MAX && CONNECTOR_SUFFIX_PATTERN.test(trimmed) ? trimmed : '';
 }
 

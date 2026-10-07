@@ -696,7 +696,7 @@ export function bindBundledRipgrep(command: string, shellType: ShellType, execut
 
 /** One literal POSIX-shell argument. Single quotes close/reopen around an embedded apostrophe. */
 function quotePosixArgument(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replaceAll(/'/g, `'\\''`)}'`;
 }
 
 /** Where one double-quoted string sits in a command line, read under bash's escape rules. */
@@ -832,7 +832,7 @@ export function repairPowerShellQuoting(cmd: string, shellType: ShellType): Norm
   const shapeParts: string[] = [];
   let shapeCursor = 0;
   for (const region of regions) {
-    shapeParts.push(cmd.slice(shapeCursor, region.open + 1), region.body.replace(/\\"/g, '__'));
+    shapeParts.push(cmd.slice(shapeCursor, region.open + 1), region.body.replaceAll(/\\"/g, '__'));
     shapeCursor = region.close;
   }
   shapeParts.push(cmd.slice(shapeCursor));
@@ -858,10 +858,10 @@ export function repairPowerShellQuoting(cmd: string, shellType: ShellType): Norm
     const regexPattern = isRipgrepPatternRegion(cmd, region) && !/\\[QE]/.test(region.body) &&
       !/[`$#]/.test(patternCommand) &&
       !tokenize(patternCommand).some(token => token.value === '--fixed-strings' || /^-[^-]*F/.test(token.value));
-    const body = regexPattern ? region.body.replace(/\\"/g, '\\x22') : region.body;
+    const body = regexPattern ? region.body.replaceAll(/\\"/g, '\\x22') : region.body;
     regexQuotes ||= regexPattern;
     out += cmd.slice(cursor, region.open);
-    out += `'${body.replace(/'/g, "''")}'`;
+    out += `'${body.replaceAll(/'/g, "''")}'`;
     cursor = region.close + 1;
     repaired++;
   }
@@ -1142,7 +1142,7 @@ function globLocation(pattern: string): GlobLocation | null {
 
 /** Re-quotes an expanded name for the shell, so it reaches the program verbatim. */
 function quoteArgument(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+  return `'${value.replaceAll(/'/g, "''")}'`;
 }
 
 /**
@@ -1235,9 +1235,9 @@ function expandGlob(pattern: string, list: DirectoryLister): { hits: string[]; d
     return null;
   }
   const source = location.leaf
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '[^\\\\/]*')
-    .replace(/\?/g, '[^\\\\/]');
+    .replaceAll(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replaceAll(/\*/g, '[^\\\\/]*')
+    .replaceAll(/\?/g, '[^\\\\/]');
   // Case-insensitively, which is how Windows matches filenames and therefore how the shell
   // being stood in for would have matched them.
   const matcher = new RegExp(`^${source}$`, 'i');

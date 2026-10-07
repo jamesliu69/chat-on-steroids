@@ -25,7 +25,7 @@ app.whenReady().then(async () => {
     webPreferences: { sandbox: true, offscreen: true, backgroundThrottling: false } });
   const css = fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<link\b[^>]*>/gi, '');
+    .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replaceAll(/<link\b[^>]*>/gi, '');
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html.replace('</head>', `<style>${css}</style></head>`)));
   await win.webContents.executeJavaScript(bundle.outputFiles[0].text);
   await win.webContents.executeJavaScript(`(() => {

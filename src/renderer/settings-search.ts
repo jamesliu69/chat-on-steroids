@@ -26,15 +26,15 @@ export interface SettingEntry {
 
 /** Case and accents fold away (in the interface language, so Turkish İ/ı pair up). */
 export function foldSearchText(text: string, language = currentLanguage()): string {
-  return text.toLocaleLowerCase(language).normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
+  return text.toLocaleLowerCase(language).normalize('NFD').replaceAll(/\p{M}/gu, '').replaceAll(/\s+/g, ' ').trim();
 }
 
-const words = (node: Element | null | undefined): string => node?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+const words = (node: Element | null | undefined): string => node?.textContent?.replaceAll(/\s+/g, ' ').trim() ?? '';
 
 /** The tab's own label, without a count badge. */
 const tabLabel = (button: HTMLElement): string =>
   [...button.childNodes].filter(node => node.nodeType === TEXT_NODE || (node as Element).tagName === 'SPAN' && !(node as Element).classList.contains('badge'))
-    .map(node => node.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim();
+    .map(node => node.textContent ?? '').join(' ').replaceAll(/\s+/g, ' ').trim();
 
 /** Shown when its page is: nothing between it and the page is hidden, and no closed wizard step holds it. */
 function offered(node: HTMLElement, page: HTMLElement): boolean {

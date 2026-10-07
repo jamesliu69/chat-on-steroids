@@ -910,7 +910,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
                   outputOmittedBytes: null
                 };
                 noteExec({ running: false, exitCode: null, timedOut: false, durationMs: 0 });
-                noteDetail(commandDetail.replace(/\s+/g, ' ').slice(0, 120));
+                noteDetail(commandDetail.replaceAll(/\s+/g, ' ').slice(0, 120));
                 return {
                   content: [{ type: 'text' as const, text: execCommandResponseText(output) }],
                   structuredContent: execCommandStructuredOutput(output)
@@ -986,7 +986,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               durationMs: output.wallTimeMs,
               benignExit: benign
             });
-            noteDetail(commandDetail.replace(/\s+/g, ' ').slice(0, 120));
+            noteDetail(commandDetail.replaceAll(/\s+/g, ' ').slice(0, 120));
             logInfo(`tool exec_command ${shell.shellType} -> ${output.processId ?? `exit ${output.exitCode ?? 'unknown'}`}`);
             // `benign` was previously spent only on the error count, leaving the model to read
             // `Process exited with code 1` under an empty body and re-run a search that had
@@ -2217,7 +2217,7 @@ async function expandGlob(
   roots: Parameters<typeof resolvePath>[0],
   pattern: string
 ): Promise<{ matches: string[]; truncated: 'matches' | 'scan' | null }> {
-  const normalised = process.platform === 'win32' ? pattern.replace(/\\/g, '/') : pattern;
+  const normalised = process.platform === 'win32' ? pattern.replaceAll(/\\/g, '/') : pattern;
   const segments = normalised.split('/');
   const baseSegments: string[] = [];
   for (const segment of segments) {

@@ -21,7 +21,7 @@ function commandBanner(index: number, count: number, marker: string): string {
 }
 
 function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replaceAll(/'/g, `'\\''`)}'`;
 }
 
 function powershellBatch(commands: readonly string[], marker: string): string {

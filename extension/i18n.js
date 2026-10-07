@@ -12,7 +12,7 @@
 
   function applyFallback(fallback, substitutions) {
     const values = normalizeSubstitutions(substitutions);
-    return String(fallback ?? '').replace(/\$\$|\$([1-9])/g, (token, index) => {
+    return String(fallback ?? '').replaceAll(/\$\$|\$([1-9])/g, (token, index) => {
       if (token === '$$') return '$';
       const value = values[Number(index) - 1];
       return value === undefined ? token : value;
@@ -82,11 +82,11 @@
   function formatEntry(entry, values) {
     const placeholders = {};
     for (const [name, value] of Object.entries(entry.placeholders || {})) placeholders[name.toLowerCase()] = value;
-    const named = String(entry.message).replace(/\$([A-Za-z0-9_@]+)\$/g, (token, name) => {
+    const named = String(entry.message).replaceAll(/\$([A-Za-z0-9_@]+)\$/g, (token, name) => {
       const placeholder = placeholders[name.toLowerCase()];
       return placeholder ? String(placeholder.content ?? '') : token;
     });
-    return named.replace(/\$\$|\$([1-9])/g, (token, index) => token === '$$' ? '$' : (values[Number(index) - 1] ?? ''));
+    return named.replaceAll(/\$\$|\$([1-9])/g, (token, index) => token === '$$' ? '$' : (values[Number(index) - 1] ?? ''));
   }
 
   function t(key, fallback, substitutions) {

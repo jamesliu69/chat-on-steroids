@@ -23,7 +23,7 @@ export function withoutProviderDirectives(text: string): string {
   const hadContainer = (CONTAINER_OPEN.lastIndex = 0, CONTAINER_OPEN.test(text));
   let result = text.replace(LEAF_DIRECTIVE, '').replace(CONTAINER_OPEN, '');
   if (hadContainer) result = result.replace(CONTAINER_CLOSE, '');
-  return result.replace(/\n{3,}/g, '\n\n').trim();
+  return result.replaceAll(/\n{3,}/g, '\n\n').trim();
 }
 
 /** A recorded page rendering that shows content, not the same raw directives. */
@@ -40,17 +40,17 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
 /** Plain text of captured message HTML: block ends become line breaks, tags go, entities decode. */
 export function plainTextOfHtml(html: string): string {
   return html
-    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|h[1-6]|pre|blockquote|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+|#39);/gi, (entity, name: string) => {
+    .replaceAll(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+    .replaceAll(/<br\s*\/?>/gi, '\n')
+    .replaceAll(/<\/(p|div|li|h[1-6]|pre|blockquote|tr)>/gi, '\n')
+    .replaceAll(/<[^>]+>/g, '')
+    .replaceAll(/&(#\d+|#x[0-9a-f]+|[a-z]+|#39);/gi, (entity, name: string) => {
       if (name.startsWith('#x') || name.startsWith('#X')) return String.fromCodePoint(parseInt(name.slice(2), 16));
       if (name.startsWith('#') && name !== '#39') return String.fromCodePoint(Number(name.slice(1)));
       return ENTITIES[name.toLowerCase()] ?? entity;
     })
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
+    .replaceAll(/[ \t]+\n/g, '\n')
+    .replaceAll(/\n{3,}/g, '\n\n')
     .trim();
 }
 

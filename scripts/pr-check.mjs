@@ -30,7 +30,7 @@ const HEADINGS = {
 /** Text of the first `##` section with one of these headings, without HTML comments; empty when missing. */
 function section(body, key) {
   const names = HEADINGS[key];
-  const lines = body.replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/);
+  const lines = body.replaceAll(/<!--[\s\S]*?-->/g, '').split(/\r?\n/);
   const start = lines.findIndex((line) => {
     const heading = /^##\s+(.+?)\s*#*\s*$/.exec(line.trim());
     return !!heading && names.includes(heading[1].toLowerCase().replace(/[:.]$/, ''));

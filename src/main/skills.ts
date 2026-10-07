@@ -84,13 +84,13 @@ function assertSkillId(id: string): void {
 
 function slugSkillId(value: string): string {
   const slug = value.normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replaceAll(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/[._-]{2,}/g, '-')
-    .replace(/^[._-]+|[._-]+$/g, '')
+    .replaceAll(/[^a-z0-9._-]+/g, '-')
+    .replaceAll(/[._-]{2,}/g, '-')
+    .replaceAll(/^[._-]+|[._-]+$/g, '')
     .slice(0, 64)
-    .replace(/[._-]+$/g, '');
+    .replaceAll(/[._-]+$/g, '');
   assertSkillId(slug);
   return slug;
 }
@@ -112,7 +112,7 @@ function cutUnits(value: string, limit: number): string {
 }
 
 function oneLine(value: string, limit: number): string {
-  return cutUnits(value.replace(/\s+/g, ' ').trim(), limit);
+  return cutUnits(value.replaceAll(/\s+/g, ' ').trim(), limit);
 }
 
 function simpleScalar(value: string): string | null {
@@ -128,13 +128,13 @@ function simpleScalar(value: string): string | null {
   }
   if (value.startsWith("'") || value.endsWith("'")) {
     if (!(value.startsWith("'") && value.endsWith("'"))) return null;
-    return value.slice(1, -1).replace(/''/g, "'");
+    return value.slice(1, -1).replaceAll(/''/g, "'");
   }
   return SIMPLE_SCALAR_UNSAFE.test(value) ? null : value;
 }
 
 function markdownBodyAndMetadata(text: string): { lines: string[]; name: string | null; description: string | null } {
-  const lines = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
+  const lines = text.replace(/^\uFEFF/, '').replaceAll(/\r\n?/g, '\n').split('\n');
   if (lines[0]?.trim() !== '---') return { lines, name: null, description: null };
   const end = lines.findIndex((line, index) => index > 0 && ['---', '...'].includes(line.trim()));
   if (end < 0) return { lines, name: null, description: null };

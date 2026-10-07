@@ -101,7 +101,7 @@ interface TabRecord {
 
 /** Glob in `chrome.tabs.query({ title })`: `*` matches any run of characters, case-insensitively. */
 function titleMatches(title: string, pattern: string): boolean {
-  const glob = pattern.split('*').map(text => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+  const glob = pattern.split('*').map(text => text.replaceAll(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*');
   return new RegExp(`^${glob}$`, 'i').test(title);
 }
 

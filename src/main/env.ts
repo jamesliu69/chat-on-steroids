@@ -111,7 +111,7 @@ export function normalizeEnvironment(source: NodeJS.ProcessEnv = process.env): M
 export function pathEntries(env: MutableEnvironment = process.env): string[] {
   return (envValue(env, 'PATH') ?? '')
     .split(PATH_SEPARATOR)
-    .map((entry) => entry.trim().replace(/^"|"$/g, ''))
+    .map((entry) => entry.trim().replaceAll(/^"|"$/g, ''))
     .filter(Boolean);
 }
 

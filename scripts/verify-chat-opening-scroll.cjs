@@ -26,14 +26,14 @@ app.whenReady().then(async () => {
   // This data-URL fixture has no asset server. Load the two installed icon faces in memory;
   // only screenshots and a JSON receipt are written, never font files or an exported HTML page.
   const iconFiles = ['@phosphor-icons/web/regular/Phosphor.woff2', '@phosphor-icons/web/fill/Phosphor-Fill.woff2'];
-  const iconCss = fs.readFileSync(path.join(root, 'src/renderer/icons.css'), 'utf8').replace(/url\('([^']+)'\)/g, (_match, file) => {
+  const iconCss = fs.readFileSync(path.join(root, 'src/renderer/icons.css'), 'utf8').replaceAll(/url\('([^']+)'\)/g, (_match, file) => {
     assert.ok(iconFiles.includes(file), 'Unexpected icon asset');
     return `url('data:font/woff2;base64,${fs.readFileSync(require.resolve(file)).toString('base64')}')`;
   });
   const css = iconCss + fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8') +
     built.outputFiles.filter(file=>file.path.endsWith('.css')).map(file=>file.text).join('\n');
   const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '')
+    .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replaceAll(/<link\b[^>]*>/g, '')
     .replace('</head>', `<style>${css}</style></head>`);
   const win = new BrowserWindow({ show: false, width: 1400, height: 900,
     webPreferences: { sandbox: true, backgroundThrottling: false } });

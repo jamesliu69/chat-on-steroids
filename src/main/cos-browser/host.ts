@@ -136,7 +136,7 @@ const WINDOW_CONTROLS = process.platform === 'darwin' ? { left: 78, right: 8 } :
 
 /** Chromium's own user agent: some sign-in providers refuse one that names an embedder. */
 function chromiumUserAgent(agent: string): string {
-  return agent.replace(/\s(?:Electron|chat-on-steroids|Chat On Steroids)\/\S+/gi, '');
+  return agent.replaceAll(/\s(?:Electron|chat-on-steroids|Chat On Steroids)\/\S+/gi, '');
 }
 
 /**

@@ -686,7 +686,7 @@ export function initConfigPath(userDataDir: string): void {
  * is logged and never blocks starting.
  */
 async function keepUnreadable(raw: string): Promise<void> {
-  const copy = `${configPath}.unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const copy = `${configPath}.unreadable-${new Date().toISOString().replaceAll(/[:.]/g, '-')}`;
   try {
     await fs.writeFile(copy, raw, 'utf8');
     logError(`The settings file could not be used; its original was kept as ${path.basename(copy)}`);

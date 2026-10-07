@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
     server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'usage-week-fixture', configureServer(vite) {
       vite.middlewares.use('/fixture.html', async (_request, response) => {
         const source = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-          .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace('</body>', '<script type="module">' + fixture + '</script></body>');
+          .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace('</body>', '<script type="module">' + fixture + '</script></body>');
         response.setHeader('Content-Type', 'text/html'); response.end(await vite.transformIndexHtml('/fixture.html', source));
       });
     } }] });

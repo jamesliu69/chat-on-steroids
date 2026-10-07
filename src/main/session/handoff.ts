@@ -110,7 +110,7 @@ function boundBrief(text: string, maxChars: number): string {
  */
 export function resumeBootstrapMatches(recorded: string, summary: string): boolean {
   const canonical = (value: string): string =>
-    value.replace(/\u00c2\u00a0/g, ' ').replace(/\u00a0/g, ' ').replace(/\r\n?/g, '\n');
+    value.replaceAll(/\u00c2\u00a0/g, ' ').replaceAll(/\u00a0/g, ' ').replaceAll(/\r\n?/g, '\n');
   const strip = (value: string): string => {
     const prompt = userPromptText(value) ?? value;
     const marker = continuationMarkerOf(prompt);

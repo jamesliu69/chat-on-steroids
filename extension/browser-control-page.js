@@ -8,7 +8,7 @@ export function browserPage(operation, args) {
     const overlay = state?.overlay?.isConnected ? state.overlay : null;
     state = globalThis[key] = { pageId: args.pageId, refs: new Map(), next: 0, overlay };
   }
-  const compact = (value, max = 200) => String(value ?? '').slice(0, max * 4).replace(/\s+/g, ' ').trim().slice(0, max);
+  const compact = (value, max = 200) => String(value ?? '').slice(0, max * 4).replaceAll(/\s+/g, ' ').trim().slice(0, max);
   const textOf = (element, excludeControls = false) => {
     if (!element) return '';
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);

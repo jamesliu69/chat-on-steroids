@@ -45,7 +45,7 @@ function tag(kind: string, value: string): string {
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** One path segment: kept when structural or shaped like an id, otherwise tagged, keeping its extension. */
@@ -76,14 +76,14 @@ function scrubUrl(url: string): string {
 export function scrubText(text: string, context: ScrubContext): string {
   let out = redact(text);
   out = out
-    .replace(/\bhttps?:\/\/[^\s'"<>)\]]+/g, scrubUrl)
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>')
-    .replace(/\bBearer\s+\S+/gi, 'Bearer <redacted>')
-    .replace(/\b([A-Z][A-Z0-9_]{2,})=("[^"]*"|'[^']*'|\S+)/g, '$1=<redacted>')
-    .replace(/\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, ip => ip === '127.0.0.1' || ip === '0.0.0.0' ? ip : '<ip>');
+    .replaceAll(/\bhttps?:\/\/[^\s'"<>)\]]+/g, scrubUrl)
+    .replaceAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>')
+    .replaceAll(/\bBearer\s+\S+/gi, 'Bearer <redacted>')
+    .replaceAll(/\b([A-Z][A-Z0-9_]{2,})=("[^"]*"|'[^']*'|\S+)/g, '$1=<redacted>')
+    .replaceAll(/\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g, ip => ip === '127.0.0.1' || ip === '0.0.0.0' ? ip : '<ip>');
   if (context.home.length >= 3) {
     const home = escapeRegExp(context.home.replace(/[\\/]+$/, ''));
-    out = out.replace(new RegExp(home.replace(/\\\\|\//g, '[\\\\/]'), 'gi'), '~');
+    out = out.replace(new RegExp(home.replaceAll(/\\\\|\//g, '[\\\\/]'), 'gi'), '~');
   }
   out = out
     // A quoted path may contain spaces ("…/My Documents/report.csv").

@@ -56,7 +56,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     console.log(`runner=${runnerForFailFirst(nameStatus)}`);
     process.exit(0);
   }
-  if (OPT_OUT.test(String(pr.body ?? '').replace(/<!--[\s\S]*?-->/g, ''))) {
+  if (OPT_OUT.test(String(pr.body ?? '').replaceAll(/<!--[\s\S]*?-->/g, ''))) {
     console.log('The description says this PR has no failing-first test ("Fail-first: n/a"). Nothing to prove.');
     process.exit(0);
   }

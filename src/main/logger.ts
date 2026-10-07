@@ -180,9 +180,9 @@ export function resetLoggerForTests(): void {
 /** Masks anything shaped like a credential, wherever it appears in a message. */
 export function redact(message: string): string {
   return message
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
-    .replace(/\b(ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g, '***jwt***')
-    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, (match) =>
+    .replaceAll(/\bsk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .replaceAll(/\b(ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g, '***jwt***')
+    .replaceAll(/\b[A-Za-z0-9_-]{40,}\b/g, (match) =>
       // Long opaque strings are tokens far more often than they are prose.
       /^[A-Za-z0-9_-]+$/.test(match) ? '***' : match
     );

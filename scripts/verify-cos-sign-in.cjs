@@ -98,7 +98,7 @@ const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', ()
 /** The host bundle, with only the external browser launch replaced by a recorder. */
 async function loadHost(launched) {
   globalThis.__cosFixtureLaunched = launched;
-  const browserTs = path.join(root, 'src/main/browser.ts').replace(/\\/g, '/');
+  const browserTs = path.join(root, 'src/main/browser.ts').replaceAll(/\\/g, '/');
   const result = await build({
     stdin: { resolveDir: root, loader: 'ts', contents: `
       export { CosBrowser } from './src/main/cos-browser/host.ts';
@@ -255,7 +255,7 @@ app.whenReady().then(async () => {
     const messages = require(${JSON.stringify(path.join(root, 'extension/_locales'))} + '/' + locale + '/messages.json');
     contextBridge.exposeInMainWorld('__fixtureChrome', {
       i18n: { getUILanguage: () => locale.replace('_', '-'), getMessage: (key, substitutions) =>
-        (messages[key]?.message || '').replace(/\\$([1-9])/g, (_, index) =>
+        (messages[key]?.message || '').replaceAll(/\\$([1-9])/g, (_, index) =>
           String((Array.isArray(substitutions) ? substitutions : [substitutions])[Number(index) - 1] ?? '')) },
       permissions: { request: async () => locale === 'pt_BR' },
       storage: { local: { get: async () => ({}) } },

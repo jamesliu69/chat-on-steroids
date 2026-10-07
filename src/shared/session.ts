@@ -267,7 +267,7 @@ export const MAX_REFERENCES_CHARS = 32_000;
 export function messageReferences(value: unknown): MessageReference[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const text = (item: unknown, max: number): string =>
-    typeof item === 'string' ? item.replace(/\s+/g, ' ').trim().slice(0, max) : '';
+    typeof item === 'string' ? item.replaceAll(/\s+/g, ' ').trim().slice(0, max) : '';
   const out: MessageReference[] = [];
   const indexes = new Set<number>();
   let budget = MAX_REFERENCES_CHARS;
@@ -540,7 +540,7 @@ export function unescapeMarkdown(value: string): string {
   // A backslash before a line break is the composer's Markdown hard break (see asTyped in
   // shared/user-prompt.ts); ASCII punctuation is the other escape the page applies, and an
   // indented line's first space comes back as `&#x20;` (#821).
-  return value.replace(/\\\r?\n/g, '\n').replace(/\\([!-/:-@[-`{-~])/g, '$1').replace(/(^|\n)&#x20;/g, '$1 ');
+  return value.replaceAll(/\\\r?\n/g, '\n').replace(/\\([!-/:-@[-`{-~])/g, '$1').replaceAll(/(^|\n)&#x20;/g, '$1 ');
 }
 
 /** The continuation marker at the head of `text`, as typed or as the composer escaped it. */
@@ -549,7 +549,7 @@ export function continuationMarkerOf(text: string | null | undefined):
   const value = typeof text === 'string' ? text : '';
   const match = CONTINUATION_MARKER.exec(value) ?? CONTINUATION_MARKER_ESCAPED.exec(value.slice(0, 200));
   if (!match) return null;
-  return { kind: match[1] as 'HANDOFF' | 'RESUME', token: match[2]!.replace(/\\/g, ''), marker: match[0] };
+  return { kind: match[1] as 'HANDOFF' | 'RESUME', token: match[2]!.replaceAll(/\\/g, ''), marker: match[0] };
 }
 
 /**
@@ -585,7 +585,7 @@ export interface SessionOrigin {
 const RESUMED_PREFIX = 'Resumed · ';
 
 function clip(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = text.replaceAll(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 }
 

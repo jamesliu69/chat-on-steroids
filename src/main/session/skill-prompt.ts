@@ -12,7 +12,7 @@ export async function selectedSkillInstructions(authored: string, scope: SkillLi
   if (!ids.length && autoSkills.length) {
     for (const selection of autoSkills) {
       const skill = await readSkillAtRevision(selection.id, selection.revision);
-      sections.push({ id: selection.id, path: skill.summary.path, text: skill.text.replace(/\r\n?/g, '\n') });
+      sections.push({ id: selection.id, path: skill.summary.path, text: skill.text.replaceAll(/\r\n?/g, '\n') });
     }
     return sections;
   }
@@ -20,7 +20,7 @@ export async function selectedSkillInstructions(authored: string, scope: SkillLi
   const current = library ?? await listSkillLibrary(scope);
   for (const id of ids) {
     const skill = await readLibrarySkill(id, scope, current);
-    sections.push({ id, path: skill.summary.path, text: skill.text.replace(/\r\n?/g, '\n') });
+    sections.push({ id, path: skill.summary.path, text: skill.text.replaceAll(/\r\n?/g, '\n') });
   }
   return sections;
 }

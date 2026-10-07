@@ -785,7 +785,7 @@
   const USER_SEND_RECEIPT_MS = 30_000;
   let userSendReceipt = null;
   const pageViewChecks = new Set(); // Existing readiness waits also observe accepted MAIN-world snapshots.
-  const sendText = (value) => String(value || '').replace(/\s+/g, '');
+  const sendText = (value) => String(value || '').replaceAll(/\s+/g, '');
   /** Undo page-readback punctuation escapes only; never rewrite authored Send text. */
   // Two escapes, both measured: ASCII punctuation (2026-09-11), and a backslash before a line
   // break — ChatGPT stores the composer's hard breaks as Markdown `\<newline>`. The second made a
@@ -808,8 +808,8 @@
     }
     return text;
   };
-  const unescapeMarkdown = (value) => String(value || '').replace(/\\\r?\n/g, '\n').replace(/\\([!-\/:-@\[-`{-~])/g, '$1')
-    .replace(/(^|\n)&#x20;/g, '$1 ');
+  const unescapeMarkdown = (value) => String(value || '').replaceAll(/\\\r?\n/g, '\n').replaceAll(/\\([!-\/:-@\[-`{-~])/g, '$1')
+    .replaceAll(/(^|\n)&#x20;/g, '$1 ');
   /** The leading continuation marker, as typed or as the composer escaped it. */
   const markedAs = (value) => {
     const text = String(value || '');
@@ -2202,7 +2202,7 @@
 
   /** Exact aliases match shared/chat-models.ts::isProModel (the extension is plain JS). */
   function proSelection(selection) {
-    const model = (selection?.model || '').trim().toLowerCase().replace(/\s+/g, '-');
+    const model = (selection?.model || '').trim().toLowerCase().replaceAll(/\s+/g, '-');
     return /^(?:astra|gpt-?6-astra|gpt-?\d+(?:[.-]\d+)?-pro)$/.test(model) ||
       (/^(?:gpt-?6(?:\.0)?|gpt-?5\.6(?:-sol)?)$/.test(model) && selection?.reasoningEffort === 'pro');
   }
@@ -5828,7 +5828,7 @@
     } else if (entry.kind === 'turn_start') {
       body.textContent = t('content_turn_started', 'Turn started');
     } else if (entry.kind === 'turn_end') {
-      const outcome = entry.outcome ? String(entry.outcome).replace(/_/g, ' ') : 'completed';
+      const outcome = entry.outcome ? String(entry.outcome).replaceAll(/_/g, ' ') : 'completed';
       const label = t('content_turn_outcome', 'Turn $1', outcome);
       body.textContent = `${label}${entry.detail ? ` · ${entry.detail}` : ''}`;
     } else {
@@ -7355,7 +7355,7 @@
 
   /** One line of somebody else's prose, cut to fit a menu without a mid-word break. */
   function clampLine(text, max) {
-    const flat = String(text || '').replace(/\s+/g, ' ').trim();
+    const flat = String(text || '').replaceAll(/\s+/g, ' ').trim();
     if (flat.length <= max) return flat;
     const cut = flat.slice(0, max);
     const space = cut.lastIndexOf(' ');
@@ -8626,7 +8626,7 @@
     const preview = document.createElement('span');
     preview.className = 'clf-boot-preview';
     const rawPreview = source.text.trimStart();
-    preview.textContent = (CLF_DOM.userPromptText(rawPreview) ?? rawPreview).replace(/\s+/g, ' ').trim().slice(0, 240);
+    preview.textContent = (CLF_DOM.userPromptText(rawPreview) ?? rawPreview).replaceAll(/\s+/g, ' ').trim().slice(0, 240);
     head.append(preview);
     box.append(head);
 
@@ -9738,7 +9738,7 @@
     try {
       nativePhase = 'prompting';
       renderControl();
-      const squeeze = (value) => String(value || '').replace(/\s+/g, '');
+      const squeeze = (value) => String(value || '').replaceAll(/\s+/g, '');
       const editable = () => {
         const box = CLF_DOM.composer();
         return box?.isConnected && CLF_DOM.composerVisible() && box.getAttribute('contenteditable') !== 'false' &&
@@ -11643,7 +11643,7 @@
     // stitches the paragraphs back together with no separator at all. Compare the entire
     // whitespace-normalized value: a prefix proves insertion happened, but it would also
     // approve user text appended after focus moved into this tab.
-    const squeeze = (value) => (value || '').replace(/\s+/g, '');
+    const squeeze = (value) => (value || '').replaceAll(/\s+/g, '');
     const expectedText = squeeze(boot.text);
     if (!composer || squeeze(composer.textContent) !== expectedText) {
       return void (await fail(t(

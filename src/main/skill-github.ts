@@ -186,7 +186,7 @@ async function downloadBlob(base: string, file: File, signal: AbortSignal): Prom
     { content?: unknown; encoding?: unknown; sha?: unknown; size?: unknown };
   if (payload.encoding !== 'base64' || payload.sha !== file.sha || payload.size !== file.size || typeof payload.content !== 'string')
     throw new Error(`GitHub file changed during download: ${file.relative}`);
-  const encoded = payload.content.replace(/\s/g, '');
+  const encoded = payload.content.replaceAll(/\s/g, '');
   if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
     throw new Error(`GitHub returned invalid file content: ${file.relative}`);
   const bytes = Buffer.from(encoded, 'base64');

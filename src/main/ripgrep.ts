@@ -26,7 +26,7 @@ function isExecutableFile(candidate: string): boolean {
 function pathCandidate(): string | null {
   const fileName = ripgrepExecutableName();
   for (const raw of pathEntries()) {
-    const dir = raw.trim().replace(/^"|"$/g, '');
+    const dir = raw.trim().replaceAll(/^"|"$/g, '');
     if (!dir) continue;
     const candidate = path.join(dir, fileName);
     if (isExecutableFile(candidate)) return candidate;

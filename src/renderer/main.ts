@@ -860,7 +860,7 @@ function currentSetupMissingStep(next: AppState): { step: string; text: string }
  */
 function connectorSuffixValid(): string | null {
   const input = $<HTMLInputElement>('connectorSuffix');
-  const value = input.value.trim().replace(/\s+/g, ' ');
+  const value = input.value.trim().replaceAll(/\s+/g, ' ');
   const valid = value.length <= CONNECTOR_SUFFIX_MAX && CONNECTOR_SUFFIX_PATTERN.test(value);
   input.setAttribute('aria-invalid', String(!valid));
   $('connectorSuffixError').hidden = valid;

@@ -31,7 +31,7 @@ export type UsageMessageFamily = 'gpt-5.6' | 'gpt-6';
 
 /** Explicit recorded version identities only; unknown suffixes remain unclassified. */
 export function usageMessageFamily(model: string | undefined): UsageMessageFamily | null {
-  const id = (model ?? '').trim().toLowerCase().replace(/\s+/g, '-');
+  const id = (model ?? '').trim().toLowerCase().replaceAll(/\s+/g, '-');
   if (/^(?:gpt-?)?5[.-]6(?:-(?:thinking|pro|sol|terra|luna))?$/.test(id) || id === 'sol') return 'gpt-5.6';
   if (/^(?:gpt-?)?6(?:\.0)?(?:-(?:pro|astra))?$/.test(id) || id === 'astra') return 'gpt-6';
   return null;

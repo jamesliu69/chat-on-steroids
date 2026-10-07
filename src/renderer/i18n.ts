@@ -62,9 +62,9 @@ export function onLanguageChange(listener: () => void): () => void {
 /** Translate only app-authored copy at explicit call sites. Arguments remain verbatim. */
 export function t(source: string, args: readonly unknown[] = []): string {
   const catalog = language === 'en' ? undefined : catalogs[language];
-  const key = catalog && Object.hasOwn(catalog, source) ? source : source.replace(/\s+/g, ' ').trim();
+  const key = catalog && Object.hasOwn(catalog, source) ? source : source.replaceAll(/\s+/g, ' ').trim();
   const translated = catalog && Object.hasOwn(catalog, key) ? catalog[key]! : source;
-  return translated.replace(/\{(\d+)\}/g, (match, index: string) => Number(index) < args.length ? String(args[Number(index)]) : match);
+  return translated.replaceAll(/\{(\d+)\}/g, (match, index: string) => Number(index) < args.length ? String(args[Number(index)]) : match);
 }
 
 type Property = 'textContent' | 'title' | 'placeholder' | 'aria-label' | 'aria-valuetext' | 'data-usage-hint';
@@ -137,7 +137,7 @@ export function initLanguage(): void {
   for (const node of texts) {
     if (node.parentElement?.closest('script, style, svg, code, kbd, textarea, [translate="no"]')) continue;
     const source = node.data;
-    const key = source.replace(/\s+/g, ' ').trim();
+    const key = source.replaceAll(/\s+/g, ' ').trim();
     if (sourceKeys.has(key)) ui(node, 'textContent', () => source.replace(/\S[\s\S]*\S|\S/, t(key)));
   }
   for (const node of document.querySelectorAll<HTMLElement>('[title], [placeholder], [aria-label]')) {

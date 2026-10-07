@@ -1799,7 +1799,7 @@ function citationLabels(source: string, capture?: StoredText): Map<string, strin
   let points = 0, units = 0;
   for (const char of source) { offsets[points++] = units; units += char.length; }
   offsets[points] = units;
-  const normalized = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const normalized = (text: string) => text.replaceAll(/\s+/g, ' ').trim();
   const capturedPrefixes = prosePrefixes(template.content, element =>
     element.hasAttribute('data-content-reference-start') ? `capture:${element.getAttribute('data-content-reference-start')}:${element.getAttribute('data-content-reference-end')}` : null);
 
@@ -1844,7 +1844,7 @@ function citationLabels(source: string, capture?: StoredText): Map<string, strin
     if ((markerCounts.get(marker) ?? 0) > 1) {
       // Repeated markers are rare but legal. Prove this exact source range against its own prefix.
       const exact = document.createElement('template');
-      exact.innerHTML = marked.parse(source.slice(0, start).replace(/\uE200(?:cite|filecite)\uE202[^\uE200\uE201]*\uE201/g, ''), { async: false, gfm: true });
+      exact.innerHTML = marked.parse(source.slice(0, start).replaceAll(/\uE200(?:cite|filecite)\uE202[^\uE200\uE201]*\uE201/g, ''), { async: false, gfm: true });
       const endProbe = document.createElement('span');
       endProbe.dataset.cosPrefixEnd = '';
       exact.content.append(endProbe);
@@ -1937,7 +1937,7 @@ function citationPills(source: string, capture?: StoredText): Map<number, Citati
     if (!href || !/^https?:/.test(href)) continue;
     const moreNode = [...anchor.querySelectorAll('[aria-hidden="true"]')].find(node => /^\+\d{1,3}$/.test(node.textContent?.trim() ?? ''));
     const more = moreNode ? Number(moreNode.textContent!.trim().slice(1)) : 0;
-    const label = (anchor.textContent ?? '').replace(moreNode?.textContent ?? '', '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const label = (anchor.textContent ?? '').replace(moreNode?.textContent ?? '', '').replaceAll(/\s+/g, ' ').trim().slice(0, 80);
     // The page's label reads "Source: Title, URL, N additional sources".
     const described = anchor.getAttribute('aria-label') ?? '';
     const title = label && described.startsWith(`${label}: `) ? described.slice(label.length + 2).split(`, ${href}`)[0]!.trim() : '';
@@ -2048,7 +2048,7 @@ const PILL_PLACEHOLDER = /^\uE000(\d{1,4})\uE001$/;
  * quote with its title in bold, a shape the sanitised message view already styles.
  */
 const escapeHtml = (value: string): string =>
-  value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+  value.replaceAll(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 const WRITING_BLOCK: TokenizerAndRendererExtension = {
   name: 'writingBlock', level: 'block',
   start: value => value.match(/^:::writing\b/m)?.index,
@@ -3850,7 +3850,7 @@ function backgroundProcessKey(row: RunningExecProcess): string {
 }
 
 function backgroundCommand(command: string): string {
-  const compact = command.replace(/\s+/g, ' ').trim();
+  const compact = command.replaceAll(/\s+/g, ' ').trim();
   return compact.length > 120 ? compact.slice(0, 117) + '…' : compact;
 }
 

@@ -14,7 +14,7 @@ function compile(pattern: string): ((url: URL) => boolean) | null {
   const [, scheme, host = '', path] = parts;
   if (scheme !== '*' && !SCHEMES.has(scheme!)) return null;
   if (scheme !== 'file' && !host) return null;
-  const glob = new RegExp(`^${path!.split('*').map(text => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+  const glob = new RegExp(`^${path!.split('*').map(text => text.replaceAll(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
   return url => {
     const actual = url.protocol.slice(0, -1);
     if (scheme === '*' ? actual !== 'http' && actual !== 'https' : actual !== scheme) return false;

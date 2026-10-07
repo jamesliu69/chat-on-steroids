@@ -24,7 +24,7 @@ const continuation = (text: string): string => /^\[\[CLF-(?:HANDOFF|RESUME):[A-Z
  * marker already follow: try the exact text first, and only then this.
  */
 function asTyped(text: string): string {
-  return text.replace(/\\\n/g, '\n').replace(/\\([!-/:-@[-`{-~])/g, '$1').replace(/(^|\n)&#x20;/g, '$1 ');
+  return text.replaceAll(/\\\n/g, '\n').replace(/\\([!-/:-@[-`{-~])/g, '$1').replaceAll(/(^|\n)&#x20;/g, '$1 ');
 }
 
 function readFrame(text: string): string | null {
@@ -37,7 +37,7 @@ function readFrame(text: string): string | null {
 }
 
 export function userPromptText(text: string): string | null {
-  text = text.replace(/\r\n?/g, '\n');
+  text = text.replaceAll(/\r\n?/g, '\n');
   // Exact first: authored text that happens to contain a backslash keeps it, and only a frame
   // that cannot be read as sent is read as one the page escaped.
   const exact = readFrame(text);
@@ -47,8 +47,8 @@ export function userPromptText(text: string): string | null {
 }
 
 export function prependUserPrompt(text: string, instructions: string): string {
-  text = text.replace(/\r\n?/g, '\n');
-  instructions = instructions.replace(/\r\n?/g, '\n');
+  text = text.replaceAll(/\r\n?/g, '\n');
+  instructions = instructions.replaceAll(/\r\n?/g, '\n');
   const authored = userPromptText(text) ?? text;
   const identity = continuation(authored);
   return `${identity}[[COS_CONTEXT:${instructions.length}]]\n${instructions}\n[[/COS_CONTEXT]]\n\n${authored.slice(identity.length)}`;

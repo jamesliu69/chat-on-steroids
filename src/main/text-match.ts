@@ -11,7 +11,7 @@ export type Newline = '\n' | '\r\n' | '\r';
 /** The terminator to give lines that have no origin, chosen by majority vote. */
 export function preferredNewline(text: string): Newline {
   const crlf = (text.match(/\r\n/g) ?? []).length;
-  const withoutCrlf = text.replace(/\r\n/g, '');
+  const withoutCrlf = text.replaceAll(/\r\n/g, '');
   const lf = (withoutCrlf.match(/\n/g) ?? []).length;
   const cr = (withoutCrlf.match(/\r/g) ?? []).length;
   if (crlf >= lf && crlf >= cr && crlf > 0) return '\r\n';
@@ -135,7 +135,7 @@ export interface SpanMatch {
 export function findSpans(original: string, needle: string): SpanMatch | null {
   if (!needle) return null;
   const base = normaliseForSearch(original);
-  const wanted = needle.replace(/\r\n|\r/g, '\n');
+  const wanted = needle.replaceAll(/\r\n|\r/g, '\n');
   for (const tier of SPAN_TIERS) {
     const haystack = tier.normalize(base.text);
     const pin = tier.normalize(wanted);
@@ -167,7 +167,7 @@ function lineNumberAt(text: string, offset: number): number {
 
 function preview(value: string): string {
   const firstLine = value.split(/\r\n|\n|\r/)[0] ?? '';
-  const compact = firstLine.replace(/\t/g, '→').trimEnd();
+  const compact = firstLine.replaceAll(/\t/g, '→').trimEnd();
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 

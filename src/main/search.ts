@@ -128,7 +128,7 @@ export function globToRegExp(pattern: string, caseSensitive: boolean): RegExp {
     } else if (char === '?') {
       out += '[^/]';
     } else {
-      out += char.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      out += char.replaceAll(/[.+^${}()|[\]\\]/g, '\\$&');
     }
   }
   return new RegExp(`^${out}$`, caseSensitive ? '' : 'i');
@@ -175,7 +175,7 @@ function ripgrepIncludeGlob(pattern: string): string {
 function ripgrepExcludeGlob(raw: string): string {
   const prefix = raw.endsWith('*');
   const literal = prefix ? raw.slice(0, -1) : raw;
-  const escaped = literal.replace(/[\\*?\[\]{}]/g, '\\$&');
+  const escaped = literal.replaceAll(/[\\*?\[\]{}]/g, '\\$&');
   return `!**/${escaped}${prefix ? '*' : ''}/**`;
 }
 
@@ -271,13 +271,13 @@ async function searchWithRipgrep(
       // alone that becomes "/root/./README.md" and no caller can match it against the
       // path it asked about.
       const rawPath = String(data?.path?.text ?? '')
-        .replace(/\\/g, '/')
+        .replaceAll(/\\/g, '/')
         .replace(/^\.\//, '');
       const rawText = String(data?.lines?.text ?? '').replace(/\r?\n$/, '');
       const trimmed = rawText.trim();
       const hitPath = targetIsFile
         ? virtualTarget
-        : `${virtualTarget}/${rawPath}`.replace(/\/+/g, '/').replace(/\/\.\//g, '/');
+        : `${virtualTarget}/${rawPath}`.replaceAll(/\/+/g, '/').replaceAll(/\/\.\//g, '/');
       hits.push({
         path: hitPath,
         line: Number.isSafeInteger(lineNo) ? lineNo : undefined,
@@ -495,7 +495,7 @@ export async function searchOneFile(
     if (ripgrep) {
       return searchWithRipgrep(
         ripgrep,
-        { ...req, realDir: path.dirname(realPath), virtualDir: path.dirname(virtualPath).replace(/\\/g, '/'), exclude: [] },
+        { ...req, realDir: path.dirname(realPath), virtualDir: path.dirname(virtualPath).replaceAll(/\\/g, '/'), exclude: [] },
         realPath,
         virtualPath,
         true
@@ -511,7 +511,7 @@ export async function searchOneFile(
   }
   const found = await scanOneFile(realPath, {
     realDir: path.dirname(realPath),
-    virtualDir: path.dirname(virtualPath).replace(/\\/g, '/'),
+    virtualDir: path.dirname(virtualPath).replaceAll(/\\/g, '/'),
     query: req.query,
     mode: 'content',
     include: req.include,

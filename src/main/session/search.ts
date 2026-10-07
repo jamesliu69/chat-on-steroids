@@ -31,11 +31,11 @@ const INDEX_VERSION = 1;
  * original. A character whose folded form would change length keeps a same-length form or itself.
  */
 export function foldCase(text: string): string {
-  return text.replace(/[A-Z]+|[^\x00-\x7f]/gu, chunk => {
+  return text.replaceAll(/[A-Z]+|[^\x00-\x7f]/gu, chunk => {
     if (chunk.charCodeAt(0) < 0x80) return chunk.toLowerCase();
     const lower = chunk.toLowerCase();
     const base = lower.length === chunk.length ? lower : chunk;
-    const bare = base.normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+    const bare = base.normalize('NFD').replaceAll(/\p{M}+/gu, '').toLowerCase();
     return bare.length === chunk.length ? bare : base;
   });
 }
@@ -75,7 +75,7 @@ async function transcriptText(id: string): Promise<string> {
     const text = entry.stored.truncated && entry.stored.assetId
       ? (await readOverflowText(id, entry.stored.assetId)) ?? entry.stored.text
       : entry.stored.text;
-    const clean = text.replace(/\s+/g, ' ').trim();
+    const clean = text.replaceAll(/\s+/g, ' ').trim();
     if (!clean) continue;
     parts.push(clean);
     size += clean.length + 1;
@@ -220,7 +220,7 @@ export async function locateSearchMatch(id: string, query: string): Promise<Sess
     const text = entry.stored.truncated && entry.stored.assetId
       ? (await readOverflowText(id, entry.stored.assetId)) ?? entry.stored.text
       : entry.stored.text;
-    const lower = foldCase(text.replace(/\s+/g, ' '));
+    const lower = foldCase(text.replaceAll(/\s+/g, ' '));
     if (!terms.some(term => lower.includes(term))) continue;
     const event = events.find(candidate => candidate.seq === entry.seq);
     if (!event || (event.kind !== 'user_message' && event.kind !== 'assistant_message')) return null;

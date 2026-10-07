@@ -185,12 +185,12 @@ export async function installSource(source: PluginSource, dir: string): Promise<
   if (source.dependencies !== undefined) {
     if (source.kind !== 'python' || !Array.isArray(source.dependencies) || source.dependencies.length > 16)
       throw new Error('Dependency pins require a Python source and at most 16 packages');
-    const names = new Set([source.package?.toLowerCase().replace(/[-_.]+/g, '-')]);
+    const names = new Set([source.package?.toLowerCase().replaceAll(/[-_.]+/g, '-')]);
     for (const dependency of source.dependencies) {
       if (!dependency || typeof dependency.package !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/i.test(dependency.package) ||
           typeof dependency.version !== 'string' || !/^\d+(\.\d+)+([a-z0-9.+_-]*)$/i.test(dependency.version))
         throw new Error('Dependency pins need package names and exact versions (no URLs or version ranges)');
-      const name = dependency.package.toLowerCase().replace(/[-_.]+/g, '-');
+      const name = dependency.package.toLowerCase().replaceAll(/[-_.]+/g, '-');
       if (names.has(name)) throw new Error('Dependency pins must not repeat or replace the server package');
       names.add(name);
       dependencies.push(`${dependency.package}==${dependency.version}`);

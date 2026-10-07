@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
     } }] })).outputFiles[0].text;
   const css = fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '')
+    .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replaceAll(/<link\b[^>]*>/g, '')
     .replace('</head>', `<style>${css}</style></head>`);
   const win = new BrowserWindow({ show: false, width: 1100, height: 760,
     webPreferences: { sandbox: true, offscreen: true, backgroundThrottling: false } });

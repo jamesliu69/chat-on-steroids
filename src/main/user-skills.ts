@@ -113,7 +113,7 @@ export async function discoverUserSkillPath(file: string, allowMissing = false):
   let lexical: string;
   if (isUserSkillVirtualPath(file)) {
     // The catalog's own `/user-skills/<area>/…` path, read back when a Skill is selected.
-    const [, , areaName, ...rest] = (process.platform === 'win32' ? file.replace(/\\/g, '/') : file).replace(/\/+$/, '').split('/');
+    const [, , areaName, ...rest] = (process.platform === 'win32' ? file.replaceAll(/\\/g, '/') : file).replace(/\/+$/, '').split('/');
     const area = userSkillAreas().find(candidate => candidate.name === areaName);
     if (!area || rest.some(segment => !segment || segment === '.' || segment === '..')) return null;
     lexical = path.join(area.base, ...rest);
@@ -138,7 +138,7 @@ export async function discoverUserSkillPath(file: string, allowMissing = false):
 }
 
 export function isUserSkillVirtualPath(virtual: string): boolean {
-  const normalized = process.platform === 'win32' ? virtual.replace(/\\/g, '/') : virtual;
+  const normalized = process.platform === 'win32' ? virtual.replaceAll(/\\/g, '/') : virtual;
   return new RegExp(`^/${USER_SKILLS_ROOT}(?:/|$)`, 'i').test(normalized);
 }
 
@@ -148,7 +148,7 @@ export function isUserSkillVirtualPath(virtual: string): boolean {
  */
 export async function resolveUserSkillPath(requested: string): Promise<Resolved | null> {
   if (!isUserSkillVirtualPath(requested)) return null;
-  const normalized = (process.platform === 'win32' ? requested.replace(/\\/g, '/') : requested).replace(/\/+$/, '');
+  const normalized = (process.platform === 'win32' ? requested.replaceAll(/\\/g, '/') : requested).replace(/\/+$/, '');
   const [, , areaName, ...rest] = normalized.split('/');
   const area = userSkillAreas().find(candidate => candidate.name === areaName);
   if (!area || rest.some(segment => !segment || segment === '.' || segment === '..') || !served(rest)) {

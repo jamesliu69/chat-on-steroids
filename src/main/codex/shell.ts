@@ -74,7 +74,7 @@ function which(binaryName: string): string | null {
   for (const dir of rawPath.split(separator)) {
     if (!dir) continue;
     for (const extension of extensions) {
-      const candidate = nodePath.join(dir.replace(/^"|"$/g, ''), `${binaryName}${extension}`);
+      const candidate = nodePath.join(dir.replaceAll(/^"|"$/g, ''), `${binaryName}${extension}`);
       if (existsSync(candidate) && fileExists(candidate)) return candidate;
     }
   }
@@ -341,7 +341,7 @@ function shlexQuote(token: string): string {
   // the same thing, it is unbalanced: `'it'''s'` leaves a quote open where `'it'\''s'`
   // reads back as `it's`. This string is the command handed to the model to retry, and our
   // own glob expansion quotes every name it substitutes, so an apostrophe here is routine.
-  return `'${token.replace(/'/g, "'\\''")}'`;
+  return `'${token.replaceAll(/'/g, "'\\''")}'`;
 }
 
 /**

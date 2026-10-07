@@ -2247,7 +2247,7 @@ type GoalDecision =
 /** Removes provider/tokenizer wrappers while preserving the proposed human message itself. */
 function cleanGoalReply(value: string): { text: string; hadControl: boolean } {
   const normalized = value.normalize('NFKC');
-  const withoutInvisible = normalized.replace(/[\u0000\u200B-\u200D\u2060\uFEFF]/g, '');
+  const withoutInvisible = normalized.replaceAll(/[\u0000\u200B-\u200D\u2060\uFEFF]/g, '');
   const withoutControl = withoutInvisible.replace(MODEL_CONTROL_TOKEN, '');
   return { text: withoutControl.trim(), hadControl: withoutControl !== withoutInvisible };
 }
@@ -2290,7 +2290,7 @@ function decisionObjectIn(text: string): unknown {
 
 /** The head of an unreadable reply, flattened, for the log line that says it was unreadable. */
 function sample(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = text.replaceAll(/\s+/g, ' ').trim();
   return flat.length > 200 ? `${flat.slice(0, 200)}…` : flat;
 }
 
@@ -2390,7 +2390,7 @@ async function readStream(
               : null;
         const detail =
           typeof rawMessage === 'string'
-            ? rawMessage.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200)
+            ? rawMessage.replaceAll(/[\r\n\t]+/g, ' ').trim().slice(0, 200)
             : '';
         // OpenRouter can surface an upstream failure *inside* an already-200 SSE response,
         // including after some deltas were emitted. Ignoring that event turns a truncated
@@ -2756,7 +2756,7 @@ function stepped(seed: number): () => number {
  * around a dash at the start of a line and welded a list into one paragraph.
  */
 function undash(text: string): string {
-  return text.replace(/[^\S\r\n]*[—–][^\S\r\n]*/g, (match, at: number, whole: string) => {
+  return text.replaceAll(/[^\S\r\n]*[—–][^\S\r\n]*/g, (match, at: number, whole: string) => {
     const before = at > 0 ? whole[at - 1] : '';
     const after = whole[at + match.length] ?? '';
     if (!before || before === '\n') return '';
@@ -2788,7 +2788,7 @@ const CANDIDATE = /(?<![\w'’-])[a-z][a-z'’]{2,}[a-z](?![\w'’-])/g;
  */
 function mistyped(word: string): string | null {
   if (/['’]/.test(word)) {
-    const dropped = word.replace(/['’]/g, '');
+    const dropped = word.replaceAll(/['’]/g, '');
     if (dropped.length >= 3 && dropped !== word) return dropped;
   }
   if (word.length >= 5) {

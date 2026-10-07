@@ -526,7 +526,7 @@ export async function listSkillLibrary(scope: SkillLibraryScope = {}, runtime: S
               const claudePlugin = candidate.claudePlugin ? { ...candidate.claudePlugin, skillPath } : undefined;
               const hash = createHash('sha256').update(codexPlugin ? pluginSkillIdentity(candidate.codexPlugin!, skillPath)
                 : claudePlugin ? claudePluginSkillIdentity(candidate.claudePlugin!, skillPath) : identity(document.real)).digest('hex').slice(0, 12);
-              const stem = path.basename(current.directory).normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 35) || 'skill';
+              const stem = path.basename(current.directory).normalize('NFKD').toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-+|-+$/g, '').slice(0, 35) || 'skill';
               const id = `${stem}--${codexPlugin ? 'codex' : claudePlugin ? 'claude' : candidate.scope}-${hash}`;
               library.skills.push({ id, ...metadata, path: document.virtual, ...await interfaceFor(current.directory, false, library.errors),
                 scope: candidate.scope, source: candidate.source, managed: false, ...(codexPlugin ? { codexPlugin } : {}), ...(claudePlugin ? { claudePlugin } : {}) });
@@ -595,7 +595,7 @@ export function skillLibraryInstructions(library: SkillLibrary): string {
   };
   const row = (skill: LibrarySkill): string => {
     const name = skill.displayName ?? skill.name;
-    const about = (skill.shortDescription ?? skill.description).replace(/\s+/g, ' ').trim();
+    const about = (skill.shortDescription ?? skill.description).replaceAll(/\s+/g, ' ').trim();
     return `  - ${split(skill).entry}: /${skill.id}${name !== skill.id && !skill.id.startsWith(`${name}--`) ? ` (${name})` : ''} — ${about.length > 110 ? `${about.slice(0, 109)}…` : about}`;
   };
   const chosen: LibrarySkill[] = [];

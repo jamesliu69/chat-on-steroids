@@ -11,7 +11,7 @@ app.whenReady().then(async () => {
   try {
     const css = fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8');
     const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<link\b[^>]*>/gi, '');
+      .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replaceAll(/<link\b[^>]*>/gi, '');
     const main = fs.readFileSync(path.join(root, 'src/renderer/main.ts'), 'utf8');
     const relocation = main.match(/document\.body\.append\(\$\('connectionPopover'\)\);/)?.[0];
     assert.ok(relocation, 'Production initialization must escape the sidebar containing block');

@@ -19,12 +19,12 @@ export function isSkillPath(real: string): boolean {
 }
 
 export function isSkillVirtualPath(virtual: string): boolean {
-  const normalized = process.platform === 'win32' ? virtual.replace(/\\/g, '/') : virtual;
+  const normalized = process.platform === 'win32' ? virtual.replaceAll(/\\/g, '/') : virtual;
   return /^\/skills(?:\/|$)/i.test(normalized);
 }
 
 function virtualAliasCandidate(requested: string, base: string | null | undefined, managed: string): string | null {
-  const normalizeVirtual = (value: string): string => process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+  const normalizeVirtual = (value: string): string => process.platform === 'win32' ? value.replaceAll(/\\/g, '/') : value;
   // Preserve the spelling provenance of native paths that lexically enter the managed root.
   // resolvePath() normally canonicalizes a native path before choosing its root, which is right
   // for ordinary paths but would erase the /skills package boundary after following this link.

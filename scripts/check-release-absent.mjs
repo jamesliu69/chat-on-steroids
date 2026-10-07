@@ -30,7 +30,7 @@ export async function assertReleaseAbsent({
     throw new Error(`Release ${tag} already exists; refusing to overwrite it.`);
   }
 
-  const body = (await response.text()).trim().replace(/\s+/g, ' ').slice(0, 500);
+  const body = (await response.text()).trim().replaceAll(/\s+/g, ' ').slice(0, 500);
   throw new Error(
     `GitHub release lookup failed with HTTP ${response.status}${body ? `: ${body}` : ''}; refusing to assume the release is absent.`
   );

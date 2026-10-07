@@ -147,7 +147,7 @@ export function systemFacts(app: { getVersion(): string; getLocale(): string }):
 
 /** Asks where to save, writes the file and shows it, so the user reads what they would share. */
 export async function saveDiagnosticsReport(text: string, owner: BrowserWindow | null): Promise<{ saved: false } | { saved: true; name: string }> {
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  const stamp = new Date().toISOString().slice(0, 16).replaceAll(/[-:T]/g, '');
   const options = {
     title: 'Save diagnostics report',
     defaultPath: path.join(app.getPath('downloads'), `chat-on-steroids-diagnostics-${stamp}.txt`),

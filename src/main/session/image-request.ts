@@ -16,16 +16,16 @@
 /** What else is known about the message: an image attached to it, and whether the last answer made one. */
 export interface ImageRequestContext { attachedImage?: boolean; afterImage?: boolean }
 
-const fold = (text: string): string => text.normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+const fold = (text: string): string => text.normalize('NFD').replaceAll(/\p{M}+/gu, '').toLowerCase();
 
 /** The person's prose only: no leading /commands (Skills), code, links or file paths. */
 function prose(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`[^`\n]*`/g, ' ')
+    .replaceAll(/```[\s\S]*?```/g, ' ')
+    .replaceAll(/`[^`\n]*`/g, ' ')
     .replace(/^(?:\s*\/[\w.:-]+)+/u, ' ')
-    .replace(/https?:\/\/\S+/gi, ' ')
-    .replace(/[’‘`]/g, "'")
+    .replaceAll(/https?:\/\/\S+/gi, ' ')
+    .replaceAll(/[’‘`]/g, "'")
     .toLowerCase();
 }
 

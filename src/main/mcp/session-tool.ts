@@ -1063,7 +1063,7 @@ const CURSOR_REPAIR_HINT =
 function decodeCursor(raw: string, scope: string): { cursor: SessionCursor } | { error: string } {
   const text = raw
     .trim()
-    .replace(/^[`'"“”‘’(\[]+|[`'"“”‘’)\].,;:!]+$/g, '')
+    .replaceAll(/^[`'"“”‘’(\[]+|[`'"“”‘’)\].,;:!]+$/g, '')
     .replace(/^[a-z_]*cursor\s*[:=]\s*[`'"“”‘’]*/i, '')
     .trim();
   const split = /^(.+)_([0-9a-vA-V]{4})$/s.exec(text);
@@ -1095,7 +1095,7 @@ function formatTime(time: number): string {
 }
 
 function flat(text: string, cap: number): string {
-  const value = text.replace(/\s+/g, ' ').trim();
+  const value = text.replaceAll(/\s+/g, ' ').trim();
   return value.length <= cap ? value : `${value.slice(0, cap - 1)}…`;
 }
 

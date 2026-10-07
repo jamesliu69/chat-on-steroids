@@ -29,7 +29,7 @@ app.whenReady().then(async () => {
     server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'setup-fixture', configureServer(vite) {
       vite.middlewares.use('/setup-preview.html', async (_request, response) => {
         const source = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-          .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
           .replace('</body>', `<script type="module">
             import { initSetupGuide } from '/setup-guide.ts';
             import { initLanguage, setLanguage, t } from '/i18n.ts';

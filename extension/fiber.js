@@ -843,7 +843,7 @@
 
   /** Whitespace-only normalisation for an optional DOM decoration match. */
   function visibleText(value) {
-    return typeof value === 'string' ? value.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    return typeof value === 'string' ? value.replaceAll(/\u00a0/g, ' ').replaceAll(/\s+/g, ' ').trim() : '';
   }
 
   /**
@@ -894,7 +894,7 @@
           if (!source || typeof source !== 'object') continue;
           const url = typeof source.url === 'string' && source.url.length <= 2000 && /^https?:\/\//i.test(source.url) ? source.url : null;
           if (!url) continue;
-          const text = (value, max) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
+          const text = (value, max) => typeof value === 'string' ? value.replaceAll(/\s+/g, ' ').trim().slice(0, max) : '';
           const label = text(source.label, 80), snippet = text(source.snippet, 300);
           // ChatGPT keeps publication dates in epoch seconds.
           const date = typeof source.pubDate === 'number' && isFinite(source.pubDate) && source.pubDate > 0

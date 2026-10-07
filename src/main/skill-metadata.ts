@@ -39,7 +39,7 @@ export function parseSkillFrontmatter(text: string): { name: string; description
   const description = string(parsed.description, 1024);
   if (!name || !description) throw new Error('Discovered skills need a name and description');
   const shortDescription = string(object(parsed.metadata)?.['short-description'], 240);
-  return { name: name.replace(/\s+/g, ' '), description, ...(shortDescription ? { shortDescription } : {}) };
+  return { name: name.replaceAll(/\s+/g, ' '), description, ...(shortDescription ? { shortDescription } : {}) };
 }
 
 export function parseSkillInterface(text: string): SkillMetadata {

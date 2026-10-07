@@ -39,7 +39,7 @@ function findBlockedText(text, location) {
 
 function checkMaintainerIdentity(name, email, location) {
   const normalizedName = name.trim().toLowerCase();
-  const normalizedEmail = email.trim().replace(/^<|>$/g, '').toLowerCase();
+  const normalizedEmail = email.trim().replaceAll(/^<|>$/g, '').toLowerCase();
   const belongsToMaintainer =
     normalizedName === maintainerLogin || normalizedEmail.includes(maintainerLogin);
   if (belongsToMaintainer && !safeMaintainerEmail.test(normalizedEmail)) {

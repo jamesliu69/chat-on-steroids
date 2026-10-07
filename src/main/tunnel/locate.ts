@@ -44,7 +44,7 @@ export function tunnelExecutableName(name: BinaryName, platform: NodeJS.Platform
 function searchPath(fileName: string): string | null {
   for (const dir of pathEntries()) {
     if (!dir) continue;
-    const candidate = path.join(dir.replace(/^"|"$/g, ''), fileName);
+    const candidate = path.join(dir.replaceAll(/^"|"$/g, ''), fileName);
     if (isExecutableFile(candidate)) return candidate;
   }
   return null;

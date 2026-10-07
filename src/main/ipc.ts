@@ -164,7 +164,7 @@ const capabilityPatch = z.object(
 
 const settingsPatch = z.object({
   // This computer's connector name suffix; see shared/connector-names.ts. Spaces are collapsed.
-  connectorSuffix: z.string().max(64).transform(value => value.trim().replace(/\s+/g, ' '))
+  connectorSuffix: z.string().max(64).transform(value => value.trim().replaceAll(/\s+/g, ' '))
     .refine(value => value.length <= CONNECTOR_SUFFIX_MAX && CONNECTOR_SUFFIX_PATTERN.test(value),
       'Use up to 32 letters, digits, spaces, dots, dashes or underscores').optional(),
   capabilities: capabilityPatch,
@@ -483,7 +483,7 @@ const sessionIdArg = z.object({ id: z.string().min(8).max(64).regex(/^[0-9a-z-]+
 /** A chat's own name in the app (#1107): one line, no control characters; null or blank clears it. */
 const sessionNameArg = sessionIdArg.extend({ title: z.string().max(2000).nullable() });
 export function cleanSessionName(title: string | null): string | null {
-  const clean = (title ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120).trim();
+  const clean = (title ?? '').replaceAll(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replaceAll(/\s+/g, ' ').trim().slice(0, 120).trim();
   return clean || null;
 }
 const agentIdArg = z.string().min(1).max(64).regex(/^[0-9a-z-]+$/i);

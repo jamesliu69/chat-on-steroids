@@ -108,7 +108,7 @@ export function gitExecutable(
   const useCache = searchPath === (process.env['PATH'] ?? process.env['Path'] ?? '');
   if (useCache && windowsGit) return windowsGit;
   for (const entry of searchPath.split(';')) {
-    const directory = entry.trim().replace(/^"|"$/g, '');
+    const directory = entry.trim().replaceAll(/^"|"$/g, '');
     if (!directory || !path.win32.isAbsolute(directory) || /^[\\/](?![\\/])/.test(directory)) continue;
     for (const name of ['git.exe', 'git.com']) {
       const candidate = path.win32.join(directory, name);

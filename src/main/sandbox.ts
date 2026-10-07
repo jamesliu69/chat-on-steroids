@@ -85,8 +85,8 @@ export function suggestApprovedSpelling(roots: readonly Root[], segments: readon
 export function normaliseRootName(input: string): string {
   const slug = input
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^[-.]+|[-.]+$/g, '')
+    .replaceAll(/[^a-z0-9._-]+/g, '-')
+    .replaceAll(/^[-.]+|[-.]+$/g, '')
     .slice(0, 32);
   return slug || 'folder';
 }
@@ -434,7 +434,7 @@ export async function validateNewRoot(folderPath: string, existing: readonly Roo
   }
   // WSL's local redirector is not an arbitrary SMB host. Both supported aliases still
   // have to exist on this Windows installation; no fallback or remote lookup is added.
-  const windowsPath = folderPath.replace(/\//g, '\\');
+  const windowsPath = folderPath.replaceAll(/\//g, '\\');
   if (IS_WINDOWS && windowsPath.startsWith('\\\\') && !WSL_PATH.test(windowsPath)) {
     throw new SandboxError('Network (UNC) paths are not supported. Map it to a drive letter first.');
   }

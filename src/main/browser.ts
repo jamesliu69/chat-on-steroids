@@ -279,8 +279,8 @@ export async function openInPreferredBrowser(
       if (options.backgroundStartup && platform === 'win32') {
         // Start-Process joins ArgumentList; supply one correctly quoted Windows
         // command line. PowerShell literals are a separate escaping boundary.
-        const literal = (value: string): string => `'${value.replace(/'/g, "''")}'`;
-        const argument = (value: string): string => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+        const literal = (value: string): string => `'${value.replaceAll(/'/g, "''")}'`;
+        const argument = (value: string): string => `"${value.replaceAll(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
         if ([browser, ...args].some(value => value.includes('\0'))) throw new Error('Browser launch contains a null byte');
         const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath ${literal(browser)} -ArgumentList ${literal(args.map(argument).join(' '))} -WorkingDirectory ${literal(cwd)} -WindowStyle Minimized`;
         // runPowerShell hides its own console. The child gets a real minimized

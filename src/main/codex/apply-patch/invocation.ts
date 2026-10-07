@@ -125,7 +125,7 @@ function extractApplyPatchFromBash(script: string): { body: string; workdir: str
       let workdir: string | null = null;
       for (const capture of match.captures) {
         if (capture.name === 'heredoc') {
-          body = capture.node.text.replace(/\n+$/g, '');
+          body = capture.node.text.replaceAll(/\n+$/g, '');
         } else if (capture.name === 'cd_path') {
           workdir = capture.node.text;
         } else if (capture.name === 'cd_raw_string') {

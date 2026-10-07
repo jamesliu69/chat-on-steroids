@@ -8,8 +8,8 @@ export const MIN_SIMILARITY = 0.5;
 
 /** The distinctive words of a title: lowercase, without version numbers, short words or filler. */
 export function titleWords(title) {
-  return new Set(String(title).toLowerCase().replace(/\[[^\]]*\]/g, ' ').replace(/\bv?\d+(\.\d+)+\b/g, ' ')
-    .split(/[^a-z0-9äöüß&+#-]+/).map(word => word.replace(/^[-#]+|[-#]+$/g, '')).filter(word => word.length >= 3 && !STOP.has(word)));
+  return new Set(String(title).toLowerCase().replaceAll(/\[[^\]]*\]/g, ' ').replaceAll(/\bv?\d+(\.\d+)+\b/g, ' ')
+    .split(/[^a-z0-9äöüß&+#-]+/).map(word => word.replaceAll(/^[-#]+|[-#]+$/g, '')).filter(word => word.length >= 3 && !STOP.has(word)));
 }
 
 /**

@@ -69,7 +69,7 @@ export function fitSessionPrompt(text: string, core: string, agents: ProjectInst
   const mandatory = [core, projectHeader].filter(Boolean).join('\n\n');
   const base = prependUserPrompt(text, mandatory);
   if (!fits(base)) throw new Error('The message and main instructions exceed the delivery limit (maximum 96,000 characters). Shorten the message or standing instructions.');
-  const content = agents?.text.replace(/\r\n?/g, '\n') ?? '';
+  const content = agents?.text.replaceAll(/\r\n?/g, '\n') ?? '';
   const prefix = (value: string, length: number): string => {
     if (length > 0 && length < value.length && /[\uD800-\uDBFF]/.test(value[length - 1]!)) length--;
     return value.slice(0, length);

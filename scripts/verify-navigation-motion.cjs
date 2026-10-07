@@ -11,7 +11,7 @@ app.setPath('userData', path.join(output, 'runtime'));
 app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
   const html = fs.readFileSync(path.join(root, 'out/renderer/index.html'), 'utf8')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
     .replace('<head>', `<head><base href="${pathToFileURL(path.join(root, 'out/renderer/')).href}">`);
   const fixture = path.join(output, 'fixture.html');
   fs.writeFileSync(fixture, html);

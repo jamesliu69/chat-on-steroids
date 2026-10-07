@@ -65,7 +65,7 @@ app.whenReady().then(async () => {
     const {createWorkspaceTerminal}=await import('/workspace-terminal.ts');
     const {createWorkspaceDocks}=await import('/workspace-docks.ts');
     const {applyAppearance}=await import('/appearance.ts');
-    const {defaultAppearance}=await import(${JSON.stringify('/@fs/' + path.join(root, 'src/shared/appearance.ts').replace(/\\/g, '/'))});
+    const {defaultAppearance}=await import(${JSON.stringify('/@fs/' + path.join(root, 'src/shared/appearance.ts').replaceAll(/\\/g, '/'))});
     document.body.append(document.getElementById('connectionPopover'));
     window.applyColor=(theme,background)=>{const settings=defaultAppearance();settings.translucentSidebar=false;settings[theme].background=background;applyAppearance(theme,settings);};
     const docks=createWorkspaceDocks(document.querySelector('[data-panel="chat"]'));
@@ -84,7 +84,7 @@ app.whenReady().then(async () => {
     window.ready=true;`;
   const server = await createServer({ configFile: false, root: path.join(root, 'src/renderer'), server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'terminal-fixture', configureServer(vite) {
     vite.middlewares.use('/fixture.html', async (_, response) => {
-      const source = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace('</body>', '<script type="module">' + fixture + '</script></body>');
+      const source = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8').replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace('</body>', '<script type="module">' + fixture + '</script></body>');
       response.setHeader('Content-Type', 'text/html'); response.end(await vite.transformIndexHtml('/fixture.html', source));
     });
   } }] });

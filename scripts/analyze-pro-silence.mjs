@@ -5,7 +5,7 @@ import readline from 'node:readline';
 import path from 'node:path';
 const root = process.argv[2];
 if (!root) throw new Error('Pass the local sessions directory');
-const pro6 = s => /^(?:gpt-?6-pro|gpt-?6-astra|astra)$/i.test(String(s?.model || '').replace(/\s+/g, '-')) ||
+const pro6 = s => /^(?:gpt-?6-pro|gpt-?6-astra|astra)$/i.test(String(s?.model || '').replaceAll(/\s+/g, '-')) ||
   /^(?:gpt-?6(?:\.0)?|6)$/.test(String(s?.model || '').toLowerCase()) && s?.reasoningEffort === 'pro';
 const metas = [];
 for (const dir of await fs.readdir(root, { withFileTypes: true })) {

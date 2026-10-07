@@ -25,7 +25,7 @@ app.whenReady().then(async () => {
   const css = fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8') +
     built.outputFiles.filter(file => file.path.endsWith('.css')).map(file => file.text).join('\n');
   const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '')
+    .replaceAll(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replaceAll(/<link\b[^>]*>/g, '')
     .replace('</head>', `<style>${css}</style></head>`);
   const show = process.argv.includes('--show');
   const win = new BrowserWindow({ show, title: 'CoS history scroll verification', width: 1400, height: 1000,
