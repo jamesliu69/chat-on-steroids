@@ -342,7 +342,7 @@ var CLF_DOM = (() => {
   // "Stream cache expired" (2026-10-05).
   function transportFailure(value) {
     const line = String(value || '').replaceAll(/\s+/g, ' ').trim();
-    return /^(?:message delivery timed out(?:\. please try again\.?)?|connection interrupted\.? waiting for the complete answer\.?|chatgpt stream recovery polling timed out\.?|stream cache expired\.?|unknown error occurred\.?|there was an error generating (?:a|the) response\.?|error in message stream\.?|network error\.?|a network error occurred\.?(?: please check your connection and try again\.?)?|resume stream unavailable\.?|something went wrong\.?|something went wrong while generating the response(?:\. if this issue persists please contact us through our help center at help\.openai\.com\.?)?\.?)(?: retry)?$/i.test(line);
+    return new RegExp(String.raw`^(?:message delivery timed out(?:\. please try again\.?)?|connection interrupted\.? waiting for the complete answer\.?|chatgpt stream recovery polling timed out\.?|stream cache expired\.?|unknown error occurred\.?|there was an error generating (?:a|the) response\.?|error in message stream\.?|network error\.?|a network error occurred\.?(?: please check your connection and try again\.?)?|resume stream unavailable\.?|something went wrong\.?|something went wrong while generating the response(?:\. if this issue persists please contact us through our help center at help\.openai\.com\.?)?\.?)(?: retry)?$`, 'i').test(line);
   }
 
   /**

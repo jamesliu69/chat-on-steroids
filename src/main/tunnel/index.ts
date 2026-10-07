@@ -100,7 +100,7 @@ function tunnelAuthRejected(message: string, error: string, statusCode?: unknown
   if (typeof statusCode === 'number') return statusCode === 401 || statusCode === 403;
   // Older clients omit status_code. Match an actual response status or auth error,
   // never numbers from retry delays, identifiers or unrelated structured fields.
-  return /\b(?:(?:unexpected status(?: code)?|HTTP)\s*:?\s*(?:401|403)|401\s+Unauthorized|403\s+Forbidden|unauthorized|forbidden|invalid[_ ]api[_ ]key|tunnel_use_forbidden)\b/i.test(error);
+  return new RegExp(String.raw`\b(?:(?:unexpected status(?: code)?|HTTP)\s*:?\s*(?:401|403)|401\s+Unauthorized|403\s+Forbidden|unauthorized|forbidden|invalid[_ ]api[_ ]key|tunnel_use_forbidden)\b`, 'i').test(error);
 }
 
 /**

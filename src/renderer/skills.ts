@@ -11,7 +11,7 @@ export function skillCompletion(text: string, start: number, end = start): { sta
   if (!match) return null;
   const at = start - match[1]!.length;
   const preceding = text.slice(0, at).trim();
-  if (preceding && !/^(?:\/(?!prompt(?:\s|$))[a-z0-9._-]+|\/prompt\s+[a-z0-9._-]+)(?:\s+(?:\/(?!prompt(?:\s|$))[a-z0-9._-]+|\/prompt\s+[a-z0-9._-]+))*$/i.test(preceding)) return null;
+  if (preceding && !new RegExp(String.raw`^(?:\/(?!prompt(?:\s|$))[a-z0-9._-]+|\/prompt\s+[a-z0-9._-]+)(?:\s+(?:\/(?!prompt(?:\s|$))[a-z0-9._-]+|\/prompt\s+[a-z0-9._-]+))*$`, 'i').test(preceding)) return null;
   const token = match[1]!;
   return { start: at, end, query: token === '/prompt' ? '' : token.replace(/^\/prompt\s+|^\//, '').toLowerCase() };
 }

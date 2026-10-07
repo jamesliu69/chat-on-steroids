@@ -15,7 +15,7 @@ const CODE = /^(src|extension|scripts|native|build)\//;
 const TESTS = /^(test\/|scripts\/verify-[^/]+\.cjs$|scripts\/fixtures\/)/;
 const CATALOG = /(^|\/)(locales\/[^/]+\.json|_locales\/[^/]+\/messages\.json)$/;
 const UI = /^(src\/renderer\/(?!locales\/)|extension\/(popup|options|sidepanel)[^/]*\.(html|css|js)$|extension\/content\.css$)/;
-const STRAY = /(^|\/)(\.DS_Store|Thumbs\.db|npm-debug\.log[^/]*|[^/]+\.log|[^/]+\.orig|[^/]+\.rej)$|^docs\/(worklog|notes|scratch)[^/]*$/i;
+const STRAY = new RegExp(String.raw`(^|\/)(\.DS_Store|Thumbs\.db|npm-debug\.log[^/]*|[^/]+\.log|[^/]+\.orig|[^/]+\.rej)$|^docs\/(worklog|notes|scratch)[^/]*$`, 'i');
 
 /** Files that define contracts between processes, the extension and stored data; AGENTS.md maps them. */
 const CONTRACT = /^(src\/preload\/index\.ts|src\/main\/(ipc|plugins-ipc)\.ts|src\/shared\/[^/]+\.ts)$/;

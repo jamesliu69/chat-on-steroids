@@ -2772,7 +2772,7 @@ function undash(text: string): string {
  * A typo is only harmless in prose. Inside a path, a command, a URL or a file name it is a
  * different instruction, and the whole point of this message is that ChatGPT acts on it.
  */
-const PROTECTED = /```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+|\S+[\\/@]\S+|[\w-]+\.[\w-]+/g;
+const PROTECTED = new RegExp('```[\\s\\S]*?```|`[^`\\n]*`|https?:\\/\\/\\S+|\\S+[\\\\/@]\\S+|[\\w-]+\\.[\\w-]+', 'g');
 
 /** One plain lowercase word: no capitals, so an acronym or a model id is never a candidate. */
 const CANDIDATE = /(?<![\w'’-])[a-z][a-z'’]{2,}[a-z](?![\w'’-])/g;

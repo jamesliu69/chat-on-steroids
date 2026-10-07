@@ -56,7 +56,7 @@ export async function isPreferredBrowserRunning(
         ? /^(?:msedge|microsoft-edge(?:-(?:stable|beta|dev))?|Microsoft Edge(?: Beta| Dev| Canary)?(?: Helper.*)?)$/i
         : browser === 'brave'
           ? /^(?:brave|brave-browser(?:-(?:stable|beta|dev|nightly))?|Brave Browser(?: Beta| Dev| Nightly)?(?: Helper.*)?)$/i
-        : /^(?:chrome|google-chrome(?:-(?:stable|beta|unstable))?|chromium(?:-browser)?|Google Chrome(?: Beta| Dev| Canary)?(?: Helper.*)?|Chromium(?: Helper.*)?)$/i;
+        : new RegExp(String.raw`^(?:chrome|google-chrome(?:-(?:stable|beta|unstable))?|chromium(?:-browser)?|Google Chrome(?: Beta| Dev| Canary)?(?: Helper.*)?|Chromium(?: Helper.*)?)$`, 'i');
       return result.stdout.split('\n').some(name => family.test(path.posix.basename(name.trim())));
     }
     // Probe only the selected family; another browser cannot prove its presence or absence.

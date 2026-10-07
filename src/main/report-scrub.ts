@@ -91,7 +91,7 @@ export function scrubText(text: string, context: ScrubContext): string {
     // Unquoted paths where folder names with spaces are common: under the home folder, a drive,
     // a network share or a mounted volume. Spaces are allowed only between separators, so the
     // last name ends at the first space and the prose after it is kept.
-    .replace(/(?:\b[A-Za-z]:[\\/]|\\\\|~[\\/]|(?<![\w.:/<>-])\/(?:Users|home|Volumes|mnt|media)\/)(?:(?![^\\/\n]*\.[A-Za-z0-9]{1,6}\s)[^\\/\n'"`<>|*?~]+[\\/])*(?:[^\\/\n'"`<>|*?]{0,80}?\.[A-Za-z0-9]{1,6}(?![\w.])|[^\s\\/'"`<>|*?]*)/g, scrubPath)
+    .replace(new RegExp('(?:\\b[A-Za-z]:[\\\\/]|\\\\\\\\|~[\\\\/]|(?<![\\w.:/<>-])\\/(?:Users|home|Volumes|mnt|media)\\/)(?:(?![^\\\\/\\n]*\\.[A-Za-z0-9]{1,6}\\s)[^\\\\/\\n\'"`<>|*?~]+[\\\\/])*(?:[^\\\\/\\n\'"`<>|*?]{0,80}?\\.[A-Za-z0-9]{1,6}(?![\\w.])|[^\\s\\\\/\'"`<>|*?]*)', 'g'), scrubPath)
     // Any other absolute path with at least two segments. URLs were rewritten above.
     .replace(/(?<![\w.:/<>~-])\/(?=[^\s/'"`<>]+\/)[^\s'"`<>|*?]+/g, scrubPath);
   // Known values last: paths are tagged segment by segment first, so a project folder's path is

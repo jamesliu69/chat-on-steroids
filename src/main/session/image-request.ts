@@ -94,8 +94,8 @@ const FILES = words(String.raw`
   file | files | folder | folders | directory | directories | datei\p{L}* | ordner\p{L}* | verzeichnis\p{L}* | archivo\p{L}* | carpeta\p{L}* |
   fichier\p{L}* | dossier\p{L}* | repertoire | arquivo\p{L}* | pasta\p{L}* | файл\p{L}* | папк\p{L}* | dosya\p{L}* | klasor\p{L}* | tệp | thư mục`);
 // "… and save it to the folder": where the picture goes, not file work.
-const SAVE_VERB = /(?<![\p{L}])(?:save[sd]?|saving|stor(?:e[sd]?|ing)|download(?:s|ed|ing)?|export(?:s|ed|ing)?|speicher\p{L}*|herunterladen|exportier\p{L}*|guarda\p{L}*|descarga\p{L}*|enregistre\p{L}*|télécharge\p{L}*|salve|salvar|baixe|сохрани\p{L}*|скача\p{L}*|kaydet\p{L}*|indir|lưu|tải)(?![\p{L}])/u;
-const SAVE_CLAUSE = /(?<![\p{L}])(?:save|store|put|speicher\p{L}*|lege|guarda\p{L}*|enregistre\p{L}*|salve|salvar|сохрани\p{L}*|kaydet\p{L}*|lưu)(?![\p{L}]).*$/u;
+const SAVE_VERB = new RegExp(String.raw`(?<!\p{L})(?:save[sd]?|saving|stor(?:e[sd]?|ing)|download(?:s|ed|ing)?|export(?:s|ed|ing)?|speicher\p{L}*|herunterladen|exportier\p{L}*|guarda\p{L}*|descarga\p{L}*|enregistre\p{L}*|télécharge\p{L}*|salve|salvar|baixe|сохрани\p{L}*|скача\p{L}*|kaydet\p{L}*|indir|lưu|tải)(?!\p{L})`, 'u');
+const SAVE_CLAUSE = new RegExp(String.raw`(?<!\p{L})(?:save|store|put|speicher\p{L}*|lege|guarda\p{L}*|enregistre\p{L}*|salve|salvar|сохрани\p{L}*|kaydet\p{L}*|lưu)(?!\p{L}).*$`, 'u');
 // Files and everyday work: they rule out reading a short follow-up as an image edit, not a clear request.
 const TASK = words(String.raw`
   file | files | folder | directory | screenshot\p{L}* | run | test | tests | fix | build | install | deploy | push | debug | refactor |
@@ -128,7 +128,7 @@ const requestRe = new RegExp(String.raw`${WORD_EDGE}(?:${CREATE})${WORD_END}(?:[
 // "An image of …", "a picture showing …": the noun names what is to be shown.
 const pictureOfRe = new RegExp(`${WORD_EDGE}(?:${NOUN})${WORD_END} (?:of|showing|with|von|mit|de|del|com|du|des|с|ile) `, 'u');
 // Imperative drawing on its own: "draw a cat", "zeichne einen Hund", "нарисуй кота".
-const drawRe = /(?:^|[.!?\n]\s*)(?:please |bitte |por favor |s'il te plait |s'il vous plait |пожалуйста |lutfen |làm ơn )?(?:draw|paint|sketch|zeichne|male|dibuja|pinta|dessine|peins|desenhe|pinte|нарисуй|ciz|vẽ)(?![\p{L}])/u;
+const drawRe = new RegExp(String.raw`(?:^|[.!?\n]\s*)(?:please |bitte |por favor |s'il te plait |s'il vous plait |пожалуйста |lutfen |làm ơn )?(?:draw|paint|sketch|zeichne|male|dibuja|pinta|dessine|peins|desenhe|pinte|нарисуй|ciz|vẽ)(?!\p{L})`, 'u');
 // Turkish puts the verb last: "bir kedi resmi oluştur", "bir köpek çiz".
 const verbLastRe = new RegExp(String.raw`${WORD_EDGE}(?:${NOUN})${WORD_END}[^.!?;\n]{0,24}?${WORD_EDGE}(?:olustur|uret|ciz|yap|tasarla)\p{L}*(?: (?:mu|mi|mı|musun|misin|mısın|musunuz|misiniz))?\s*$`, 'u');
 const drawLastRe = /(?<![\p{L}])(?:ciz|cizer misin|cizin)\s*$/u;
@@ -137,25 +137,25 @@ const NOT_A_PICTURE = anyOf(words(String.raw`
   diagrams? | charts? | graphs? | plots? | flowcharts? | tables? | mermaid | uml | wireframes? | slides? | presentations? | spreadsheets? |
   diagramm\p{L}* | tabelle\p{L}* | diagrama\p{L}* | grafico\p{L}* | tabla\p{L}* | diagramme\p{L}* | graphique\p{L}* | tableau\p{L}* |
   grafico | tabela | диаграмм\p{L}* | график\p{L}* | таблиц\p{L}* | diyagram\p{L}* | grafi\p{L}* | tablo\p{L}* | biểu đồ | sơ đồ | bảng`));
-const QUESTION = /^(?:what|why|how|which|where|when|did you|have you|was|warum|wieso|wie|welche\p{L}*|hast du|que|que |qué|por que|por qué|como|cómo|cual|cuál|pourquoi|comment|quel\p{L}*|qu'|o que|qual|что|почему|как|какой|зачем|ne |neden|nasil|nasıl|hangi|gì|tại sao|như thế nào)(?![\p{L}])/u;
+const QUESTION = new RegExp(String.raw`^(?:what|why|how|which|where|when|did you|have you|was|warum|wieso|wie|welche\p{L}*|hast du|que|que |qué|por que|por qué|como|cómo|cual|cuál|pourquoi|comment|quel\p{L}*|qu'|o que|qual|что|почему|как|какой|зачем|ne |neden|nasil|nasıl|hangi|gì|tại sao|như thế nào)(?!\p{L})`, 'u');
 const wantRe = new RegExp(String.raw`${WORD_EDGE}(?:${WANT})${WORD_END}(?:[^.!?;\n]{0,24}?${WORD_EDGE}(?:${ARTICLE})${WORD_END})?[^.!?;\n]{0,24}?${WORD_EDGE}(?:${NOUN})${WORD_END}`, 'u');
 const bareWantRe = new RegExp(String.raw`${WORD_EDGE}(?:${BARE_WANT}) (?:${ARTICLE}) (?:[\p{L}\p{N}x-]+ ){0,3}(?:${NOUN})${WORD_END}`, 'u');
 // German questions put the infinitive last: "kannst du ein Logo für meinen Podcast machen?".
 const germanLastRe = new RegExp(String.raw`${WORD_EDGE}(?:${NOUN})${WORD_END}[^.!?;\n]{0,48}?${WORD_EDGE}(?:machen|erstellen|zeichnen|malen|generieren|entwerfen|gestalten|erzeugen)\s*$`, 'u');
 const drawAnywhereRe = new RegExp(`${WORD_EDGE}(?:${DRAW})${WORD_END}`, 'u');
-const notARequest = /(?<![\p{L}])(?:make sure|make it work|draw (?:a |the )?conclusions?|draw attention|stelle sicher|asegurate|assure-toi|certifique-se|убедись|emin ol|đảm bảo)(?![\p{L}])/u;
+const notARequest = new RegExp(String.raw`(?<!\p{L})(?:make sure|make it work|draw (?:a |the )?conclusions?|draw attention|stelle sicher|asegurate|assure-toi|certifique-se|убедись|emin ol|đảm bảo)(?!\p{L})`, 'u');
 
 // Chinese, Japanese and Korean write without spaces: a picture word and a making word in one sentence.
-const CJK_NOUN = /图片|图像|插画|插图|照片|画像|海报|壁纸|标志|图标|头像|圖片|圖像|插畫|海報|桌布|標誌|圖示|頭像|イラスト|ロゴ|アイコン|ポスター|壁紙|写真|絵|이미지|그림|사진|일러스트|로고|아이콘|포스터|배경화면|프로필 사진/u;
+const CJK_NOUN = new RegExp(String.raw`图片|图像|插画|插图|照片|画像|海报|壁纸|标志|图标|头像|圖片|圖像|插畫|海報|桌布|標誌|圖示|頭像|イラスト|ロゴ|アイコン|ポスター|壁紙|写真|絵|이미지|그림|사진|일러스트|로고|아이콘|포스터|배경화면|프로필 사진`, 'u');
 const CJK_DRAW = /帮我画|画一只|画一个|画一幅|画一张|请画|畫一隻|畫一個|畫一幅|幫我畫|請畫|を描いて|を描け|그려줘|그려 줘|그려주세요/u;
 const CJK_NOT_A_PICTURE = /图表|流程图|架构图|表格|圖表|流程圖|架構圖|図表|フローチャート|グラフ|차트|그래프|다이어그램|표를/u;
-const CJK_CREATE = /デザインして|デザイン|を作って|作って|生成|画一|画个|画张|画幅|画出|帮我画|创建|制作|设计|做一|做个|繪製|畫一|畫個|畫張|建立|製作|設計|作って|作成|生成して|描いて|かいて|書いて|만들어|생성|그려|제작|디자인/u;
-const CJK_CODE = /代码|脚本|(?<!应用|小)程序|函数|组件|組件|代碼|腳本|(?<!應用)程式|函式|コード|スクリプト|プログラム|関数|코드|스크립트|프로그램|함수|解析器|パーサー|파서/u;
+const CJK_CREATE = new RegExp(String.raw`デザインして|デザイン|を作って|作って|生成|画一|画个|画张|画幅|画出|帮我画|创建|制作|设计|做一|做个|繪製|畫一|畫個|畫張|建立|製作|設計|作って|作成|生成して|描いて|かいて|書いて|만들어|생성|그려|제작|디자인`, 'u');
+const CJK_CODE = new RegExp(String.raw`代码|脚本|(?<!应用|小)程序|函数|组件|組件|代碼|腳本|(?<!應用)程式|函式|コード|スクリプト|プログラム|関数|코드|스크립트|프로그램|함수|解析器|パーサー|파서`, 'u');
 const CJK_FILES = /文件夹|文件|資料夾|檔案|フォルダ|ファイル|폴더|파일|重命名|重新命名|名前を変え|이름을/u;
 const CJK_ABOUT = /说明|說明|描述|标题|標題|想法|点子|キャプション|アイデア|説明文|캡션|아이디어|설명/u;
 const CJK_TASK = /文件|檔案|ファイル|파일|截图|截圖|スクリーンショット|스크린샷|测试|測試|テスト|테스트|提交|コミット|커밋|解析器|パーサー|파서/u;
 const CJK_PROCESS = /压缩|裁剪|调整大小|描述|分析|壓縮|裁切|調整大小|描述|圧縮|トリミング|リサイズ|説明|分析|압축|자르|크기 조정|설명|분석/u;
-const CJK_EDIT = /加上|加一|添加|加个|加個|加入|换成|換成|改为|改為|追加して|加えて|つけて|추가해|넣어|修改|改成|变成|改為|變成|编辑|編輯|去掉背景|变得|編集|変えて|背景を消|にして|수정|바꿔|편집|배경 제거|로 만들어/u;
+const CJK_EDIT = new RegExp(String.raw`加上|加一|添加|加个|加個|加入|换成|換成|改为|改為|追加して|加えて|つけて|추가해|넣어|修改|改成|变成|改為|變成|编辑|編輯|去掉背景|变得|編集|変えて|背景を消|にして|수정|바꿔|편집|배경 제거|로 만들어`, 'u');
 
 function sentences(text: string): string[] {
   // A "." ends a sentence only before a space or the end, never inside a file name or a number.

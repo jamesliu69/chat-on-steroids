@@ -3444,7 +3444,7 @@
   const FIBER_MAX_IMAGES = 200;
   const TOOL_NAME = /^[a-z0-9_.-]{1,64}$/i;
   const FIBER_BUSY_CAPTIONS = new Set(['thinking', 'thinking about it', 'reasoning', 'working', 'loading', 'done', 'called tool']);
-  const FIBER_TIMER_CAPTION = /^(?:worked|thought|reasoned|thinking)\s+for\s+[\d.,]+\s*(?:s|m|h|sec|secs|seconds?|min|mins|minutes?|hours?)\b/;
+  const FIBER_TIMER_CAPTION = new RegExp(String.raw`^(?:worked|thought|reasoned|thinking)\s+for\s+[\d.,]+\s*(?:s|m|h|sec|secs|seconds?|min|mins|minutes?|hours?)\b`);
 
   /** Descriptors from the last successful scan, keyed by the stamp on their row. */
   let fiberRows = new Map();
