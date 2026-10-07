@@ -1,0 +1,6 @@
+projectKey=chat-on-steroids
+serverUrl=http://localhost:32769
+serverVersion=26.5.0.122743
+dashboardUrl=http://localhost:32769/dashboard?id=chat-on-steroids
+ceTaskId=4d67e153-e2ef-464e-847e-f4c983937170
+ceTaskUrl=http://localhost:32769/api/ce/task?id=4d67e153-e2ef-464e-847e-f4c983937170
