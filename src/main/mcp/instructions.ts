@@ -81,7 +81,11 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform, skills: s
   const executable = !ctx.readOnly && caps.command;
   const windows = platform === 'win32';
   const desktop = windows || platform === 'darwin';
-  const host = platform === 'darwin' ? 'macOS' : platform === 'linux' ? 'Linux' : windows ? 'Windows' : 'local';
+  let host: string;
+  if (platform === 'darwin') host = 'macOS';
+  else if (platform === 'linux') host = 'Linux';
+  else if (windows) host = 'Windows';
+  else host = 'local';
   const roots = ctx.roots.length
     ? ctx.roots.map(root => `/${root.name}${isGitRepository(root.path) ? ' (git)' : ''}`).join('  ')
     : 'None yet.';

@@ -182,9 +182,12 @@ async function recordUntrustedRefusalNotice(context: CallContext): Promise<void>
   const durableWorker = worker.owned
     ? false
     : (await getSession(caller.sessionId).catch(() => null))?.origin?.kind === 'worker';
-  const message = worker.owned
-    ? worker.primeConversationId ? UNTRUSTED_WORKER_NOTICE : UNPROVEN_WORKER_NOTICE
-    : durableWorker ? UNPROVEN_WORKER_NOTICE : UNTRUSTED_NOTICE;
+  let message: string;
+  if (worker.owned) {
+    if (worker.primeConversationId) message = UNTRUSTED_WORKER_NOTICE;
+    else message = UNPROVEN_WORKER_NOTICE;
+  } else if (durableWorker) message = UNPROVEN_WORKER_NOTICE;
+  else message = UNTRUSTED_NOTICE;
   // A progress id is a presentation identity: reusing it would make foldProgress() collapse a
   // later refusal episode into the old row. The in-memory exact-pair map does deduplication;
   // the durable row therefore gets a fresh identity for each episode.
@@ -541,30 +544,35 @@ function withUnattributedNotice(
   if (conversationId) return result;
   const eta = unattributedRepairEta(Date.now(), requestId);
   const recovery = eta === null ? '' : `The next attribution recovery check is in about ${eta}s. `;
+  let noticeText: string;
+  if (allowUnattributed) {
+    let requestText: string;
+    if (requestId) requestText = 'This request id owns its workspace, update_plan, terminals and agents/subagents. Use the process and run ids returned to this request; later exact proof attaches that state to its chat. ';
+    else requestText = 'This call has no request id, so request-owned plans and worker families cannot be created until a request id or exact chat proof is available. ';
+    noticeText = '\n--- Identity notice ---\n' +
+      'This call is filed as Unattributed because its exact ChatGPT conversation is not known yet. ' +
+      'Unattributed does not switch on Read-only mode or disable tools. Continue using every enabled tool, ' +
+      'including apply_patch, exec_command, Desktop and Plugins; their existing permissions still apply. ' +
+      requestText +
+      'A refusal about a particular process, worker or chat target applies only to that operation, not to file edits or other tools. ' +
+      'Report the actual tool result; do not claim mutation or terminal tools are unavailable because of this notice, and never replay successful work. ' +
+      recovery;
+  } else {
+    noticeText = '\n--- Identity notice ---\n' +
+      'This app could not tell which ChatGPT conversation made this call, so it is filed as ' +
+      'Unattributed. ' + recovery +
+      'This does not identify this chat as a reload target. The result above still states what ran. ' +
+      'Attribution does not change tool permissions or mean Read-only; report a refusal only for the operation that actually failed. ' +
+      'Do not repeat a successful mutation to repair attribution. A later exact request-id match can ' +
+      'reattach this recorded call. Retry a refused operation once, and preserve any undelivered report in the chat.';
+  }
   return {
     ...result,
     content: [
       ...result.content,
       {
         type: 'text',
-        text: allowUnattributed
-          ? '\n--- Identity notice ---\n' +
-            'This call is filed as Unattributed because its exact ChatGPT conversation is not known yet. ' +
-            'Unattributed does not switch on Read-only mode or disable tools. Continue using every enabled tool, ' +
-            'including apply_patch, exec_command, Desktop and Plugins; their existing permissions still apply. ' +
-            (requestId
-              ? 'This request id owns its workspace, update_plan, terminals and agents/subagents. Use the process and run ids returned to this request; later exact proof attaches that state to its chat. '
-              : 'This call has no request id, so request-owned plans and worker families cannot be created until a request id or exact chat proof is available. ') +
-            'A refusal about a particular process, worker or chat target applies only to that operation, not to file edits or other tools. ' +
-            'Report the actual tool result; do not claim mutation or terminal tools are unavailable because of this notice, and never replay successful work. ' +
-            recovery
-          : '\n--- Identity notice ---\n' +
-            'This app could not tell which ChatGPT conversation made this call, so it is filed as ' +
-            'Unattributed. ' + recovery +
-            'This does not identify this chat as a reload target. The result above still states what ran. ' +
-            'Attribution does not change tool permissions or mean Read-only; report a refusal only for the operation that actually failed. ' +
-            'Do not repeat a successful mutation to repair attribution. A later exact request-id match can ' +
-            'reattach this recorded call. Retry a refused operation once, and preserve any undelivered report in the chat.'
+        text: noticeText
       }
     ]
   };
@@ -598,11 +606,10 @@ function withInbox(
   if (messages.length === 0) return result;
   const lines = messages
     .map((message) => {
-      const route = message.fromRunId
-        ? ` [source_run_id=${message.fromRunId}]${message.runId ? (" [received_on_run_id=" + message.runId + "]") : ''}`
-        : message.runId
-          ? ` [run_id=${message.runId}]`
-          : '';
+      let route: string;
+      if (message.fromRunId) route = ` [source_run_id=${message.fromRunId}]${message.runId ? (" [received_on_run_id=" + message.runId + "]") : ''}`;
+      else if (message.runId) route = ` [run_id=${message.runId}]`;
+      else route = '';
       return `• ${message.from}${route}${message.offers > 1 ? ' (delivery retry)' : ''}: ${message.text}`;
     })
     .join('\n');
@@ -739,11 +746,10 @@ async function dispatchTracked(
     name === 'exec' || name === 'update_plan' || (identitySensitive && swarmRunning())
   ));
   if (!context.caller.conversationId && needsExactIdentity && requestId) {
-    const wait = name === 'session_finish'
-      ? SPAWN_EVIDENCE_MS
-      : desktopContext && allowUnattributed
-      ? UNATTRIBUTED_DESKTOP_EVIDENCE_MS
-      : IDENTITY_EVIDENCE_MS;
+    let wait: number;
+    if (name === 'session_finish') wait = SPAWN_EVIDENCE_MS;
+    else if (desktopContext && allowUnattributed) wait = UNATTRIBUTED_DESKTOP_EVIDENCE_MS;
+    else wait = IDENTITY_EVIDENCE_MS;
     setCallerConversation(
       context,
       await awaitFreshCallOrigin(name, startedAt, identityWindow(wait), { requestId })
@@ -825,9 +831,11 @@ async function dispatchTracked(
   // are timing-sensitive enough that needless awaits can change which terminal frame a poll sees.
   // Connection provenance is an admission fence, not just a handler error: a refused call
   // must not revive its worker or consume/receive input owned by the other connection.
-  const conversationPolicyRefusal = (strictChatAllowlistEnabled()
-    ? await conversationAccessRefusal(context.caller.conversationId)
-    : isChatBlocked(context.caller.conversationId) ? BLOCKED_CHAT_REFUSAL : null) ??
+  let policyBase: string | null;
+  if (strictChatAllowlistEnabled()) policyBase = await conversationAccessRefusal(context.caller.conversationId);
+  else if (isChatBlocked(context.caller.conversationId)) policyBase = BLOCKED_CHAT_REFUSAL;
+  else policyBase = null;
+  const conversationPolicyRefusal = policyBase ??
     workerConnectionProfileRefusal(context.caller);
   let silentFinishAuthorized = false;
   // Two things about liveness, both before the agent is resolved so that the answer this
@@ -1005,51 +1013,52 @@ async function dispatchTracked(
     handlerRan = true;
     return run();
   };
-  const result = await runInCallContext(context, () =>
-      admissionRefusal
-        ? Promise.resolve(fail(admissionRefusal))
-        : compacting
-        ? Promise.resolve(fail(COMPACTION_IN_PROGRESS_REFUSAL))
-        : supersededConversation
-        ? Promise.resolve(
-            fail(
-              'CONVERSATION_SUPERSEDED: Compact & Resume replaced this ChatGPT conversation. Its transcript remains readable, but it can no longer execute local tools. Continue only in the replacement chat; no local tool was run.'
-            )
-          )
-        : silentCeilingWorker
-        ? Promise.resolve(fail(silentCeilingWorker))
-        : dormantWorker
-        ? Promise.resolve(fail(dormantWorker))
-        : retiredWorker
-        ? Promise.resolve(
-            fail(
-              `WORKER_RETIRED: ${retiredWorker.id} was retired because ${retiredWorker.reason}. This chat can no longer use local tools. Stop working and return to the prime chat.`
-            )
-          )
-        : endedWorker
-        ? Promise.resolve(fail(endedWorker))
-        : retiredLeaseAmbiguous
-        ? Promise.resolve(
-            failIdentity(
-              'CALLER_IDENTITY_REQUIRED: a recently retired worker tab may still be open, and the connector could not prove this call belongs to a different chat. No local tool was run. For a browser chat, restore the companion connection and retry. Scheduled or headless runs may have no browser identity: the user can enable "Allow unattributed calls" in the app settings to permit self-contained calls recorded as Unattributed. Exact retired-worker restrictions still apply.'
-            )
-          )
-        : dormantLeaseAmbiguous
-        ? Promise.resolve(
-            failIdentity(
-              'CALLER_IDENTITY_REQUIRED: a dormant worker chat still belongs to its prime history, and the connector could not prove this call belongs to a different conversation. No local tool was run. For a browser chat, restore the companion connection and retry. Scheduled or headless runs may have no browser identity: the user can enable "Allow unattributed calls" in the app settings to permit self-contained calls recorded as Unattributed. This does not identify the caller or grant access to another chat’s workspace or processes.'
-            )
-          )
-        : !allowUnattributed && swarmRunning() && identitySensitive && !context.caller.conversationId
-        ? Promise.resolve(
-            failIdentity(
-              'CALLER_IDENTITY_REQUIRED: this operation needs this chat’s exact workspace, but the connector could not prove which ChatGPT conversation made the call. Retry after the extension reconnects; no file or command was changed.'
-            )
-          )
-        : nested && (name === 'exec' || name === 'session_finish' || isFinish)
-        ? Promise.resolve(fail('DIRECT_CALL_REQUIRED: call this lifecycle tool directly, outside exec. No action was taken.'))
-        : invokeHandler()
-  );
+  const result = await runInCallContext(context, () => {
+    if (admissionRefusal) return Promise.resolve(fail(admissionRefusal));
+    if (compacting) return Promise.resolve(fail(COMPACTION_IN_PROGRESS_REFUSAL));
+    if (supersededConversation) {
+      return Promise.resolve(
+        fail(
+          'CONVERSATION_SUPERSEDED: Compact & Resume replaced this ChatGPT conversation. Its transcript remains readable, but it can no longer execute local tools. Continue only in the replacement chat; no local tool was run.'
+        )
+      );
+    }
+    if (silentCeilingWorker) return Promise.resolve(fail(silentCeilingWorker));
+    if (dormantWorker) return Promise.resolve(fail(dormantWorker));
+    if (retiredWorker) {
+      return Promise.resolve(
+        fail(
+          `WORKER_RETIRED: ${retiredWorker.id} was retired because ${retiredWorker.reason}. This chat can no longer use local tools. Stop working and return to the prime chat.`
+        )
+      );
+    }
+    if (endedWorker) return Promise.resolve(fail(endedWorker));
+    if (retiredLeaseAmbiguous) {
+      return Promise.resolve(
+        failIdentity(
+          'CALLER_IDENTITY_REQUIRED: a recently retired worker tab may still be open, and the connector could not prove this call belongs to a different chat. No local tool was run. For a browser chat, restore the companion connection and retry. Scheduled or headless runs may have no browser identity: the user can enable "Allow unattributed calls" in the app settings to permit self-contained calls recorded as Unattributed. Exact retired-worker restrictions still apply.'
+        )
+      );
+    }
+    if (dormantLeaseAmbiguous) {
+      return Promise.resolve(
+        failIdentity(
+          'CALLER_IDENTITY_REQUIRED: a dormant worker chat still belongs to its prime history, and the connector could not prove this call belongs to a different conversation. No local tool was run. For a browser chat, restore the companion connection and retry. Scheduled or headless runs may have no browser identity: the user can enable "Allow unattributed calls" in the app settings to permit self-contained calls recorded as Unattributed. This does not identify the caller or grant access to another chat’s workspace or processes.'
+        )
+      );
+    }
+    if (!allowUnattributed && swarmRunning() && identitySensitive && !context.caller.conversationId) {
+      return Promise.resolve(
+        failIdentity(
+          'CALLER_IDENTITY_REQUIRED: this operation needs this chat’s exact workspace, but the connector could not prove which ChatGPT conversation made the call. Retry after the extension reconnects; no file or command was changed.'
+        )
+      );
+    }
+    if (nested && (name === 'exec' || name === 'session_finish' || isFinish)) {
+      return Promise.resolve(fail('DIRECT_CALL_REQUIRED: call this lifecycle tool directly, outside exec. No action was taken.'));
+    }
+    return invokeHandler();
+  });
   markTiming('handler');
   if (identityRefusals.has(result)) rememberIdentityRefusal(requestId, name);
   // Identity, once, from this call's own evidence — see callerConversation. `agents` has
@@ -1062,9 +1071,11 @@ async function dispatchTracked(
   await reconcileAgentRequestOwners().catch(error => {
     logWarn(`Worker ownership recovery deferred after tool completion: ${error instanceof Error ? error.message : String(error)}`);
   });
-  const deliveryPolicyRefusal = (strictChatAllowlistEnabled()
-    ? await conversationAccessRefusal(context.caller.conversationId)
-    : isChatBlocked(context.caller.conversationId) ? BLOCKED_CHAT_REFUSAL : null) ??
+  let deliveryPolicyBase: string | null;
+  if (strictChatAllowlistEnabled()) deliveryPolicyBase = await conversationAccessRefusal(context.caller.conversationId);
+  else if (isChatBlocked(context.caller.conversationId)) deliveryPolicyBase = BLOCKED_CHAT_REFUSAL;
+  else deliveryPolicyBase = null;
+  const deliveryPolicyRefusal = deliveryPolicyBase ??
     workerConnectionProfileRefusal(context.caller);
   const deliveryFenced = Boolean(conversationPolicyRefusal) || compacting || supersededConversation || Boolean(silentCeilingWorker) ||
     Boolean(deliveryPolicyRefusal) ||
@@ -1112,12 +1123,19 @@ async function dispatchTracked(
   // The Plugins handler owns validation/redaction of external results. A dispatcher refusal
   // never visited that owner and therefore needs its own single redaction pass.
   const baseResult = surface === 'plugins' && !handlerRan ? pluginManager.redactResult(result) as ToolResult : result;
-  let delivered = nested ? baseResult : withUnattributedNotice(
-    context.caller.conversationId,
-    deliveryFenced ? baseResult : withInbox(context.caller, context.agent, baseResult, isFinish),
-    context.caller.requestId,
-    context.allowUnattributed === true
-  );
+  let delivered: ToolResult;
+  if (nested) delivered = baseResult;
+  else {
+    let inner: ToolResult;
+    if (deliveryFenced) inner = baseResult;
+    else inner = withInbox(context.caller, context.agent, baseResult, isFinish);
+    delivered = withUnattributedNotice(
+      context.caller.conversationId,
+      inner,
+      context.caller.requestId,
+      context.allowUnattributed === true
+    );
+  }
   if (!nested && recoveredWorkerRole && !deliveryFenced) delivered = {
     ...delivered,
     content: [...delivered.content, { type: 'text', text: '\n--- Worker ownership recovered ---\n' +
@@ -1362,7 +1380,12 @@ export async function resolveCwd(ctx: ToolContext, virtualPath: string | undefin
     );
   }
   const fallback = firstTaskRoot(ctx.roots);
-  const target = provided ? virtualPath : (workspace?.virtual ?? (fallback ? `/${fallback.name}` : ''));
+  const workspaceVirtual = workspace?.virtual;
+  let target: string;
+  if (virtualPath !== undefined && virtualPath !== '') target = virtualPath;
+  else if (workspaceVirtual !== null && workspaceVirtual !== undefined) target = workspaceVirtual;
+  else if (fallback) target = `/${fallback.name}`;
+  else target = '';
   if (!target) throw new SandboxError('No folder is approved, so there is nowhere to run');
   const resolved = await resolveIn(ctx.roots, target);
   const stat = await fs.stat(resolved.real);

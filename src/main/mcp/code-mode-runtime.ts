@@ -137,13 +137,11 @@ export async function runCodeMode(
       const effects = calls
         ? `${calls} tool calls already dispatched; side effects were not rolled back. Inspect current state before retrying.`
         : 'No tool calls were dispatched.';
-      const hint = status === 'PARSE_ERROR'
-        ? ' Source could not be parsed or initialized; check quoting, closing brackets, and unsupported imports.'
-        : status === 'OUTPUT_LIMIT'
-          ? ` ${textTruncated ? 'Explicit text was truncated. ' : ''}Limits: ${limits.textBytes} UTF-8 text bytes, ${limits.images} images, ${limits.outputItems} output items. Filter results or read smaller ranges; use direct tools for large reads.`
-          : status === 'SCRIPT_ERROR'
-            ? ' Check the JavaScript and available tool names; catch an expected error and explicitly text(...) only the details you need.'
-            : '';
+      let hint: string;
+      if (status === 'PARSE_ERROR') hint = ' Source could not be parsed or initialized; check quoting, closing brackets, and unsupported imports.';
+      else if (status === 'OUTPUT_LIMIT') hint = ` ${textTruncated ? 'Explicit text was truncated. ' : ''}Limits: ${limits.textBytes} UTF-8 text bytes, ${limits.images} images, ${limits.outputItems} output items. Filter results or read smaller ranges; use direct tools for large reads.`;
+      else if (status === 'SCRIPT_ERROR') hint = ' Check the JavaScript and available tool names; catch an expected error and explicitly text(...) only the details you need.';
+      else hint = '';
       diagnostics.push(...errorResult(`${status}: execution stopped. ${effects}${hint} Unemitted values remain private.`).content);
     }
     if (pending.size) diagnostics.push(...errorResult('UNAWAITED_CALLS: dispatched tool calls are still running and remain recorded. Side effects were not cancelled.').content);

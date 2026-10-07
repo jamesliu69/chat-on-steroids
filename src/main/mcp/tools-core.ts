@@ -534,9 +534,13 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             event.kind === 'native_image' && event.providerStatus !== 'in_progress');
           const chosen = images.at(-(nth ?? 1));
           if (!chosen) {
-            return fail(images.length
-              ? `save_image found only ${images.length} generated image${images.length === 1 ? '' : 's'} in this chat. Use nth ${images.length} or lower, or omit nth for the latest.`
-              : 'save_image found no image generated in this chat yet.');
+            let missingText: string;
+            if (images.length === 0) missingText = 'save_image found no image generated in this chat yet.';
+            else {
+              const imageWord = images.length === 1 ? '' : 's';
+              missingText = `save_image found only ${images.length} generated image${imageWord} in this chat. Use nth ${images.length} or lower, or omit nth for the latest.`;
+            }
+            return fail(missingText);
           }
           const target = await resolveIn(ctx.roots, path, { allowMissing: true });
           try {
@@ -804,13 +808,11 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           const policy = evaluateCommandAllowlist(getConfig().commandAllowlist, rawCommands, shell.shellType);
           if (!policy.allowed) {
             const location = isBatch ? ` in command ${policy.commandIndex + 1}` : '';
-            const reason = policy.kind === 'unmatched'
-              ? 'the command did not match any allow rule'
-              : policy.kind === 'denied'
-                ? 'the command matched a deny rule'
-              : policy.kind === 'invalid-policy'
-                ? 'the saved policy is invalid'
-                : 'the command uses unsupported or ambiguous shell syntax';
+            let reason: string;
+            if (policy.kind === 'unmatched') reason = 'the command did not match any allow rule';
+            else if (policy.kind === 'denied') reason = 'the command matched a deny rule';
+            else if (policy.kind === 'invalid-policy') reason = 'the saved policy is invalid';
+            else reason = 'the command uses unsupported or ambiguous shell syntax';
             return fail(
               `COMMAND_NOT_ALLOWED${location}: ${reason}. ${policy.detail} No command was run. ` +
               'Change the command policy in Settings if this launch should be permitted.'
@@ -1006,35 +1008,37 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
                       'The top-line exit code is the first non-zero one.'
                   ]
                 : [];
+            let benignNotes: string[];
+            if (!benign) benignNotes = [];
+            else if (isBatch) {
+              benignNotes = nonZeroSections.map(
+                (section) =>
+                  `Command ${section.index}: ${benignExitNote(
+                    boundCommands[section.index - 1] ?? '',
+                    shell.shellType,
+                    section.exitCode,
+                    section.text
+                  )}`
+              );
+            } else benignNotes = [benignExitNote(boundCommand, shell.shellType, output.exitCode, responseText)];
+            let recoveryNotes: string[];
+            if (isBatch) {
+              recoveryNotes = nonZeroSections.flatMap((section) =>
+                execRecoveryHints(rawCommands[section.index - 1] ?? '', section.text, shell.shellType)
+                  .map((hint) => `Command ${section.index}: ${hint}`)
+              );
+            } else if (output.exitCode !== null && output.exitCode !== 0) recoveryNotes = execRecoveryHints(rawCommands[0] ?? '', responseText, shell.shellType);
+            else recoveryNotes = [];
             const notes = [
               ...commandNotes,
               ...mixedBatch,
-              ...(benign
-                ? isBatch
-                  ? nonZeroSections.map(
-                      (section) =>
-                        `Command ${section.index}: ${benignExitNote(
-                          boundCommands[section.index - 1] ?? '',
-                          shell.shellType,
-                          section.exitCode,
-                          section.text
-                        )}`
-                    )
-                  : [benignExitNote(boundCommand, shell.shellType, output.exitCode, responseText)]
-                : []),
+              ...benignNotes,
               // A batch parses each command independently. Its earlier mutations may already
               // have succeeded when a later command has a syntax error: never tell the caller
               // to rerun the whole batch on the strength of that one diagnostic. Completed
               // authenticated sections also keep source text printed by a successful read from
               // becoming an invented shell failure. With incomplete framing, abstain.
-              ...(isBatch
-                ? nonZeroSections.flatMap((section) =>
-                    execRecoveryHints(rawCommands[section.index - 1] ?? '', section.text, shell.shellType)
-                      .map((hint) => `Command ${section.index}: ${hint}`)
-                  )
-                : output.exitCode !== null && output.exitCode !== 0
-                  ? execRecoveryHints(rawCommands[0] ?? '', responseText, shell.shellType)
-                  : [])
+              ...recoveryNotes
             ];
             return {
               content: [{ type: 'text' as const, text: withExecNotes(responseText, notes) }],
@@ -1439,12 +1443,18 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           await adoptAgent(PRIME_ID);
           const invited = created.filter((worker) => worker.state === 'invited');
           const sleeping = created.filter((worker) => worker.state === 'sleeping' && worker.revivable);
+          let primeNote: string;
+          if (!becamePrime) primeNote = '';
+          else {
+            const primeNoun = currentCaller().conversationId ? 'conversation' : 'request';
+            primeNote = `This ${primeNoun} is now the prime agent of run ${runId}. `;
+          }
           return {
             content: [
               {
                 type: 'text' as const,
                 text:
-                  (becamePrime ? `This ${currentCaller().conversationId ? 'conversation' : 'request'} is now the prime agent of run ${runId}. ` : '') +
+                  primeNote +
                   `${created.length} worker(s) matched: ${created.map((info) => (info.id + " (" + info.label + ", " + info.state + (info.model ? (", model " + info.model) : '') + (info.reasoningEffort ? (", reasoning " + info.reasoningEffort) : '') + ")")).join(', ')}. ` +
                   (invited.length > 0 ? 'New worker chats are opening with their briefs already in them. ' : '') +
                   (defaultNotes?.length ? `${defaultNotes.join(' ')} ` : '') +
@@ -1529,15 +1539,19 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           if (currentCall()) currentCall()!.caller.runId = runId;
           if (woken.length > 0 && runId) requestWorkerRevivals(woken, runId);
           for (const message of sent) await recordAgentMessage(message, 'sent', caller.conversationId);
+          let wokenText: string;
+          if (woken.length === 0) wokenText = '';
+          else {
+            const chatNoun = woken.length === 1 ? 'the same chat' : 'their existing chats';
+            wokenText = ` Waking ${woken.join(', ')} in ${chatNoun}.`;
+          }
           return {
             content: [
               {
                 type: 'text' as const,
                 text:
                   `Queued for ${[...new Set(sent.map((message) => message.to))].join(', ')}.` +
-                  (woken.length > 0
-                    ? ` Waking ${woken.join(', ')} in ${woken.length === 1 ? 'the same chat' : 'their existing chats'}.`
-                    : '')
+                  wokenText
               }
             ],
             structuredContent: {
@@ -1565,19 +1579,23 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           // A retry is answered as a retry. Repeating "marked finished" would read as a
           // second finish and invite the model to keep going until it gets a different
           // answer, which is how one lost result became a queue of identical reports.
+          let finishText: string;
+          if (repeat) {
+            finishText = `${info.id} was already ${info.state}; the previous result was already recorded for the prime, so nothing was ` +
+              'queued again. This acknowledgment does not confirm delivery to the prime. Stop working and stop calling tools.';
+          } else if (info.state === 'finished') {
+            finishText = `${info.id} is finished. Your result was recorded for the prime. This acknowledgment does not confirm delivery to the prime. This chat has also reached its context ` +
+              'limit, so there will be no more work in it: stop working and stop calling tools.';
+          } else {
+            finishText = `${info.id} reported and is now asleep but remains reusable. Your result was recorded for the prime. ` +
+              'This acknowledgment does not confirm delivery to the prime. Your worker slot is free. Stop working and stop calling tools; for related follow-up work the ' +
+              'prime should wake this same chat with agents action=message before spawning a replacement.';
+          }
           return {
             content: [
               {
                 type: 'text' as const,
-                text: repeat
-                  ? `${info.id} was already ${info.state}; the previous result was already recorded for the prime, so nothing was ` +
-                    'queued again. This acknowledgment does not confirm delivery to the prime. Stop working and stop calling tools.'
-                  : info.state === 'finished'
-                    ? `${info.id} is finished. Your result was recorded for the prime. This acknowledgment does not confirm delivery to the prime. This chat has also reached its context ` +
-                      'limit, so there will be no more work in it: stop working and stop calling tools.'
-                    : `${info.id} reported and is now asleep but remains reusable. Your result was recorded for the prime. ` +
-                      'This acknowledgment does not confirm delivery to the prime. Your worker slot is free. Stop working and stop calling tools; for related follow-up work the ' +
-                      'prime should wake this same chat with agents action=message before spawning a replacement.'
+                text: finishText
               }
             ],
             structuredContent: { action: 'finish', self: info.id, state: info.state, repeat }
@@ -1607,18 +1625,29 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
         // A sleeping worker is not a spent one, and calling it finished in this table is what
         // sends a prime off to spawn a fourth chat for work its first worker already knows the
         // background to.
-        const shown = (info: { state: string; revivable: boolean }): string =>
-          info.state === 'sleeping'
-            ? info.revivable
-              ? 'sleeping (reusable; wake with action=message)'
-              : 'sleeping'
-            : info.state === 'waking'
-              ? 'waking (your message is being delivered to its chat)'
-              : info.state === 'finished'
-                ? 'finished (not reusable)'
-              : info.state;
+        const shown = (info: { state: string; revivable: boolean }): string => {
+          if (info.state === 'sleeping') {
+            if (info.revivable) return 'sleeping (reusable; wake with action=message)';
+            return 'sleeping';
+          }
+          if (info.state === 'waking') return 'waking (your message is being delivered to its chat)';
+          if (info.state === 'finished') return 'finished (not reusable)';
+          return info.state;
+        };
         const asleep = state.agents.filter((info) => info.state === 'sleeping' && info.revivable);
         const slots = status.freeWorkerSlots;
+        let primeText = '';
+        if (me.id === PRIME_ID) {
+          const slotVerb = slots === 1 ? 'is' : 'are';
+          primeText = `\n\n${slots} of your worker slots ${slotVerb} free.`;
+          if (asleep.length > 0) {
+            const asleepVerb = asleep.length === 1 ? 'is' : 'are';
+            const spawnSuffix = slots === 0 ? ', once a slot frees up.' : '.';
+            primeText += ` REUSE FIRST: ${asleep.map((info) => info.id).join(', ')} ${asleepVerb} asleep and ` +
+              'can be woken with agents action=message, in the chat they already have and with everything ' +
+              `they learned there still in it. For related follow-up work, do this before action=spawn${spawnSuffix}`;
+          }
+        }
         return {
           content: [
             {
@@ -1627,24 +1656,24 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                 `You are ${me.id}.\n` +
                 state.agents
                   .map(
-                    (info) =>
-                      `${info.id}  ${info.role}  ${shown(info)}  waiting ${info.pending}  ${info.label}` +
-                      (info.model ? `  model ${info.model}` : '') +
-                      (info.reasoningEffort ? `  reasoning ${info.reasoningEffort}` : '') +
-                      (info.result
-                        ? `\n    ${info.state === 'failed' ? 'failure' : info.state === 'finished' ? 'result' : 'latest result'}: ${info.result.slice(0, 300)}`
-                        : '')
+                    (info) => {
+                      let resultText: string;
+                      if (!info.result) resultText = '';
+                      else {
+                        let resultKind: string;
+                        if (info.state === 'failed') resultKind = 'failure';
+                        else if (info.state === 'finished') resultKind = 'result';
+                        else resultKind = 'latest result';
+                        resultText = `\n    ${resultKind}: ${info.result.slice(0, 300)}`;
+                      }
+                      return `${info.id}  ${info.role}  ${shown(info)}  waiting ${info.pending}  ${info.label}` +
+                        (info.model ? `  model ${info.model}` : '') +
+                        (info.reasoningEffort ? `  reasoning ${info.reasoningEffort}` : '') +
+                        resultText;
+                    }
                   )
                   .join('\n') +
-                (me.id === PRIME_ID
-                  ? `\n\n${slots} of your worker slots ${slots === 1 ? 'is' : 'are'} free.` +
-                    (asleep.length > 0
-                      ? ` REUSE FIRST: ${asleep.map((info) => info.id).join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep and ` +
-                        'can be woken with agents action=message, in the chat they already have and with everything ' +
-                        'they learned there still in it. For related follow-up work, do this before action=spawn' +
-                        (slots === 0 ? ', once a slot frees up.' : '.')
-                      : '')
-                  : '') +
+                primeText +
                 // Said in words as well as in the table: a failed worker will not report, and
                 // waiting for it is the mistake this line prevents.
                 (failed.length > 0
@@ -1702,7 +1731,10 @@ async function callerNow(startedAt: number, options: { exact?: boolean; runId?: 
   // `exact` marks the one action that binds a run: spawn. It is the call whose refusal the
   // model cannot absorb, so it gets the longer ceiling; every other `agents` action can be
   // declined and asked again on the next tool call.
-  const window = base.requestId ? (options.exact ? SPAWN_EVIDENCE_MS : IDENTITY_EVIDENCE_MS) : PRIME_EVIDENCE_MS;
+  let window: number;
+  if (!base.requestId) window = PRIME_EVIDENCE_MS;
+  else if (options.exact) window = SPAWN_EVIDENCE_MS;
+  else window = IDENTITY_EVIDENCE_MS;
   const allowRequest = Boolean(base.requestId && (currentCall()?.allowUnattributed ?? getConfig().multiAgent.allowUnattributedCalls));
   const requestOwnsTarget = !options.member || agentFamiliesForCaller(base).length > 0;
   const resolved =
@@ -1980,7 +2012,13 @@ async function runParsedPatch(
     rollbackNote = rollback.note;
   }
   const stdout = safePatchOutput(execution.stdout, resolution);
-  const stderr = safePatchOutput(`${execution.stderr}${rollbackNote ? ((execution.stderr.endsWith('\n') || execution.stderr === '' ? '' : '\n') + rollbackNote + "\n") : ''}`, resolution);
+  let rollbackSuffix: string;
+  if (!rollbackNote) rollbackSuffix = '';
+  else {
+    const separator = execution.stderr.endsWith('\n') || execution.stderr === '' ? '' : '\n';
+    rollbackSuffix = `${separator}${rollbackNote}\n`;
+  }
+  const stderr = safePatchOutput(`${execution.stderr}${rollbackSuffix}`, resolution);
   const aggregatedOutput = `${stdout}${stderr}`;
   const content = formatExecOutputForModel(
     {
@@ -2358,9 +2396,9 @@ async function readOne(
     if (!options.canBrowse) {
       return { text: `--- / ---\nTOOL_DISABLED: listing folders needs the Browse folders permission.`, bytes: 0 };
     }
-    const text = options.roots.length === 0
-      ? '--- / — no folders are shared yet ---'
-      : `--- / — ${options.roots.length} entr${options.roots.length === 1 ? 'y' : 'ies'}, one level ---\n${options.roots.map(root => ("d " + root.name)).join('\n')}`;
+    let text: string;
+    if (options.roots.length === 0) text = '--- / — no folders are shared yet ---';
+    else text = `--- / — ${options.roots.length} entr${options.roots.length === 1 ? 'y' : 'ies'}, one level ---\n${options.roots.map(root => ("d " + root.name)).join('\n')}`;
     return { text, bytes: Buffer.byteLength(text, 'utf8') };
   }
   const resolved = await resolveIn(options.roots, requested, { access: 'read' });
@@ -2374,7 +2412,10 @@ async function readOne(
     const prefixLength = resolved.virtual.length + 1;
     const body = entries
       .map((entry) => {
-        const kind = entry.type === 'directory' ? 'd' : entry.type === 'file' ? 'f' : '?';
+        let kind: string;
+        if (entry.type === 'directory') kind = 'd';
+        else if (entry.type === 'file') kind = 'f';
+        else kind = '?';
         const size = entry.bytes === null ? '' : `  ${formatBytes(entry.bytes)}`;
         return `${kind} ${entry.virtualPath.slice(prefixLength)}${size}`;
       })
@@ -2382,10 +2423,9 @@ async function readOne(
     const note = truncated
       ? `\n(stopped at ${MAX_DIR_ENTRIES} entries — read a subfolder, or use a glob such as ${resolved.virtual}/**/*.ts)`
       : '';
-    const text =
-      entries.length === 0
-        ? `--- ${resolved.virtual} — empty folder ---`
-        : `--- ${resolved.virtual} — ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, one level ---\n${body}${note}`;
+    let text: string;
+    if (entries.length === 0) text = `--- ${resolved.virtual} — empty folder ---`;
+    else text = `--- ${resolved.virtual} — ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, one level ---\n${body}${note}`;
     return { text, bytes: Buffer.byteLength(text, 'utf8') };
   }
 
@@ -2474,19 +2514,16 @@ async function readOne(
     options.maxBytes
   );
   const visibleLastLine = numbered.lastLine;
-  const range =
-    visibleLastLine < result.firstLine
-      ? result.totalLines === null
-        ? 'no lines in that range'
-        : `no lines in that range; the file has ${result.totalLines}`
-      : result.totalLines === null
-        ? `lines ${result.firstLine}-${visibleLastLine}`
-        : `lines ${result.firstLine}-${visibleLastLine} of ${result.totalLines}`;
-  const note = result.truncated || numbered.truncated
-    ? `\n(output cap reached; continue from line ${visibleLastLine + 1} or raise max_bytes up to ${MAX_READ_BYTES})`
-    : result.hasMore
-      ? `\n(more lines follow — continue from line ${visibleLastLine + 1})`
-      : '';
+  let range: string;
+  if (visibleLastLine < result.firstLine) {
+    if (result.totalLines === null) range = 'no lines in that range';
+    else range = `no lines in that range; the file has ${result.totalLines}`;
+  } else if (result.totalLines === null) range = `lines ${result.firstLine}-${visibleLastLine}`;
+  else range = `lines ${result.firstLine}-${visibleLastLine} of ${result.totalLines}`;
+  let note: string;
+  if (result.truncated || numbered.truncated) note = `\n(output cap reached; continue from line ${visibleLastLine + 1} or raise max_bytes up to ${MAX_READ_BYTES})`;
+  else if (result.hasMore) note = `\n(more lines follow — continue from line ${visibleLastLine + 1})`;
+  else note = '';
   const header = `--- ${resolved.virtual} — ${range}, ${formatBytes(info.bytes)}, modified ${info.modified} ---`;
   const text = `${header}${numbered.text === '' && visibleLastLine < result.firstLine ? '' : ("\n" + numbered.text)}${note}`;
   return {

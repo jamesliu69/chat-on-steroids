@@ -529,19 +529,19 @@ export function registerMacOSDesktopTools(reg: SurfaceRegistrar): void {
           if ((verify || wantsCapture) && !caps.screen) {
             return fail('TOOL_DISABLED: verification and result capture need the See the screen permission.');
           }
-          const parsedVerify: VerificationSpec | undefined = verify
-            ? verify.until === 'foreground'
-              ? { until: 'foreground', window: verify.window!, timeoutMs: verify.timeout_ms }
-              : verify.until === 'window_exists' || verify.until === 'window_closed'
-                ? { until: verify.until, match: verify.match!, timeoutMs: verify.timeout_ms }
-                : {
-                    until: verify.until,
-                    window: verify.window,
-                    match: verify.match!,
-                    role: verify.role,
-                    timeoutMs: verify.timeout_ms
-                  }
-            : undefined;
+          let parsedVerify: VerificationSpec | undefined;
+          if (!verify) parsedVerify = undefined;
+          else if (verify.until === 'foreground') parsedVerify = { until: 'foreground', window: verify.window!, timeoutMs: verify.timeout_ms };
+          else if (verify.until === 'window_exists' || verify.until === 'window_closed') parsedVerify = { until: verify.until, match: verify.match!, timeoutMs: verify.timeout_ms };
+          else {
+            parsedVerify = {
+              until: verify.until,
+              window: verify.window,
+              match: verify.match!,
+              role: verify.role,
+              timeoutMs: verify.timeout_ms
+            };
+          }
           // One lock, one operation: the picture that verifies these actions must be taken
           // before anyone else can touch the desktop.
           const result = await actAndCapture(parsed, {
@@ -559,11 +559,10 @@ export function registerMacOSDesktopTools(reg: SurfaceRegistrar): void {
                 : undefined
           });
           const cursor = result.cursor;
-          const pointer = cursor
-            ? cursor.image
-              ? `Pointer image: ${cursor.image.x},${cursor.image.y} (frame ${cursor.frameId}, ${cursor.imageSize?.width}x${cursor.imageSize?.height}); desktop: ${cursor.screen.x},${cursor.screen.y}.`
-              : `Pointer desktop: ${cursor.screen.x},${cursor.screen.y}. No screenshot frame is active.`
-            : 'Pointer position was not queried because this batch used only local wait/clipboard actions.';
+          let pointer: string;
+          if (!cursor) pointer = 'Pointer position was not queried because this batch used only local wait/clipboard actions.';
+          else if (cursor.image) pointer = `Pointer image: ${cursor.image.x},${cursor.image.y} (frame ${cursor.frameId}, ${cursor.imageSize?.width}x${cursor.imageSize?.height}); desktop: ${cursor.screen.x},${cursor.screen.y}.`;
+          else pointer = `Pointer desktop: ${cursor.screen.x},${cursor.screen.y}. No screenshot frame is active.`;
           // Clipboard reads are the one action that returns something, so they are quoted
           // back in order rather than folded into the "Done:" line.
           const clipboardLines: string[] = [];

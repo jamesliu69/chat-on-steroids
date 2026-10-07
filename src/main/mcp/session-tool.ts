@@ -241,7 +241,10 @@ async function searchSessions(queryInput?: string, cursorInput?: string): Promis
   const heading = query
     ? `Recorded-session matches for ${JSON.stringify(query)} — newest sessions first`
     : 'Recorded sessions — newest first';
-  const body = rows.length > 0 ? rows.join('\n\n') : query ? 'No matches in this scanned slice.' : 'No sessions in this slice.';
+  let body: string;
+  if (rows.length > 0) body = rows.join('\n\n');
+  else if (query) body = 'No matches in this scanned slice.';
+  else body = 'No sessions in this slice.';
   const footer = [
     `sessions_returned: ${rows.length}`,
     query ? `sessions_scanned: ${scanned}` : null,
@@ -524,10 +527,15 @@ async function readRangeFrom(
       );
     }
   }
-  const heading = cursor.mode === 'update' ? `Session update after checkpoint #${cursor.after ?? 0}` : latestView ? 'Latest recorded context' : 'Recorded context';
+  let heading: string;
+  if (cursor.mode === 'update') heading = `Session update after checkpoint #${cursor.after ?? 0}`;
+  else if (latestView) heading = 'Latest recorded context';
+  else heading = 'Recorded context';
   const output = `${sessionHeader(summary)}\n\n${heading}\n\n${body || '(no selected entries)'}\n\n${footer.join('\n')}`;
   noteCount(Math.max(0, itemIndex - startIndex + (body ? 1 : 0)));
-  noteDetail(continuation ? 'continues' : cursor.mode === 'update' ? 'caught up' : 'page');
+  if (continuation) noteDetail('continues');
+  else if (cursor.mode === 'update') noteDetail('caught up');
+  else noteDetail('page');
   return ok(boundResult(output, READ_RESULT_CHARS));
 }
 

@@ -87,8 +87,12 @@ export function registerBrowserTools(reg: SurfaceRegistrar): void {
       return reg.guarded(capability, tool, async () => {
         const caller = currentCall()?.caller;
         const exact = caller?.sessionId ? caller : requestCorrelation(caller?.requestId);
-        const owner = exact?.sessionId ? `session:${exact.sessionId}` : getConfig().multiAgent.allowUnattributedCalls
-          ? caller?.requestId ? `request:${caller.requestId}` : 'unattributed' : null;
+        let owner: string | null;
+        if (exact?.sessionId) owner = `session:${exact.sessionId}`;
+        else if (getConfig().multiAgent.allowUnattributedCalls) {
+          if (caller?.requestId) owner = `request:${caller.requestId}`;
+          else owner = 'unattributed';
+        } else owner = null;
         if (!owner) return failIdentity('BROWSER_IDENTITY_REQUIRED: exact local session or Allow unattributed calls is required. No browser operation ran.');
         const allowed = async () => {
           const config = getConfig();
