@@ -572,7 +572,11 @@ async function storedHistory(sessionId: string): Promise<StoredHistory> {
         }
       } else if (event.kind === 'page_tool' && event.messageId) {
         const held = pageTools.get(pageToolKey(event.messageId));
-        if (!held) {
+        if (held) {
+          held.updatedAt = Math.max(held.updatedAt, event.time);
+          held.text = event.label;
+          if (!held.turnId && event.turnId) held.turnId = event.turnId;
+        } else {
           pageTools.set(pageToolKey(event.messageId), {
             seq: event.origin ?? event.seq,
             time: event.time,
@@ -581,10 +585,6 @@ async function storedHistory(sessionId: string): Promise<StoredHistory> {
             contentSeq: event.contentSeq,
             ...(event.turnId ? { turnId: event.turnId } : {})
           });
-        } else {
-          held.updatedAt = Math.max(held.updatedAt, event.time);
-          held.text = event.label;
-          if (!held.turnId && event.turnId) held.turnId = event.turnId;
         }
       }
     }
@@ -664,7 +664,7 @@ export function liveConversations(): Array<{
     conversationId: entry.conversationId,
     sessionId: entry.sessionId,
     generating: entry.turnStartedAt !== null,
-    activeTurnId: entry.turnStartedAt !== null ? entry.turnId : null,
+    activeTurnId: entry.turnStartedAt === null ? null : entry.turnId,
     activeTurnStartedAt: entry.turnStartedAt,
     endedTurns: entry.knownTurnEnds.size,
     lastTurnOutcome: entry.lastTurnOutcome
@@ -1936,7 +1936,7 @@ async function recordPageTool(
     kind: 'page_tool',
     messageId: id,
     label,
-    ...(held?.contentSeq !== undefined ? { contentSeq: held.contentSeq } : item.activeNow === false && !held ? { contentSeq: 0 } : {}),
+    ...(held?.contentSeq === undefined ? item.activeNow === false && !held ? { contentSeq: 0 } : {} : { contentSeq: held.contentSeq }),
     ...(held ? { origin: held.seq } : {})
   });
   live.pageTools.set(pageToolKey(id), {
@@ -1970,7 +1970,7 @@ export async function recordRequestEvidence(
   observations: readonly ChatObservation[]
 ): Promise<string | null> {
   if (!recordingEnabled()) return null;
-  const lineage = !conversations.has(conversationId) ? await supersededLineage(conversationId) : null;
+  const lineage = conversations.has(conversationId) ? null : await supersededLineage(conversationId);
   const sessionId = lineage ?? await sessionForConversation(conversationId, observationTitle(observations));
   if (!sessionId) return null;
   // Proof identifies even a retired caller; kernel/recorder attachment checks then refuse it
@@ -2053,7 +2053,7 @@ async function recordSupersededMessages(
     if (!item.messageId) continue;
     const base = {
       time: item.time,
-      ...(item.authoredAt !== undefined ? { authoredAt: item.authoredAt } : {}),
+      ...(item.authoredAt === undefined ? {} : { authoredAt: item.authoredAt }),
       source: 'extension' as const,
       ...(item.turnId ? { turnId: item.turnId } : {})
     };
@@ -2066,7 +2066,7 @@ async function recordSupersededMessages(
           kind: 'user_message',
           message: await storeText(sessionId, item.text ?? '', MAX_USER_MESSAGE_CHARS),
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
-          ...(item.reaction !== undefined ? { reaction: item.reaction } : {}),
+          ...(item.reaction === undefined ? {} : { reaction: item.reaction }),
           ...(item.model ? { model: item.model } : {}),
           messageId: item.messageId
         },
@@ -2160,7 +2160,7 @@ async function recordChatObservationsNow(
     const base = {
       time: item.time,
       source: 'extension' as const,
-      ...(item.authoredAt !== undefined ? { authoredAt: item.authoredAt } : {}),
+      ...(item.authoredAt === undefined ? {} : { authoredAt: item.authoredAt }),
       ...(item.turnId ? { turnId: item.turnId } : {}),
       ...(agent ? { agent } : {})
     };
@@ -2180,7 +2180,7 @@ async function recordChatObservationsNow(
           kind: 'user_message',
           message: await storeText(sessionId, item.text ?? '', MAX_USER_MESSAGE_CHARS),
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
-          ...(item.reaction !== undefined ? { reaction: item.reaction } : {}),
+          ...(item.reaction === undefined ? {} : { reaction: item.reaction }),
           ...(item.model ? { model: item.model } : {}),
           messageId: item.messageId
         }, { preferTime: item.authoredTime === true, work: item.authoredNow === true });

@@ -728,7 +728,6 @@ export function skillCatalogInstructions(): string {
     'Skills are text at /skills/<id>/SKILL.md. Use them when requested. Leading /<id> or /prompt <id> inserts the full skill before project AGENTS.md.',
     'Install or maintain requested skills with existing filesystem and command capabilities under current guards. Skills add no tools, hooks or permissions and never change the project working directory.'
   ];
-  if (!catalog.length) lines.push('No skills are installed.');
-  else lines.push(...catalog.map(summary => `- ${JSON.stringify(summary)}`));
+  if (catalog.length) { lines.push(...catalog.map(summary => `- ${JSON.stringify(summary)}`)); } else { lines.push('No skills are installed.'); }
   return lines.join('\n');
 }

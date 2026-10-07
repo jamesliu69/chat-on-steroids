@@ -81,7 +81,7 @@ export async function refreshUsage(): Promise<void> {
       const name = el('div'); name.append(el('strong', '', displayName));
       if (entry.scope !== 'model') name.append(el('small', 'muted', () => entry.scope === 'shared' ? t("Shared across all models") : t("Feature quota")));
       const detail = el('div');
-      detail.append(el('b', '', () => stale ? t("Refresh needed") : entry.remaining !== null ? t("{0} remaining", [entry.remaining.toLocaleString(currentLanguage())]) : entry.remainingPercent !== null ? t("{0}% remaining", [Math.round(entry.remainingPercent)]) : t("Not reported")));
+      detail.append(el('b', '', () => stale ? t("Refresh needed") : entry.remaining === null ? entry.remainingPercent === null ? t("Not reported") : t("{0}% remaining", [Math.round(entry.remainingPercent)]) : t("{0} remaining", [entry.remaining.toLocaleString(currentLanguage())])));
       const window = () => entry.scope === 'shared' ? '' : entry.windowSeconds === 604800 ? t("Weekly · ") : entry.windowSeconds ? t("{0}h window · ", [Math.round(entry.windowSeconds / 3600)]) : '';
       detail.append(el('small', 'muted', () => window() + (entry.resetAt ? t("Resets {0}", [new Date(entry.resetAt).toLocaleString(currentLanguage())]) : t("Reset not reported"))));
       if (entry.remainingPercent !== null && !stale) { const progress = document.createElement('progress'); progress.max = 100; progress.value = entry.remainingPercent; ui(progress, 'aria-label', () => t("{0}: {1}% remaining", [displayName(), entry.remainingPercent])); detail.append(progress); }
@@ -100,7 +100,7 @@ function paintRates(): void {
   const host = $('usageRates'); host.replaceChildren();
   for (const model of [...new Set(snapshot.models.map(row => row.model))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     const label = el('label', 'setting'); const text = el('span', 'setting-text');
-    text.append(el('b', '', model), el('em', '', () => usageRate(model, DEFAULT_USAGE_FORMULA) !== undefined ? t("USD / 1M cached input · editable official baseline, checked 27 September 2026") : t("USD / 1M cached input · enter a verified comparison rate")));
+    text.append(el('b', '', model), el('em', '', () => usageRate(model, DEFAULT_USAGE_FORMULA) === undefined ? t("USD / 1M cached input · enter a verified comparison rate") : t("USD / 1M cached input · editable official baseline, checked 27 September 2026")));
     const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = '0.01'; ui(input, 'placeholder', () => t("Unknown rate")); input.value = usageRate(model, formula)?.toString() ?? '';
     ui(input, 'aria-label', () => t("{0} cached-input USD per million tokens", [model]));
     input.addEventListener('input', () => {

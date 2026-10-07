@@ -181,8 +181,7 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
   const injectionTurnId = canInject ? session.activeTurnId ?? (activity.turnId === end?.turnId ? activity.turnId ?? null : null) : null;
   const astra = session.origin?.kind !== 'worker' && session.origin?.kind !== 'helper' &&
     session.selectedModel?.conversationId === session.conversationId && isAstraModel(session.selectedModel.model, session.selectedModel.reasoningEffort);
-  const completed = !session.activeTurnId
-    ? await readCompletedFinal(sessionId, session.conversationId) : null;
+  const completed = session.activeTurnId ? null : await readCompletedFinal(sessionId, session.conversationId);
   const current = await getSession(sessionId);
   if (current?.conversationId !== session.conversationId || current?.activeTurnId !== session.activeTurnId)
     return { queueAtFinish: false, canInject: false, injectionTurnId: null, directTurn: null, browserAllowed: false, settled: false };
@@ -749,7 +748,7 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     const directTurn = !toolDelivery && input.mode === 'auto' && !finishOwner && input.dueAt <= Date.now() ? policy?.directTurn : null;
     const entry: InputEntry = { ...input, ...(queuedTurn ? { queuedTurn } : {}), ...(toolImages ? { toolImages } : {}), ...(directTurn ? { directTurn } : {}),
       ...(injectionOwner ? { toolTurnId: injectionOwner.turnId } : {}), ...(transportIntent ? { transportIntent } : {}),
-      ...(requestedMode !== input.mode ? { requestedMode } : {}), ...(finishOwner ? { finishOwner } : {}), state: 'queued', owner: null, createdAt: Date.now(), conversationId: null };
+      ...(requestedMode === input.mode ? {} : { requestedMode }), ...(finishOwner ? { finishOwner } : {}), state: 'queued', owner: null, createdAt: Date.now(), conversationId: null };
     if (input.projectId) {
       await projectWorkspace(input.projectId);
       if (input.sessionId) {
@@ -783,9 +782,9 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     }
     // User input supersedes only automatic work that has never been handed out.
     // Offered tool receipts retain their identity until a later request proves receipt.
-    const prioritized = !finishOwner ? current.map(row => row.sessionId === entry.sessionId &&
+    const prioritized = finishOwner ? current : current.map(row => row.sessionId === entry.sessionId &&
       ((row.finishOwner && row.state === 'queued') || (row.recovery && !terminal(row) && row.sendAuthorizedAt === undefined))
-      ? { ...row, state: 'cancelled' as const, error: 'Replaced by your new instruction before delivery.' } : row) : current;
+      ? { ...row, state: 'cancelled' as const, error: 'Replaced by your new instruction before delivery.' } : row);
     let next = append(prioritized, entry, input.mode === 'auto' && !finishOwner && policy?.canInject === true);
     // A finish plan belongs to an existing session now. Publish every editable
     // checkpoint atomically; no composer text or first-send receipt owns its life.
@@ -891,7 +890,7 @@ export function recordQueuedPickupAttemptNow(inputId: string, sourceTurnId: stri
     }
     const attempts = prior.attempts + 1;
     const pickupRecovery = attempts >= BROWSER_PICKUP_MAX_ATTEMPTS ? { attempts, stoppedAt: at }
-      : { attempts, ...(nextAt !== undefined ? { nextAt } : {}) };
+      : { attempts, ...(nextAt === undefined ? {} : { nextAt }) };
     const next = current.map(entry => matches.includes(entry) ? { ...entry, pickupRecovery } : entry);
     await commit(next);
     return { attempts, ...('nextAt' in pickupRecovery && pickupRecovery.nextAt ? { nextAt: pickupRecovery.nextAt } : {}),
@@ -1243,7 +1242,7 @@ async function recoveryInvalidReason(row: InputEntry): Promise<string | null> {
   if (!row.recovery || !row.sessionId || !boundary) return 'the recovery source is missing';
   if (Date.now() - row.createdAt >= 12 * 60 * 60_000) return 'the twelve-hour recovery window expired';
   const unavailable = () => isChatBlocked(boundary.conversationId) ? 'this chat is blocked' :
-    deliveryHooks?.recoveryAllowed?.(row.sessionId!, boundary.conversationId) !== true ? 'automatic continuation is off or paused' : null;
+    deliveryHooks?.recoveryAllowed?.(row.sessionId!, boundary.conversationId) === true ? null : 'automatic continuation is off or paused';
   const reason = unavailable();
   if (reason) return reason;
   const session = await getSession(row.sessionId);

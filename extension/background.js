@@ -2159,9 +2159,7 @@ async function offerStopTurns(requests, background = false) {
       if (!election) {
         // Old app versions may offer an existing document without an absolute lifetime.
         // They cannot authorize an opening that would outlive the owning Stop command.
-        if (!Number.isFinite(request.expiresAt)) {
-          if (!tab) return;
-        } else {
+        if (Number.isFinite(request.expiresAt)) {
           if (Object.keys(stopOpenings).length >= 1000) return;
           election = { tab: tab?.id ?? null, conversationId: request.conversationId, turnId: request.turnId, expiresAt: request.expiresAt };
           stopOpenings[request.id] = election;
@@ -2174,6 +2172,8 @@ async function offerStopTurns(requests, background = false) {
             await persistLive();
             return; // the new document must register and adopt its exact native turn first
           }
+        } else {
+          if (!tab) return;
         }
       }
       if (!tab) return;
@@ -3027,11 +3027,8 @@ async function performBrowserRepairs(repairs, policy) {
           // What exactly stopped the action, so the app's log can say it (#1086): the second
           // check's own reason, a first check the page never answered, or the tab itself.
           const changed = tab.pendingUrl ? 'navigating'
-            : conversationForTab(tab) !== conversationId ? 'other-chat'
-            : tabDocuments[String(target.id)] !== documentId ? 'new-document'
-            : !inspectTurn ? null
-            : latest?.safe === false ? (latest.why === 'changed' ? repairChangeDetail(latest) : latest.why || 'unknown')
-            : !check?.safe && latest?.safe === true ? 'first-unanswered' : null;
+            : conversationForTab(tab) === conversationId ? tabDocuments[String(target.id)] === documentId ? inspectTurn ? latest?.safe === false ? (latest.why === 'changed' ? repairChangeDetail(latest) : latest.why || 'unknown')
+            : !check?.safe && latest?.safe === true ? 'first-unanswered' : null : null : 'new-document' : 'other-chat';
           if (changed) {
             // No browser action occurred. Release only this exact claim; a
             // concurrently retired episode cannot be reconstructed by this ACK.
@@ -3042,9 +3039,8 @@ async function performBrowserRepairs(repairs, policy) {
       }
       if (target && suspended && requiresClaim) {
         const tab = await chrome.tabs.get(target.id);
-        const changed = tab.pendingUrl ? 'navigating' : conversationForTab(tab) !== conversationId ? 'other-chat'
-          : tab.discarded !== true && tab.frozen !== true ? 'woke-up'
-          : tabDocuments[String(target.id)] !== documentId ? 'new-document' : null;
+        const changed = tab.pendingUrl ? 'navigating' : conversationForTab(tab) === conversationId ? tab.discarded !== true && tab.frozen !== true ? 'woke-up'
+          : tabDocuments[String(target.id)] === documentId ? null : 'new-document' : 'other-chat';
         if (changed) {
           await call(`/status?repairFailed=${encodeURIComponent(token)}&repairAction=${repairAction}&why=changed&detail=${encodeURIComponent(changed)}`);
           continue;
@@ -3886,8 +3882,7 @@ const HANDLERS = {
     // a newer helper from disk. Repairing only MAIN repeats that protocol mismatch
     // forever, so Continue never obtains its required fresh native-final check.
     const repaired = await restoreChatgptTab(source.tab, () => ownsDocument(source), source.documentId);
-    return !ownsDocument(source) ? { ok: false, error: 'stale_document' } :
-      repaired ? { ok: true } : { ok: false, error: 'fiber_repair_failed' };
+    return ownsDocument(source) ? repaired ? { ok: true } : { ok: false, error: 'fiber_repair_failed' } : { ok: false, error: 'stale_document' };
   },
   async closed(message, _sender, source) {
     // releaseTab drains the queue and posts /closed itself, and only when this was the
@@ -4625,7 +4620,7 @@ async function placeSuccessorChat(raw, tabId) {
     }
     if (typeof tabId !== 'number') {
       const base = successorChatBase(raw.project, raw.homeConversationId);
-      const marker = `clf=${encodeURIComponent(id)}${base !== 'https://chatgpt.com/' ? '&clf_project=1' : ''}`;
+      const marker = `clf=${encodeURIComponent(id)}${base === 'https://chatgpt.com/' ? '' : '&clf_project=1'}`;
       const model = commandModelSlug(raw?.model);
       const reasoningEffort = commandReasoningEffort(raw?.reasoningEffort);
       const query = [marker];
@@ -4660,7 +4655,7 @@ async function placeSuccessorChat(raw, tabId) {
   // Both a query and a fragment, matching the app's commandUrl(): ChatGPT rewrites its own URL
   // during boot and which of the two survives has changed between builds.
   const base = successorChatBase(raw.project, raw.homeConversationId);
-  const marker = `clf=${encodeURIComponent(id)}${base !== 'https://chatgpt.com/' ? '&clf_project=1' : ''}`;
+  const marker = `clf=${encodeURIComponent(id)}${base === 'https://chatgpt.com/' ? '' : '&clf_project=1'}`;
   const model = commandModelSlug(raw?.model);
   const reasoningEffort = commandReasoningEffort(raw?.reasoningEffort);
   const query = [marker];

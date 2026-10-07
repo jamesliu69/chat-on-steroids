@@ -855,7 +855,7 @@ export async function beginContinuationSourceSendNow(
     }
     await transitionNow(entry, (current) => ({
       ...current,
-      ...(project !== undefined ? { project: normalizeProjectId(project) } : {}),
+      ...(project === undefined ? {} : { project: normalizeProjectId(project) }),
       sourceSend: { state: 'attempted-unresolved', messageId: null }
     }));
     return { allowed: true, checkpoint: { ...entry.sourceSend } };

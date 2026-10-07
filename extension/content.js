@@ -903,7 +903,7 @@
     // A New Chat composer may live in A's existing document. The first concrete
     // route retires A and advances its observation epoch; that is the submitted
     // opening acquiring B, not a second navigation away from the send.
-    const priorConversation = !target ? conversationId : null;
+    const priorConversation = target ? null : conversationId;
     let heldEpoch = startedEpoch;
     let revoked = false;
     return () => {
@@ -2392,7 +2392,7 @@
         emit({
           kind: 'user_message',
           text: shown,
-          ...(reaction !== undefined ? { reaction } : {}),
+          ...(reaction === undefined ? {} : { reaction }),
           ...(source.attachments?.length ? { attachments: source.attachments } : {}),
           messageId: message.id,
           turnId: message.turnId || undefined,
@@ -4268,7 +4268,7 @@
     // emitted that exact final with no owner. Capture the node + durable id before the await.
     // If the lifecycle moves meanwhile, localGenerationOf() below accepts the claim only while
     // finishGeneration's exact node/signature tombstone still proves the old ownership.
-    const requestedLiveOwner = !settled ? currentGenerationOwner() : null;
+    const requestedLiveOwner = settled ? null : currentGenerationOwner();
     const requestedOwner = settled || requestedLiveOwner;
     let answer = await askFiber();
     if (answer === null) {
@@ -4679,7 +4679,11 @@
             ...(historical ? { time: image.createTime, authoredTime: true } : {})
           };
           const signature = `${owner}\u0000${image.providerRole}\u0000${image.providerChannel || ''}\u0000${image.providerStatus || ''}\u0000${image.width || ''}\u0000${image.height || ''}`;
-          if (prior?.signature !== signature) {
+          if (prior?.signature === signature) {
+            // LRU touch. The bounded cache can then discard rows outside the currently
+            // scanned history without repeatedly reminting visible metadata.
+            nativeImagesReported.delete(key); nativeImagesReported.set(key, prior);
+          } else {
             nativeImagesReported.delete(key);
             nativeImagesReported.set(key, { signature, owner, conflicted: ownerConflict });
             emit({ ...observation, kind: 'native_image', messageId: image.messageId,
@@ -4688,10 +4692,6 @@
               ...(image.providerStatus ? { providerStatus: image.providerStatus } : {}),
               ...(image.width ? { width: image.width } : {}), ...(image.height ? { height: image.height } : {}),
               previewStatus: 'pending' });
-          } else {
-            // LRU touch. The bounded cache can then discard rows outside the currently
-            // scanned history without repeatedly reminting visible metadata.
-            nativeImagesReported.delete(key); nativeImagesReported.set(key, prior);
           }
           // Each tuple captures independently. The helper itself fences route/epoch and exact
           // current Fiber ownership after every await, so one slow image cannot overwrite another.
@@ -6428,9 +6428,7 @@
       // website-id reconciliation is deliberately reserved for historical/reloaded turns.
       const identityRender = activeNewest
         ? websiteRenderForTurn(turn, groups, localGroup, renderIndex)
-        : localId !== null
-          ? websiteRenderForTurn(turn, groups, localGroup, renderIndex)
-          : websiteRenderForTurn(turn, groups, null, renderIndex);
+        : localId === null ? websiteRenderForTurn(turn, groups, null, renderIndex) : websiteRenderForTurn(turn, groups, localGroup, renderIndex);
       const identity = websiteIdentity(turn, renderIndex);
       const identityConflict = identity.conflict || identity.matches.some(match => match.aliased &&
         match.entries.some(entry => localId && entry.turnId && entry.turnId !== localId));
@@ -6685,7 +6683,7 @@
         conversationId,
         since,
         // Initial/loading state is unknown; only a completed scan or repair can report health.
-        fiber: fiberPresent === null ? undefined : !fiberPresent ? 'absent' : fiberTurns.size === 0 ? 'empty' : 'ok',
+        fiber: fiberPresent === null ? undefined : fiberPresent ? fiberTurns.size === 0 ? 'empty' : 'ok' : 'absent',
         // This document's own open turn, which it closes itself on end_turn or after ten
         // minutes without progress. Keeps a long-thinking worker from being slept as silent.
         generating,
@@ -7126,7 +7124,7 @@
     const driving = loopOn ? 'loop' : 'goal';
     // The slider's position: the one word for everything above. Off is a real position and not
     // merely "neither switch", which is why `armed` and not `enabled` decides it.
-    const position = blocked ? 'off' : !armed ? 'off' : loopOn ? 'loop' : 'goal';
+    const position = blocked ? 'off' : armed ? loopOn ? 'loop' : 'goal' : 'off';
     return {
       // Two short lines rather than a sentence: this is read while reaching for something
       // else, and the only questions it answers are "is it on" and "at what point".
@@ -7139,11 +7137,9 @@
           : blocked === 'blocked'
             ? t('content_goal_off_blocked', 'Goal off — this chat is blocked in the app')
             : fresh
-            ? !hasKey
-              ? t('content_goal_no_api_key_unavailable', 'No API key — Goal and Loop unavailable')
-              : objective
+            ? hasKey ? objective
                 ? t('content_goal_opening_on_goal', 'Opening this chat on its goal')
-                : t('content_goal_add_to_start', 'Add a goal or a loop to start this chat')
+                : t('content_goal_add_to_start', 'Add a goal or a loop to start this chat') : t('content_goal_no_api_key_unavailable', 'No API key — Goal and Loop unavailable')
             : position === 'off'
               ? t('content_goal_loop_off', 'Goal and Loop off')
               : position === 'loop'
@@ -7225,13 +7221,11 @@
                 ? t('content_mode_note_prime_writes', 'the prime writes here')
                 : blocked === 'blocked'
                   ? t('content_mode_note_blocked', 'blocked in the app')
-                  : !hasKey
-                  ? t('content_mode_note_key_required', 'OpenRouter key required')
-                  : position === 'loop'
+                  : hasKey ? position === 'loop'
                     ? t('content_mode_note_loop', 'replies for ever')
                     : position === 'goal'
                       ? t('content_mode_note_goal', 'replies until goal reached')
-                      : t('content_mode_note_off', 'no replies written here'),
+                      : t('content_mode_note_off', 'no replies written here') : t('content_mode_note_key_required', 'OpenRouter key required'),
             warn: !hasKey || fenced,
             disabled: fenced
           },
@@ -7323,9 +7317,7 @@
             ? t('content_task_worker_unavailable', 'A worker chat is already driven by its prime.')
             : blocked === 'blocked'
               ? t('content_task_blocked_unavailable', 'This chat is blocked in the app. Release it there to drive it again.')
-              : !hasKey
-              ? t('content_task_api_key_unavailable', 'Add an OpenRouter API key in the app first.')
-              : ''
+              : hasKey ? '' : t('content_task_api_key_unavailable', 'Add an OpenRouter API key in the app first.')
       },
       // The button's old job, kept as a row rather than dropped: pressing the gear must not
       // have cost anybody the one thing it used to do.
@@ -9606,9 +9598,9 @@
         // the same reason, yet the first attempt waited out the whole budget on a row it
         // could no longer match. Seen on two polls, so a Stop button that flickers between
         // two steps does not count; the settle below still drains local calls.
-        if (!CLF_DOM.generating()) {
+        if (CLF_DOM.generating()) { endedPolls = 0; } else {
           if (++endedPolls >= 2) return true;
-        } else endedPolls = 0;
+        }
         const fresh = await refreshFiber(null, true);
         if (!current()) return true;
         return fresh && received();
@@ -9882,8 +9874,7 @@
         'Could not ask ChatGPT for a handoff: $1',
         (err?.message) || t('content_unknown_error', 'unknown error')
       );
-      if (!attemptCrossed) await abandonBeforeSend(why);
-      else {
+      if (attemptCrossed) {
         CLF_DOM.clearPromptExact(prompt);
         nativePhase = 'waiting';
         localError = t(
@@ -9892,7 +9883,7 @@
           why
         );
         renderControl();
-      }
+      } else { await abandonBeforeSend(why); }
     } finally {
       // Cancelled while this was composing. Nothing was armed, so nothing was sent — but the
       // instruction may already be sitting in the composer, and leaving a wall of handoff
@@ -12283,8 +12274,7 @@
     }
     const flushed = await flush();
     if (flushed && safe()) return true;
-    if (!flushed) note('journal-pending');
-    else note('lease-lost');
+    if (flushed) { note('lease-lost'); } else { note('journal-pending'); }
     return false;
   }
 
@@ -12316,8 +12306,7 @@
     const expected = message.expected;
     // Which part moved since the first check, and for progress what moved it, so a refused
     // repair can say why instead of only "the page changed" (#1086).
-    const changed = !expected ? null : expected.turnId !== turnId ? 'turn' : expected.questionId !== questionId ? 'question'
-      : expected.revision !== turnProgressRevision ? 'progress' : null;
+    const changed = expected ? expected.turnId === turnId ? expected.questionId === questionId ? expected.revision === turnProgressRevision ? null : 'progress' : 'question' : 'turn' : null;
     return verdict([[!current(), 'page-changed'], [stopRequestedAt, 'stop-requested'], [pendingTools !== 0, 'tool-running'],
       [desktopInputBusy, 'sending'], [nativeBusy, 'page-busy'], [job?.busy, 'compaction'], [draft(), 'draft'],
       [changed, 'changed']],
@@ -12695,7 +12684,7 @@
       }
       if (draft) {
         try {
-          const cleared = !sendAttempted ? await draft.clear() : false;
+          const cleared = sendAttempted ? false : await draft.clear();
           if (!sendAttempted && !cleared && withdrawableRecoveryDraft) draft.withdraw();
         }
         catch { /* Unprovable cleanup preserves the draft; never keep the input slot busy. */ }
@@ -13000,7 +12989,7 @@
       }
       if (message.type === 'clf-model-catalog') {
         void inspectAppModelCatalog(message).then(result => sendResponse({ ok: result === true,
-          ...(!result ? { reason: catalogPageBlocker() || 'page_changed' } : {}) })).catch(() => sendResponse({ ok: false, reason: 'inspection_failed' }));
+          ...(result ? {} : { reason: catalogPageBlocker() || 'page_changed' }) })).catch(() => sendResponse({ ok: false, reason: 'inspection_failed' }));
         return true;
       }
       if (message.type === 'clf-plugin-refresh') {

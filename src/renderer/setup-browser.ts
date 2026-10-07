@@ -33,7 +33,7 @@ export function signInState(state: AppState, where: ChatBrowser, live: boolean,
   // ChatGPT's own answer while a tab is open there wins, so signing in or out shows at once. With
   // no tab, or the browser closed, the last answer stands in: a logout stays a logout.
   const liveAnswer = live ? state.bridge.externalExtension?.signedIn ?? null : null;
-  const answer = liveAnswer !== null ? liveAnswer : proof?.signedIn ?? null;
+  const answer = liveAnswer === null ? proof?.signedIn ?? null : liveAnswer;
   if (answer === false) return { done: false, signedIn: false, text: () => t('Not signed in to ChatGPT in {0}.', [label]) };
   if (answer === true) return { done: true, signedIn: true, text: () => live ? t('Signed in. ChatGPT is connected.') : t('Signed in.') };
   return { done: false, signedIn: false, text: () => t('Open ChatGPT in {0} to check the sign-in.', [label]) };
@@ -110,9 +110,8 @@ export function initBrowserSetup(actions: {
     $('extensionStatusBox').dataset.tone = ready ? 'ok' : 'wait';
     ui($('extensionSetupDetail'), 'textContent', () => ready ? ''
       : !state.secureStorage?.available && state.secureStorage ? t('Secure credential storage is unavailable, so the extension cannot pair safely.')
-      : !state.bridge.running ? t('Browser bridge could not start: {0}', [state.bridge.error ?? t('Not connected yet')])
-      : outdated || (live && !knownVersion) ? t('Load the extension from this app’s folder, then reload it in your browser.')
-      : '');
+      : state.bridge.running ? outdated || (live && !knownVersion) ? t('Load the extension from this app’s folder, then reload it in your browser.')
+      : '' : t('Browser bridge could not start: {0}', [state.bridge.error ?? t('Not connected yet')]));
     $('extensionSetupDetail').hidden = !$('extensionSetupDetail').textContent;
     const login = signInState(state, browser === 'cos' ? 'cos' : external, live, proof);
     const statusNode = $(cos ? 'cosBrowserState' : 'externalBrowserState');

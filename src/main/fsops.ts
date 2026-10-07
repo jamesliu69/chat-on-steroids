@@ -193,7 +193,7 @@ function pngCrc32(data: Buffer, start: number, end: number): number {
     const table = new Uint32Array(256);
     for (let n = 0; n < 256; n++) {
       let c = n;
-      for (let k = 0; k < 8; k++) c = (c & 1) !== 0 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      for (let k = 0; k < 8; k++) c = (c & 1) === 0 ? c >>> 1 : 0xedb88320 ^ (c >>> 1);
       table[n] = c >>> 0;
     }
     pngCrcTable = table;
@@ -447,7 +447,7 @@ export async function listDirectory(
     dirents.sort((a, b) => {
       const ad = a.isDirectory() ? 0 : 1;
       const bd = b.isDirectory() ? 0 : 1;
-      return ad !== bd ? ad - bd : a.name.localeCompare(b.name);
+      return ad === bd ? a.name.localeCompare(b.name) : ad - bd;
     });
     for (const dirent of dirents) {
       if (entries.length >= opts.maxEntries) {

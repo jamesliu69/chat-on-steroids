@@ -209,14 +209,7 @@ async function searchSessions(queryInput?: string, cursorInput?: string): Promis
   const rows: string[] = [];
   let nextOffset = offset;
   let scanned = 0;
-  if (!query) {
-    while (nextOffset < sessions.length && rows.length < SEARCH_ROWS) {
-      const row = formatSessionRow(sessions[nextOffset]!);
-      if (rows.length > 0 && rowChars(rows, row) > SEARCH_RESULT_CHARS - 700) break;
-      rows.push(row);
-      nextOffset += 1;
-    }
-  } else {
+  if (query) {
     while (
       nextOffset < sessions.length &&
       scanned < SEARCH_SCAN_SESSIONS &&
@@ -233,6 +226,13 @@ async function searchSessions(queryInput?: string, cursorInput?: string): Promis
         break;
       }
       rows.push(row);
+    }
+  } else {
+    while (nextOffset < sessions.length && rows.length < SEARCH_ROWS) {
+      const row = formatSessionRow(sessions[nextOffset]!);
+      if (rows.length > 0 && rowChars(rows, row) > SEARCH_RESULT_CHARS - 700) break;
+      rows.push(row);
+      nextOffset += 1;
     }
   }
 

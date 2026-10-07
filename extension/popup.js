@@ -252,12 +252,10 @@ function paintHeader(status) {
     ? t('popup_state_version_mismatch', 'Version mismatch')
     : off
       ? t('popup_state_disconnected', 'Disconnected')
-      : !connected
-        ? t('popup_state_app_not_reachable', 'App not reachable')
-        : ready
+      : connected ? ready
           // Health + pairing prove reachability, not the recorder/command flow.
           ? t('popup_state_app_reachable_port', 'App reachable · Port $1', status.port)
-          : t('popup_state_port_connecting', 'Port $1 · connecting', status.port);
+          : t('popup_state_port_connecting', 'Port $1 · connecting', status.port) : t('popup_state_app_not_reachable', 'App not reachable');
 
   // The one state with nothing to click at the top: say what to do instead of a grey pill alone.
   $('appHint').hidden = !(status && !connected && !off);
@@ -397,23 +395,23 @@ async function refresh() {
   row('tab', isChat ? 'ok' : 'off', isChat ? '' : t('popup_status_none_open', 'none open'));
   row(
     'rec',
-    !isChat ? 'off' : info.recorder ? 'ok' : 'no',
-    !isChat ? '' : info.recorder ? (page.generating ? t('popup_status_answering', 'answering') : '') : t('popup_status_reload', 'reload')
+    isChat ? info.recorder ? 'ok' : 'no' : 'off',
+    isChat ? info.recorder ? (page.generating ? t('popup_status_answering', 'answering') : '') : t('popup_status_reload', 'reload') : ''
   );
 
   const chatId = info?.conversationId;
   idRow(
     'chat',
-    !isChat ? 'off' : chatId ? 'ok' : 'wait',
-    !isChat ? '' : chatId ? shorten(chatId, 8) : t('popup_status_new_chat', 'new chat'),
+    isChat ? chatId ? 'ok' : 'wait' : 'off',
+    isChat ? chatId ? shorten(chatId, 8) : t('popup_status_new_chat', 'new chat') : '',
     chatId
   );
 
   const requestId = page?.requestId;
   idRow(
     'req',
-    !isChat ? 'off' : requestId ? 'ok' : 'wait',
-    !isChat ? '' : requestId ? shorten(requestId, 9) : t('popup_status_none_yet', 'none yet'),
+    isChat ? requestId ? 'ok' : 'wait' : 'off',
+    isChat ? requestId ? shorten(requestId, 9) : t('popup_status_none_yet', 'none yet') : '',
     requestId
   );
 
@@ -429,16 +427,14 @@ async function refresh() {
   const flowing = Array.isArray(page?.trace) && page.trace.some(call => call.app === 'request_id');
   row(
     'app',
-    !isChat ? 'off' : broken ? 'no' : flowing ? 'ok' : 'wait',
-    !isChat
-      ? ''
-      : broken
+    isChat ? broken ? 'no' : flowing ? 'ok' : 'wait' : 'off',
+    isChat ? broken
         ? t('popup_status_blocked', 'blocked')
         : flowing
           ? t('popup_status_tool_matched', 'tool matched')
           : state.proc[0] === 'done'
             ? t('popup_status_id_confirmed', 'ID confirmed')
-            : t('popup_status_waiting', 'waiting')
+            : t('popup_status_waiting', 'waiting') : ''
   );
   // Opens itself the first time something is actually wrong, so the panel that explains
   // the failure is already open when the popup is opened to look at one.

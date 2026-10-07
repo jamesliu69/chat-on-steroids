@@ -706,7 +706,7 @@ async function readCanonicalMessages(id: string, aliasesCollapsed?: () => void):
     for (const [key, event] of group) {
       const latestFinal = latest.final === true || latest.state === 'final';
       const eventFinal = event.final === true || event.state === 'final';
-      if (latestFinal !== eventFinal ? eventFinal : event.seq > latest.seq) latest = event;
+      if (latestFinal === eventFinal ? event.seq > latest.seq : eventFinal) latest = event;
       seq = Math.max(seq, event.seq);
       out.delete(key);
     }
@@ -1432,9 +1432,7 @@ export function upsertMessageEvent(
       entry.nextSeq += 1;
       entry.messages.set(key, full);
       if (full.kind === 'user_message') refreshUserTitle(entry.summary, entry.messages.values());
-      if (!previous) {
-        applyToSummary(entry.summary, full);
-      } else {
+      if (previous) {
         // A revision is not another logical event. Only its text/token weight and recency
         // replace what the previous snapshot contributed to the session projection.
         const delta = eventTokens(full) - eventTokens(previous);
@@ -1449,6 +1447,8 @@ export function upsertMessageEvent(
           );
         }
         if (full.agent && !entry.summary.agents.includes(full.agent)) entry.summary.agents.push(full.agent);
+      } else {
+        applyToSummary(entry.summary, full);
       }
       entry.historySeq = full.seq;
       scheduleMeta(entry);
@@ -3313,9 +3313,7 @@ export async function rebindSession(
       activeTurnId: null,
       finishTurn: null,
       browserRecoveryDismissedAt: undefined,
-      ...(committedResumeHandoffId !== undefined
-        ? { lastCommittedResumeHandoffId: committedResumeHandoffId }
-        : {}),
+      ...(committedResumeHandoffId === undefined ? {} : { lastCommittedResumeHandoffId: committedResumeHandoffId }),
       updatedAt: Date.now(),
       // A session whose chat was closed during the handover is live again the moment its new
       // chat is attached; leaving `endedAt` set would draw a visibly growing session as over.

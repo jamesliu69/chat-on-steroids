@@ -489,7 +489,7 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
             pendingUrl:tab.pendingUrl?cut(tab.pendingUrl,2000):undefined,pendingUrlTruncated:(tab.pendingUrl?.length || 0)>2000,status:tab.status || 'unknown',
             owned:attached,claimed,protected:protectedPage,access:{
               snapshot:navigating?'loading':attached?'interactive':tab.url==='about:blank'?'attach-required':'inspect',
-              input:protectedPage?'protected':claimed&&!attached?'other-owner':!policy.write?'disabled':navigating?'loading':attached?'available':'attach-required'
+              input:protectedPage?'protected':claimed&&!attached?'other-owner':policy.write ? navigating?'loading':attached?'available':'attach-required' : 'disabled'
             }};
           size+=JSON.stringify(value).length;if(size>24000){ break; }values.push(value);
         }

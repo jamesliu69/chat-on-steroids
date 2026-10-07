@@ -342,14 +342,7 @@ export async function runDiagnostics(): Promise<Diagnosis> {
       ok: null,
       detail: `Using the ${config.tunnel.kind} path, which has no local health endpoint.`
     });
-  } else if (!base) {
-    checks.push({
-      name: 'Tunnel',
-      status: 'fail',
-      ok: false,
-      detail: 'The tunnel program is not running or has not reported a health address yet.'
-    });
-  } else {
+  } else if (base) {
     const ready = await probeText(`${base}/readyz`);
     checks.push({
       name: 'Tunnel',
@@ -388,6 +381,13 @@ export async function runDiagnostics(): Promise<Diagnosis> {
         });
       }
     }
+  } else {
+    checks.push({
+      name: 'Tunnel',
+      status: 'fail',
+      ok: false,
+      detail: 'The tunnel program is not running or has not reported a health address yet.'
+    });
   }
 
   // 6. The only end-to-end proof there is.

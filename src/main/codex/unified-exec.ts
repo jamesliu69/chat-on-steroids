@@ -928,13 +928,7 @@ export class UnifiedExecProcessManager {
       let statusAfterWrite: ProcessStatus | null = null;
       if (request.input !== '') {
         if (process.hasExited()) throw UnifiedExecError.processFailed('Process already completed; no input was sent. Use empty chars to read its retained output.');
-        if (!tty) {
-          if (request.input === INTERRUPT) {
-            await process.interrupt();
-          } else {
-            throw UnifiedExecError.stdinClosed();
-          }
-        } else {
+        if (tty) {
           try {
             await process.write(request.input);
             // A brief window so the child's reaction is more likely to land in the poll below.
@@ -950,6 +944,12 @@ export class UnifiedExecProcessManager {
             } else {
               throw error;
             }
+          }
+        } else {
+          if (request.input === INTERRUPT) {
+            await process.interrupt();
+          } else {
+            throw UnifiedExecError.stdinClosed();
           }
         }
       }

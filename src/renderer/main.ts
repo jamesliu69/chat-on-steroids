@@ -1360,8 +1360,7 @@ function apply(next: AppState): void {
     ].filter((animation): animation is Animation => !!animation);
     capsuleMorphGhost = ghost;
     const done = capsuleMorph;
-    if (!done.length) endCapsuleMorph();
-    else void Promise.all(done.map((animation) => animation.finished)).then(() => { if (capsuleMorph === done) endCapsuleMorph(); }, () => undefined);
+    if (done.length) { void Promise.all(done.map((animation) => animation.finished)).then(() => { if (capsuleMorph === done) endCapsuleMorph(); }, () => undefined); } else { endCapsuleMorph(); }
   }
   // Connecting succeeded: one soft ring from the dot, the moment the capsule closes.
   if (connected && !wasConnected && previousConnectionState !== null && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
@@ -1566,11 +1565,9 @@ function apply(next: AppState): void {
   apiKey.disabled = !secureStorageAvailable;
   paintSetupFields();
   paintSetupProfiles(next);
-  ui($('apiKeyState'), 'textContent', () => !secureStorageAvailable
-    ? (next.secureStorage?.detail ?? t("Secure credential storage is unavailable."))
-    : next.hasApiKey
+  ui($('apiKeyState'), 'textContent', () => secureStorageAvailable ? next.hasApiKey
       ? t("A key is stored with secure OS credential storage. Type a new one to replace it, or use Remove stored API key.")
-      : t("Stored with secure OS credential storage. It is never shown again and never leaves this app."));
+      : t("Stored with secure OS credential storage. It is never shown again and never leaves this app.") : next.secureStorage?.detail ?? t("Secure credential storage is unavailable."));
   $('apiKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('removeApiKey').disabled = !next.hasApiKey || !secureStorageAvailable;
 
@@ -1709,11 +1706,9 @@ function apply(next: AppState): void {
   paintReady(shown, done, cosBrowser, allSet);
 
   const needsBinary = config.tunnel.kind !== 'manual';
-  ui($('binaryState'), 'textContent', () => !needsBinary
-    ? t("Not needed for this method.")
-    : next.resolvedBinary
+  ui($('binaryState'), 'textContent', () => needsBinary ? next.resolvedBinary
       ? t("Using {0}", [next.resolvedBinary])
-      : t("Not found. Install it, or choose the file with Browse."));
+      : t("Not found. Install it, or choose the file with Browse.") : t("Not needed for this method."));
   ui($('versionLine'), 'textContent', () => next.bundledTunnelVersion
     ? t("Recent activity only — no file contents, no credentials. Bundled tunnel-client {0}.", [next.bundledTunnelVersion])
     : t("Recent activity only. File contents and credentials are never recorded."));
@@ -1913,13 +1908,11 @@ function paintClock(): void {
   request.className = status.lastRequestAt === null ? 'is-cold' : '';
 
   const core = status.surfaces.find((surface) => surface.id === 'core');
-  ui($('connectionPopoverConnector'), 'textContent', () => disconnecting ? t('Disconnecting…') : !running
-    ? t("Not connected")
-    : core?.lastRequestAt
+  ui($('connectionPopoverConnector'), 'textContent', () => disconnecting ? t('Disconnecting…') : running ? core?.lastRequestAt
       ? t("Reached")
       : connected
         ? t("waiting")
-        : t(STATUS_TEXT[status.state]));
+        : t(STATUS_TEXT[status.state]) : t("Not connected"));
   ui($('connectionPopoverBrowser'), 'textContent', () => bridge.present
     ? t("Connected")
     : bridge.paired ? t("Paired · not active") : t("Not connected"));
@@ -1930,7 +1923,7 @@ function paintClock(): void {
   browserRow.dataset.tone = bridge.present ? 'ok' : bridge.paired ? 'wait' : 'bad';
   ui(connectorRow, 'title', () => core?.lastRequestAt ? t("Reached {0}", [ago(core.lastRequestAt)]) : $('connectionPopoverConnector').textContent ?? '');
   ui(browserRow, 'title', () => bridge.lastSeenAt ? t("Seen {0}", [ago(bridge.lastSeenAt)]) : $('connectionPopoverBrowser').textContent ?? '');
-  ui($('connectionPopoverTitle'), 'title', () => disconnecting ? t('Closing connection…') : status.handshakeAt !== null ? t("verified {0}", [ago(status.handshakeAt)]) : t("no handshake yet"));
+  ui($('connectionPopoverTitle'), 'title', () => disconnecting ? t('Closing connection…') : status.handshakeAt === null ? t("no handshake yet") : t("verified {0}", [ago(status.handshakeAt)]));
 
   const triggerText = status.handshakeAt !== null && running
     ? `${t(STATUS_TEXT[status.state])} · ${t("verified {0}", [ago(status.handshakeAt)])}`

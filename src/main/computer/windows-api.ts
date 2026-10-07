@@ -176,13 +176,13 @@ export function createWindowsComputerApi(backend: WindowsComputerBackend = { act
     async click(input: unknown): Promise<void> {
       const a = parse('click', input);
       const button = ({ l: 'left', r: 'right', m: 'middle' } as Record<string, string>)[a.mouse_button ?? 'left'] ?? a.mouse_button ?? 'left';
-      if (a.element_index !== undefined) {
-        if (a.x !== undefined || a.y !== undefined || a.screenshotId !== undefined) throw new ComputerError('Choose element_index or screenshot coordinates.');
-        await mutate(a.window, { type: 'click_ref', ref: element(a.window, a.element_index).ref, button, count: a.click_count ?? 1 });
-      } else {
+      if (a.element_index === undefined) {
         if (a.x === undefined || a.y === undefined) throw new ComputerError('Coordinate click requires x and y.');
         const p = coordinate(a.window, a.screenshotId, a.x, a.y);
         await mutate(a.window, { type: 'click', x: p.x, y: p.y, button, count: a.click_count ?? 1 }, p.opts);
+      } else {
+        if (a.x !== undefined || a.y !== undefined || a.screenshotId !== undefined) throw new ComputerError('Choose element_index or screenshot coordinates.');
+        await mutate(a.window, { type: 'click_ref', ref: element(a.window, a.element_index).ref, button, count: a.click_count ?? 1 });
       }
     },
     async press_key(input: unknown): Promise<void> {

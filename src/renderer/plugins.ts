@@ -244,7 +244,7 @@ function showConfigure(plugin: PluginView): void {
     if (!additions || typeof additions !== 'object' || Array.isArray(additions) || !Object.values(additions).every((value) => typeof value === 'string')) throw new Error(t("Additional configuration must be an object of string values."));
     const configuredSource = JSON.parse(source.value) as PluginSource;
     if (await mutate(window.api.pluginsConfigure(plugin.id, { name: name.value,
-      ...(JSON.stringify(configuredSource) !== JSON.stringify(plugin.source) ? { source: configuredSource } : {}),
+      ...(JSON.stringify(configuredSource) === JSON.stringify(plugin.source) ? {} : { source: configuredSource }),
       config: { ...Object.fromEntries([...config].map(([key, input]) => [key, input.value])), ...additions as Record<string,string> }, credentials }))) box.close();
   }, true));
 }

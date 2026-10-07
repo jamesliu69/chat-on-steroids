@@ -118,7 +118,7 @@ export async function prepareSessionPrompt(text: string, scope: PromptScope = {}
   // Automatic routing has already frozen its decision from the app's published Skill catalog at
   // admission, so those Skills come from that catalog: only the selected body is read below. Every
   // other Skill the chat can use is still listed, exactly as without routing.
-  const library = await listSkillLibrary(scope.autoSkills !== undefined ? { ...skillScope, managedFromCatalog: true } : skillScope);
+  const library = await listSkillLibrary(scope.autoSkills === undefined ? skillScope : { ...skillScope, managedFromCatalog: true });
   const core = await currentCoreInstructions(library);
   const skills = await selectedSkillInstructions(authored, skillScope, library, scope.autoSkills);
   fitSessionPrompt(text, core, null, budget); // Only Core/task overflow is mandatory.

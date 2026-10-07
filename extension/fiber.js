@@ -1651,7 +1651,7 @@
         seen.add(id);
         out.push({
           id, author: { role: 'user' }, recipient: 'all',
-          ...(num(item.sentAtMs) !== null ? { create_time: item.sentAtMs / 1000 } : {}),
+          ...(num(item.sentAtMs) === null ? {} : { create_time: item.sentAtMs / 1000 }),
           content: { content_type: 'text', parts: [body] }, metadata: {}
         });
         continue;
@@ -1667,7 +1667,7 @@
       out.push({
         id, author: { role: 'assistant' }, recipient: 'all',
         ...(phase === 'final_answer' ? { channel: 'final' } : {}),
-        ...(num(item.sentAtMs) !== null ? { create_time: item.sentAtMs / 1000 } : {}),
+        ...(num(item.sentAtMs) === null ? {} : { create_time: item.sentAtMs / 1000 }),
         status: complete ? 'finished_successfully' : 'in_progress', end_turn: terminal,
         content: { content_type: 'text', parts: body ? [body] : [] },
         metadata: { message_type: 'next', ...(exchange ? { turn_exchange_id: exchange } : {}) }
@@ -2431,7 +2431,7 @@
       model = current;
     }
     const effort = shellProExecutionModel(model) ? 'pro' : (lane?.model === model && lane.effort) ||
-      (machine !== null ? (['none','minimal','low','medium','high','xhigh','max','ultra','pro'].includes(machine) ? machine : null) : captionEffort);
+      (machine === null ? captionEffort : ['none','minimal','low','medium','high','xhigh','max','ultra','pro'].includes(machine) ? machine : null);
     if (!effort) return null;
     return model ? { id: model, effort } : null;
   }

@@ -287,11 +287,9 @@ function build(
         tone: 'neutral',
         title: `Searched ${JSON.stringify(query.slice(0, 60))}`,
         detail:
-          evidence.count !== null
-            ? `${plural(evidence.count, 'match', 'matches')}${mode === 'content' ? ' in file contents' : ''}`
-            : mode === 'content'
+          evidence.count === null ? mode === 'content'
               ? 'in file contents'
-              : 'by name'
+              : 'by name' : `${plural(evidence.count, 'match', 'matches')}${mode === 'content' ? ' in file contents' : ''}`
       };
     }
 
@@ -380,7 +378,7 @@ function build(
           kind: 'screen',
           tone: 'neutral',
           title: 'Listed open windows',
-          ...(evidence.count !== null ? { detail: plural(evidence.count, 'window') } : {})
+          ...(evidence.count === null ? {} : { detail: plural(evidence.count, 'window') })
         };
       }
       if (what === 'ui') {
@@ -388,14 +386,14 @@ function build(
           kind: 'screen',
           tone: 'neutral',
           title: `Looked for ${JSON.stringify((str(args['match']) ?? '').slice(0, 40))}`,
-          ...(evidence.count !== null ? { detail: plural(evidence.count, 'match', 'matches') } : {})
+          ...(evidence.count === null ? {} : { detail: plural(evidence.count, 'match', 'matches') })
         };
       }
       return {
         kind: 'screen',
         tone: 'neutral',
         title: 'Looked at the screen',
-        ...(evidence.count !== null ? { detail: plural(evidence.count, 'control') } : {})
+        ...(evidence.count === null ? {} : { detail: plural(evidence.count, 'control') })
       };
     }
     // Window2 inputs deliberately omit text, app paths, window titles and action labels.
@@ -476,7 +474,7 @@ function build(
           kind: 'session',
           tone: 'neutral',
           title: query ? `Searched recordings ${JSON.stringify(query.slice(0, 40))}` : 'Listed recent recordings',
-          ...(evidence.count !== null ? { detail: plural(evidence.count, 'session') } : {})
+          ...(evidence.count === null ? {} : { detail: plural(evidence.count, 'session') })
         };
       }
       const toolCall = str(args['tool_call']);
@@ -489,7 +487,7 @@ function build(
           : cursor
             ? 'Continued reading a recorded session'
             : 'Read a recorded session',
-        ...(evidence.count !== null ? { detail: plural(evidence.count, 'entry', 'entries') } : {})
+        ...(evidence.count === null ? {} : { detail: plural(evidence.count, 'entry', 'entries') })
       };
     }
 
@@ -520,7 +518,7 @@ function build(
             kind: 'agent',
             tone: 'neutral',
             title: 'Checked agent status',
-            ...(evidence.count !== null ? { detail: plural(evidence.count, 'message') } : {})
+            ...(evidence.count === null ? {} : { detail: plural(evidence.count, 'message') })
           };
       }
     }

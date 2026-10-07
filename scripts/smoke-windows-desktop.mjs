@@ -223,9 +223,7 @@ app.whenReady().then(async()=>{
   assert.equal(report.enterKeys, 0, 'Literal text emitted a Return keypress');
   const preserved = await fixture.request('save-clipboard');
   let paste;
-  if (preserved.ok !== true) {
-    paste = { status: 'skipped', reason: preserved.error, clipboardChanged: false };
-  } else {
+  if (preserved.ok === true) {
     assert.equal(preserved.clipboardSaved, true);
     await fixture.request('paste-ready');
     let pasted;
@@ -245,6 +243,8 @@ app.whenReady().then(async()=>{
       assert.equal(report.pasteCount, 1);
     } finally { restored = await fixture.request('restore-clipboard'); }
     paste = { status: 'passed', completedCount: pasted.result.completedCount, pasteCount: report.pasteCount, enterKeys: report.enterKeys, clipboardRestored: restored.clipboardRestored };
+  } else {
+    paste = { status: 'skipped', reason: preserved.error, clipboardChanged: false };
   }
   console.log(JSON.stringify({ fixtureRendering: softwareFixture ? 'wpf-software' : 'wpf-default-hardware-eligible', capturePassed: true, nativeInputPassed: true, windowsApi: {...composed.windowsApi,semanticAndCoordinateInvocationVerified:invocationReport.invocations===2}, captureMs, image: state.image, region: state.region, windowGeometry: state.windowGeometry, foregroundPreserved: true, composedFrame: composed.screenshot.frameId, relatedFrame: popupImage.screenshot.frameId, unrelatedWindowExcluded: true, minimizedError: minimized.error_code, multilineError: typed.error_code, paste }, null, 2));
   await fixture.request('quit');

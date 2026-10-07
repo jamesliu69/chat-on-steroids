@@ -116,10 +116,10 @@ async function measure(url, bearer, timeoutMs, maxBytes, fetchImpl) {
     throw error instanceof BenchmarkError ? error : new BenchmarkError('Transport failed.');
   } finally {
     clearTimeout(timer);
-    if (!completed) {
+    if (completed) { reader?.releaseLock(); } else {
       controller.abort();
       reader?.cancel().catch(() => {});
-    } else reader?.releaseLock();
+    }
   }
 }
 

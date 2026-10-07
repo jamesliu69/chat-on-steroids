@@ -728,7 +728,7 @@ var CLF_DOM = (() => {
             role,
             // Read with the section's own role attribute when it has one; a node that carries
             // none is read under the turn's role, which the cache cannot know in advance.
-            text: row.text !== null ? row.text : messageText(row.node, role),
+            text: row.text === null ? messageText(row.node, role) : row.text,
             turnId: turn.id,
             node: section,
             interrupted: interrupted(turn)
@@ -2303,13 +2303,13 @@ var CLF_DOM = (() => {
       box.focus();
       const selection = document.getSelection();
       if (!selection) return reject('selection_missing');
-      if (existing !== '') {
+      if (existing === '') { selection.selectAllChildren(box); } else {
         selection.selectAllChildren(box);
         if (mode === 'append') {
           selection.collapseToEnd();
           value = `\n${value}`;
         }
-      } else selection.selectAllChildren(box);
+      }
       if (!box.isConnected || composer() !== box) return reject('editor_replaced');
       if (document.activeElement !== box) return reject('composer_not_focused');
       if (!selection.rangeCount || !box.contains(selection.anchorNode) || !box.contains(selection.focusNode)) return reject('selection_changed');
@@ -2685,7 +2685,7 @@ var CLF_DOM = (() => {
       window.addEventListener('message', receive); window.postMessage({ source: 'clf-plugin-ask', nonce, apps: connectorNames() }, location.origin);
     });
     const route = /^#settings\/Plugins\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(location.hash) ||
-      (!location.hash ? /^\/(?:settings\/plugins-settings|plugins)\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(location.pathname) : null);
+      (location.hash ? null : /^\/(?:settings\/plugins-settings|plugins)\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(location.pathname));
     if (!snapshot || snapshot.appId !== route?.[1] || (expectedAppId ? snapshot.appId !== expectedAppId : snapshot.connectorName !== connectorName) ||
         !Array.isArray(snapshot.tools) || (snapshot.tools.length < 1 && !externalPlugins) || snapshot.tools.length > (externalPlugins ? 257 : 16) || JSON.stringify(snapshot.tools).length > 300000 ||
         snapshot.tools.some(tool => !tool || typeof tool.name !== 'string' || !/^[a-z][a-z0-9_]{0,79}$/.test(tool.name) || typeof tool.description !== 'string' || tool.inputSchema?.type !== 'object') ||

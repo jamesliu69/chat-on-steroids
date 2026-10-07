@@ -217,7 +217,7 @@ export function projectTimeline<T extends Chronological>(
       if (candidate && (candidate.endTime === undefined || entry.time <= candidate.endTime)) boundary = candidate;
     }
     const authoredAt = authoredTimeOf(entry);
-    return { ...entry, turnOrigin: boundary?.origin ?? null, ...(authoredAt !== undefined ? { authoredAt } : {}) };
+    return { ...entry, turnOrigin: boundary?.origin ?? null, ...(authoredAt === undefined ? {} : { authoredAt }) };
   });
 }
 

@@ -168,7 +168,7 @@ export async function listDirectoryLevel(
   raw.sort((left, right) => {
     const leftDir = left.isDirectory ? 0 : 1;
     const rightDir = right.isDirectory ? 0 : 1;
-    return leftDir !== rightDir ? leftDir - rightDir : left.fileName.localeCompare(right.fileName);
+    return leftDir === rightDir ? left.fileName.localeCompare(right.fileName) : leftDir - rightDir;
   });
 
   const selected = raw.slice(0, Math.max(0, maxEntries));

@@ -175,7 +175,7 @@ export function initSkills(options: Options) {
       row.addEventListener('pointerdown', event => event.preventDefault()); row.addEventListener('click', () => chooseCurrent(skill)); host.append(row);
     }
     const stateMessage = error ? error : loading && !library ? t('Loading skills…')
-      : !choices.length ? (query ? t('No matches for “{0}”.', [`/${query}`]) : t('No skills available.')) : '';
+      : choices.length ? '' : query ? t('No matches for “{0}”.', [`/${query}`]) : t('No skills available.');
     if (stateMessage) {
       const state = el('p', 'slash-menu-empty', stateMessage);
       state.setAttribute('role', error ? 'alert' : 'status'); host.append(state);
@@ -190,11 +190,10 @@ export function initSkills(options: Options) {
     try {
       const result = await options.list(scope);
       if (request !== epoch || owner !== options.owner() || scopeKey() !== key) return;
-      if (!result.ok) error = result.error;
-      else {
+      if (result.ok) {
         library = result.data; cache.delete(key); cache.set(key, library);
         while (cache.size > 12) cache.delete(cache.keys().next().value!);
-      }
+      } else { error = result.error; }
     } catch (failure) { if (request === epoch && current()) error = failure instanceof Error ? failure.message : String(failure); }
     finally { if (request === epoch && current()) { loading = false; paintInline(); renderSelected(); } }
   };

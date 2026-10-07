@@ -211,7 +211,7 @@ async function removeProjectFromSidebar(id: string): Promise<void> {
     projects = projects.map(row => row.id === id ? removed : row);
     expandedProjects.delete(id); projectVisibleCounts.delete(id);
     if (selectedProjectId === id) {
-      if (!selectedId) {
+      if (selectedId) { selectedProjectId = null; } else {
         const oldKey = draftKey();
         const authoredDraft = authoredComposerText();
         selectedProjectId = null; selectionGeneration++; replaceComposerDraft();
@@ -223,7 +223,7 @@ async function removeProjectFromSidebar(id: string): Promise<void> {
         else imageDrafts.delete(draftKey());
         imageDrafts.delete(oldKey);
         ui($<HTMLTextAreaElement>('chatInput'), 'placeholder', () => t('Ask anything…'));
-      } else selectedProjectId = null;
+      }
     }
     paintSessions(); void refreshInputQueue();
     toast(t('Project removed; conversations kept'));
@@ -1125,14 +1125,13 @@ function mergeDetailDelta(delta: SessionEvent[]): void {
   for (const event of delta) {
     const key = canonicalMessageKey(event);
     const index = key ? messageRows.get(key) : undefined;
-    if (index !== undefined) merged[index] = event;
-    else {
+    if (index === undefined) {
       // An old canonical revision is not newly authored history. Its original
       // page still owns it; admitting it here would evict an unrelated live row.
       if (positionOf(event) < floor) continue;
       if (key) messageRows.set(key, merged.length);
       merged.push(event);
-    }
+    } else { merged[index] = event; }
   }
   const folded = chronological(foldProgress(merged));
   events = retainTimelinePage(folded, 'newer');
@@ -1355,7 +1354,7 @@ function paintTaskPlan(): void {
     preview.append(error, el('div', 'muted', () => t("Send again to retry, or cancel the plan.")));
   } else if (plan?.requestId) {
     const progress = plan.progress;
-    const label = () => !progress ? t("Creating plan…") : progress.phase === 'retrying' ? t("Provider busy · retry {0}{1}", [progress.attempt ?? '', progress.retryAt ? t(' at {0}', [new Date(progress.retryAt).toLocaleTimeString(currentLanguage())]) : '']) : progress.phase === 'cancelled' ? t("Plan cancelled") : progress.phase === 'preparing' ? t("Preparing plan…") : progress.phase === 'ready' ? t("Plan ready") : progress.phase === 'failed' ? t("Plan failed") : t("Writing plan…");
+    const label = () => progress ? progress.phase === 'retrying' ? t("Provider busy · retry {0}{1}", [progress.attempt ?? '', progress.retryAt ? t(' at {0}', [new Date(progress.retryAt).toLocaleTimeString(currentLanguage())]) : '']) : progress.phase === 'cancelled' ? t("Plan cancelled") : progress.phase === 'preparing' ? t("Preparing plan…") : progress.phase === 'ready' ? t("Plan ready") : progress.phase === 'failed' ? t("Plan failed") : t("Writing plan…") : t("Creating plan…");
     preview.append(el('span', 'muted', label));
     if (progress?.text || progress?.error) preview.append(el('pre', 'task-progress-text', progress.error ? () => localizedGoalError(progress.error!) : progress.text));
   }
@@ -1632,7 +1631,7 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
   // Live deltas must not evict a historical page while the user is reading it.
   const incremental = !prepend && newerFrom === undefined && historyBefore === null && detailFor === wanted && detailCursor !== null;
   const detail = await run(
-    api.getSession(wanted, newerFrom !== undefined ? { after: newerFrom, limit: TIMELINE_BATCH_SIZE } : incremental ? { from: detailCursor!, limit: TIMELINE_BATCH_SIZE } : { ...(olderBefore !== undefined ? { before: olderBefore } : historyBefore !== null ? { before: historyBefore } : {}), limit: TIMELINE_BATCH_SIZE })
+    api.getSession(wanted, newerFrom === undefined ? incremental ? { from: detailCursor!, limit: TIMELINE_BATCH_SIZE } : { ...(olderBefore === undefined ? historyBefore === null ? {} : { before: historyBefore } : { before: olderBefore }), limit: TIMELINE_BATCH_SIZE } : { after: newerFrom, limit: TIMELINE_BATCH_SIZE })
   );
   if (generation !== detailLoadGeneration || selection !== selectionGeneration || selectedId !== wanted) return false;
   if (!detail) {
@@ -4765,21 +4764,17 @@ function applyGoal(state: AppState, previous?: Config): void {
   const goalKey = $<HTMLInputElement>('goalKey');
   ui(goalKey, 'placeholder', () => state.hasGoalKey ? t("•••••••• stored") : 'sk-or-v1-…');
   goalKey.disabled = !secureStorageAvailable;
-  ui($('goalKeyState'), 'textContent', () => !secureStorageAvailable
-    ? (state.secureStorage?.detail ?? t("Secure credential storage is unavailable."))
-    : state.hasGoalKey
+  ui($('goalKeyState'), 'textContent', () => secureStorageAvailable ? state.hasGoalKey
       ? t("A key is stored with secure OS credential storage. Type a new one to replace it.")
-      : t("Stored with secure OS credential storage. It never leaves this app, and the browser is only ever handed the reply."));
+      : t("Stored with secure OS credential storage. It never leaves this app, and the browser is only ever handed the reply.") : state.secureStorage?.detail ?? t("Secure credential storage is unavailable."));
   $('goalKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('goalKeyRemove').disabled = !state.hasGoalKey || !secureStorageAvailable;
   const goalCustomKey = $<HTMLInputElement>('goalCustomKey');
   ui(goalCustomKey, 'placeholder', () => state.hasCustomProviderKey ? t("•••••••• stored") : t("leave empty for a keyless local server"));
   goalCustomKey.disabled = !secureStorageAvailable;
-  ui($('goalCustomKeyState'), 'textContent', () => !secureStorageAvailable
-    ? (state.secureStorage?.detail ?? t("Secure credential storage is unavailable."))
-    : state.hasCustomProviderKey
+  ui($('goalCustomKeyState'), 'textContent', () => secureStorageAvailable ? state.hasCustomProviderKey
       ? t("A key is stored with secure OS credential storage. Type a new one to replace it.")
-      : t("Optional. Stored with secure OS credential storage and sent only by the app to your configured API endpoint. The browser receives only the reply."));
+      : t("Optional. Stored with secure OS credential storage and sent only by the app to your configured API endpoint. The browser receives only the reply.") : state.secureStorage?.detail ?? t("Secure credential storage is unavailable."));
   $('goalCustomKeyState').classList.toggle('is-warn', !secureStorageAvailable);
   $<HTMLButtonElement>('goalCustomKeyRemove').disabled = !state.hasCustomProviderKey || !secureStorageAvailable;
   paintGoalReasoning(reasoning);
@@ -5037,19 +5032,13 @@ export function chatApply(state: AppState, previous?: Config): void {
   const browserRequired = browserExtensionRequired(config);
   $<HTMLButtonElement>('bridgeUnpair').disabled = !bridge.paired;
   const secureStorageAvailable = state.secureStorage?.available ?? true;
-  ui($('bridgeState'), 'textContent', () => !browserRequired
-    ? t("Browser-backed features are off. The extension is not needed right now.")
-    : !secureStorageAvailable
-      ? (state.secureStorage?.detail ?? t("Secure credential storage is unavailable, so the extension cannot pair safely."))
-    : !bridge.running && bridge.error
+  ui($('bridgeState'), 'textContent', () => browserRequired ? secureStorageAvailable ? !bridge.running && bridge.error
       ? t("Browser bridge could not start: {0}", [bridge.error])
-    : !bridge.running
-      ? t("The local bridge is off even though recording or multi-agent mode needs it.")
-      : bridge.present
+    : bridge.running ? bridge.present
         ? t("Connected. Listening on 127.0.0.1:{0} · last message {1}.", [bridge.port ?? '?', ago(bridge.lastSeenAt)])
         : bridge.paired
           ? t("Authorized, but the browser extension is not currently connected. {0}", [bridge.lastSeenAt === null ? t("It has not checked in since this app started.") : t("Last seen {0}.", [ago(bridge.lastSeenAt)])])
-          : t("Listening on 127.0.0.1:{0} · no browser is authorized or connected yet.", [bridge.port ?? '?']));
+          : t("Listening on 127.0.0.1:{0} · no browser is authorized or connected yet.", [bridge.port ?? '?']) : t("The local bridge is off even though recording or multi-agent mode needs it.") : state.secureStorage?.detail ?? t("Secure credential storage is unavailable, so the extension cannot pair safely.") : t("Browser-backed features are off. The extension is not needed right now."));
   $('bridgeState').classList.toggle('is-warn', browserRequired && (!bridge.present || !secureStorageAvailable));
   void showExtensionPath();
 
@@ -5205,9 +5194,7 @@ function paintPendingInputs(): void {
     // History owns committed off-page rows. Keep only receipts newer than our
     // loaded publication cursor while the corresponding live snapshot arrives.
     ((entry.historyAnchored || entry.historyRecorded) &&
-      (historyBefore !== null || (entry.historySeq !== undefined
-        ? (detailCursor ?? 0) > entry.historySeq
-        : events.length > 0))));
+      (historyBefore !== null || (entry.historySeq === undefined ? events.length > 0 : (detailCursor ?? 0) > entry.historySeq))));
   const rows = all.filter((entry) => !dismissedInputNotices.has(entry.id) && !(!notice(entry) && anchored(entry)) && !(queuedFollowup(entry) && ['queued', 'tool', 'browser'].includes(entry.state)) && (belongsToSelection(entry) || unbound(entry) || notice(entry)) &&
     (notice(entry) || unbound(entry) || selectedId !== null || projectGroup(entry.projectId) === selectedProjectId) &&
     (notice(entry) || !['sent', 'cancelled'].includes(entry.state) || (entry.state === 'sent' && entry.messageId && !anchored(entry))));

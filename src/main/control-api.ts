@@ -145,8 +145,7 @@ async function startOnce(): Promise<void> {
   const onRequest = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     handle(req, res, token, instance).catch((error: Error) => {
       logWarn(`control API request failed: ${redact(error.message)}`);
-      if (!res.headersSent) reply(res, 500, { error: 'internal_error' });
-      else res.destroy();
+      if (res.headersSent) { res.destroy(); } else { reply(res, 500, { error: 'internal_error' }); }
     });
   };
   const instance = http.createServer(onRequest);

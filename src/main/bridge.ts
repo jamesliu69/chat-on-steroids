@@ -1686,7 +1686,7 @@ function activityDisplayOutcome(call: ToolCallRecord): { code: string; label: st
 }
 
 function activityDurationMs(call: ToolCallRecord): number | null {
-  const duration = call.process?.completedAt !== undefined ? call.process.durationMs : call.durationMs;
+  const duration = call.process?.completedAt === undefined ? call.durationMs : call.process.durationMs;
   return typeof duration === 'number' && Number.isFinite(duration) && duration >= 0 ? duration : null;
 }
 
@@ -1835,8 +1835,7 @@ export async function sessionControlsFor(sessionId: string): Promise<SessionCont
   const activityExpiry = sessionActivityExpiresAt(session);
   const stopping = commands.some(c => c.spec.type === 'stop' && c.spec.sessionId === sessionId && c.spec.turnId === session.activeTurnId);
   const activeTurnId = session.browserRecoveryDismissedAt === undefined && session.activeTurnId &&
-    (stopping || runningToolCalls(id) > 0 || (activityExpiry !== undefined ? activityExpiry !== null && activityExpiry > Date.now() :
-      live?.activeTurnId === session.activeTurnId)) ? session.activeTurnId : null;
+    (stopping || runningToolCalls(id) > 0 || (activityExpiry === undefined ? live?.activeTurnId === session.activeTurnId : activityExpiry !== null && activityExpiry > Date.now())) ? session.activeTurnId : null;
   const finishHeld = !blocked && await sessionFinishHeld(sessionId, activeTurnId, id);
   const draft = goalViewFor(id) ?? goalOutcomeFor(id);
   const inputPolicy = await sessionInputPolicy(sessionId, sessionInputActivity(session));
@@ -2720,9 +2719,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       const result = await recordChatObservations(id, observations, agent);
       const superseded = await conversationWasSuperseded(id);
       if (!superseded && !isChatBlocked(id) && result.activity.working && result.activity.at) {
-        const woke = result.activity.startedAt !== undefined
-          ? noteAgentAlive(id, 'turn', result.activity.startedAt)
-          : noteAgentAlive(id, 'output', result.activity.at);
+        const woke = result.activity.startedAt === undefined ? noteAgentAlive(id, 'output', result.activity.at) : noteAgentAlive(id, 'turn', result.activity.startedAt);
         if (result.activity.startedAt !== undefined && result.activity.at > result.activity.startedAt)
           noteAgentAlive(id, 'output', result.activity.at);
         if (woke?.report) await recordAgentMessage(woke.report, 'sent', id);
@@ -3115,8 +3112,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const stream = events.flatMap((event) => {
       if (earlierChatRepair(event)) return [];
       const base = { seq: event.seq, time: event.time, turnId: event.turnId ?? null, agent: event.agent ?? null,
-        ...(event.turnOrigin !== undefined ? { turnOrigin: event.turnOrigin } : {}),
-        ...(event.authoredAt !== undefined ? { authoredAt: event.authoredAt } : {}) };
+        ...(event.turnOrigin === undefined ? {} : { turnOrigin: event.turnOrigin }),
+        ...(event.authoredAt === undefined ? {} : { authoredAt: event.authoredAt }) };
       switch (event.kind) {
         case 'tool_call':
           return [{ ...base, seq: event.origin ?? event.seq, kind: 'tool_call', tool: event.call.tool, callId: event.call.callId,
@@ -3959,7 +3956,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     catch (error) {
       const reason = error instanceof Error ? error.message : 'goal_objective_not_durable';
       const refused = ['goal_worker_chat', 'conversation_superseded', 'chat_blocked'].includes(reason);
-      return goalJson(res, refused ? 409 : 503, { error: reason, ...(!refused ? { retryable: true } : {}) }, origin);
+      return goalJson(res, refused ? 409 : 503, { error: reason, ...(refused ? {} : { retryable: true }) }, origin);
     }
   }
 
@@ -4094,7 +4091,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         origin
       );
     }
-    const which = goal !== null ? 'goal' : loop !== null ? 'loop' : null;
+    const which = goal === null ? loop === null ? null : 'loop' : 'goal';
     // Which switch this request is actually turning. A composer always knows its own chat, so
     // a switch it sends is that chat's: the sheet is drawn beside one conversation and the
     // person flipping it is answering about that conversation, not about every chat they have
@@ -4611,7 +4608,42 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
           void deliver();
           return json(res, 200, receiptReply(receipt), origin);
         }
-        if (!swarmRunning(command.spec.runId)) {
+        if (swarmRunning(command.spec.runId)) {
+        // This is where a worker starts. Do it only after the post-await command ownership
+        // revalidation above; a page cancelled while noteChatOrigin ran must never bind a slot.
+        if (agent && /^[a-z0-9-]{1,40}$/i.test(agent)) {
+          const boundNow = bindConversation(agent, conversation, command.spec.runId);
+          // The worker inherited a workspace before its chat existed, under the reusable
+          // friendly id `agent:worker-N`. The browser binding is the first authoritative moment
+          // that exact ChatGPT conversation is known, so migrate the staging key now even if the
+          // worker never makes a local tool call before it finishes/sleeps.
+          if (boundNow) bindAgentWorkspace(agent, conversation, command.spec.runId);
+        }
+        const bound = agent ? agentConversation(agent, command.spec.runId) === conversation : false;
+        if (bound) {
+          receipt = {
+            id,
+            client: client || command.owner,
+            conversationId: conversation,
+            outcome: 'committed',
+            committed: true,
+            error: null,
+            completedAt: Date.now()
+          };
+        } else {
+          const why = 'the chat this app opened for the worker could not be bound to that slot';
+          if (agent) failAgent(agent, why, undefined, {}, command.spec.runId);
+          receipt = {
+            id,
+            client: client || command.owner,
+            conversationId: conversation,
+            outcome: 'terminal-failure',
+            committed: false,
+            error: why,
+            completedAt: Date.now()
+          };
+        }
+        } else {
           // A command id is precise, but it is not immortal. If the broker run changed while
           // this page was opening, the old command must not bind the same friendly worker id
           // in the new run. Normal run teardown removes these commands synchronously; this is
@@ -4625,41 +4657,6 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
             error: 'the worker run that opened this chat has ended',
             completedAt: Date.now()
           };
-        } else {
-        // This is where a worker starts. Do it only after the post-await command ownership
-        // revalidation above; a page cancelled while noteChatOrigin ran must never bind a slot.
-        if (agent && /^[a-z0-9-]{1,40}$/i.test(agent)) {
-          const boundNow = bindConversation(agent, conversation, command.spec.runId);
-          // The worker inherited a workspace before its chat existed, under the reusable
-          // friendly id `agent:worker-N`. The browser binding is the first authoritative moment
-          // that exact ChatGPT conversation is known, so migrate the staging key now even if the
-          // worker never makes a local tool call before it finishes/sleeps.
-          if (boundNow) bindAgentWorkspace(agent, conversation, command.spec.runId);
-        }
-        const bound = agent ? agentConversation(agent, command.spec.runId) === conversation : false;
-        if (!bound) {
-          const why = 'the chat this app opened for the worker could not be bound to that slot';
-          if (agent) failAgent(agent, why, undefined, {}, command.spec.runId);
-          receipt = {
-            id,
-            client: client || command.owner,
-            conversationId: conversation,
-            outcome: 'terminal-failure',
-            committed: false,
-            error: why,
-            completedAt: Date.now()
-          };
-        } else {
-          receipt = {
-            id,
-            client: client || command.owner,
-            conversationId: conversation,
-            outcome: 'committed',
-            committed: true,
-            error: null,
-            completedAt: Date.now()
-          };
-        }
         }
       }
     } else if (command.spec.type === 'resume') {
@@ -7325,7 +7322,7 @@ async function silenceRepairCurrent(conversationId: string, repair: Repair): Pro
     const pickup = (await owedPickups(Date.now())).get(conversationId);
     return !!watch && !!pickup && pickup.replyId === watch.replyId &&
       Date.now() >= pickup.listenUntil && Date.now() < watch.expiresAt &&
-      (!pickup.queued ? !goalDraftBusy(conversationId) : true) &&
+      (pickup.queued ? true : !goalDraftBusy(conversationId)) &&
       runningToolCalls(conversationId) === 0 && !continuationForSession(repair.sessionId) &&
       pickupWatch.get(conversationId) === watch && repairsInFlight.get(conversationId) === repair;
   }
@@ -8918,8 +8915,7 @@ function noteCallAttribution(
     // settle an exact request that still delivers trailing connector work.
     const previous = activeUntil.get(conversationId);
     const continuingMcp = previous?.sessionId === sessionId && previous.mcpBacked && !previous.thinkingFailed &&
-      (!!filedSession?.activeTurnId ? filedSession.activeTurnId === previous.turnId :
-        filedSession?.lastTurnOutcome !== 'stopped' && previous.until > Date.now());
+      (!filedSession?.activeTurnId ? filedSession?.lastTurnOutcome !== 'stopped' && previous.until > Date.now() : filedSession.activeTurnId === previous.turnId);
     if (completedFinalAt !== null) {
       if (previous?.sessionId === sessionId && !filedSession?.activeTurnId) endActivity(conversationId);
       const repair = repairsInFlight.get(conversationId);

@@ -249,7 +249,7 @@ function parseCommittedChanges(buffer: Buffer, prefix: string): ProjectGitChange
     const after = projectRelative(newPath, prefix);
     if (!before && !after) continue;
     const kind: ProjectGitStatus = renamed
-      ? !before ? 'A' : !after ? 'D' : 'R'
+      ? before ? after ? 'R' : 'D' : 'A'
       : status[0] === 'A' ? 'A' : status[0] === 'D' ? 'D' : 'M';
     changes.push({
       status: kind, path: kind === 'D' ? before! : after!,

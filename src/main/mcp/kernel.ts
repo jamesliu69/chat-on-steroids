@@ -1319,7 +1319,7 @@ export async function resolveIn(
   // workspace: `posix.normalize('/root/a/../../elsewhere')` is a perfectly clean-looking
   // `/elsewhere`, and nothing downstream can tell it apart from a path that was always that.
   const workspace = await validatedWorkspace();
-  const base = options.base !== undefined ? options.base : (workspace?.virtual ?? null);
+  const base = options.base === undefined ? workspace?.virtual ?? null : options.base;
   const resolveOptions = {
     ...(options.allowMissing === undefined ? {} : { allowMissing: options.allowMissing }),
     base

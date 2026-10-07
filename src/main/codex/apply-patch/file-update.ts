@@ -37,14 +37,14 @@ export async function deriveNewContentsFromChunks(
   baseContents?: string
 ): Promise<AppliedPatch> {
   let originalContents: string;
-  if (baseContents !== undefined) {
-    originalContents = baseContents;
-  } else {
+  if (baseContents === undefined) {
     try {
       originalContents = await readFileText(path);
     } catch (error) {
       throw ApplyPatchError.io(`Failed to read file to update ${path}`, error);
     }
+  } else {
+    originalContents = baseContents;
   }
 
   let newContents: string;

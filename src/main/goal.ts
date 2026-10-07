@@ -567,7 +567,7 @@ export function goalPendingReplyFor(
       ...(reply.silenceSourceTurnId ? { silenceSourceTurnId: reply.silenceSourceTurnId } : {}),
       ...(reply.listenUntil ? { listenUntil: reply.listenUntil } : {}),
       ...(reply.silencePro ? { silencePro: true } : {}),
-      ...(reply.pickupAttempts !== undefined ? { pickupAttempts: reply.pickupAttempts } : {}),
+      ...(reply.pickupAttempts === undefined ? {} : { pickupAttempts: reply.pickupAttempts }),
       ...(reply.pickupNextAt ? { pickupNextAt: reply.pickupNextAt } : {}),
       ...(reply.pickupStoppedAt ? { pickupStoppedAt: reply.pickupStoppedAt } : {}) }
     : null;
@@ -2589,11 +2589,10 @@ export async function conversationMessages(sessionId: string, deliveredInput: re
     const stableId = 'messageId' in event && typeof event.messageId === 'string' && event.messageId ? event.messageId : null;
     const key = stableId ? `${event.kind}\u0000${stableId}` : null;
     const existingAt = key ? byStableMessage.get(key) : undefined;
-    if (existingAt !== undefined) ordered[existingAt] = next;
-    else {
+    if (existingAt === undefined) {
       if (key) byStableMessage.set(key, ordered.length);
       ordered.push(next);
-    }
+    } else { ordered[existingAt] = next; }
     const turn = next.role === 'assistant' && 'turnId' in event && typeof event.turnId === 'string' ? event.turnId : null;
     if (turn && callsByTurn.has(turn)) lastAnswerOfTurn.set(turn, Math.max(lastAnswerOfTurn.get(turn) ?? -1, existingAt ?? ordered.length - 1));
   }

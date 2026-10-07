@@ -848,7 +848,7 @@ export class CosBrowser {
       ...(!cookie.hostOnly && cookie.domain ? { domain: cookie.domain } : {}),
       secure: cookie.secure, httpOnly: cookie.httpOnly,
       sameSite: cookie.sameSite,
-      ...(cookie.expirationDate !== undefined ? { expirationDate: cookie.expirationDate } : {})
+      ...(cookie.expirationDate === undefined ? {} : { expirationDate: cookie.expirationDate })
     });
     this.importingSignIn = true;
     const ownsSession = () => this.ses === ses && this.browserEpoch === epoch;

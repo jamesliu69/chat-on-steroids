@@ -488,7 +488,7 @@ export class PluginManager {
     this.starting.get(row.id)?.controller.abort();
     const live = this.live.get(row.id);
     this.live.delete(row.id);
-    row.status = !row.enabled ? 'disabled' : ['error', 'needs-auth'].includes(row.status) ? row.status : 'installed';
+    row.status = row.enabled ? ['error', 'needs-auth'].includes(row.status) ? row.status : 'installed' : 'disabled';
     // Revocation happens before process/transport retirement can yield.
     this.exposureCache = null;
     if (live) {

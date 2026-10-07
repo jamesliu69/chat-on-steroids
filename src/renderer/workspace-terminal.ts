@@ -130,8 +130,7 @@ export function createWorkspaceTerminal(onToggleBottom: () => void, initialMount
     void (async () => {
       const result = await window.api.terminalCreate(id, scope?.id ?? null, Math.min(500, term.cols), Math.min(200, term.rows));
       if (!tabs.has(id)) { void window.api.terminalClose(id); return; }
-      if (!result.ok) { tab.exited = true; term.writeln(`\r\n${result.error}`); }
-      else { tab.ready = true; tab.title = scope ? `${scope.name} · ${result.data.shell}` : result.data.shell; node.title = result.data.cwd; }
+      if (result.ok) { tab.ready = true; tab.title = scope ? `${scope.name} · ${result.data.shell}` : result.data.shell; node.title = result.data.cwd; } else { tab.exited = true; term.writeln(`\r\n${result.error}`); }
       paint(); fit(); options.onTabsChanged?.(); if (open && selected === id) term.focus();
     })();
     return id;

@@ -704,11 +704,7 @@ export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config>
     // Windows PowerShell 5.1 and older Notepad start UTF-8 files with a byte-order mark; it is not JSON.
     const source = JSON.parse(raw.replace(/^\uFEFF/, '')) as unknown;
     const parsed = configSchema.safeParse(source);
-    if (!parsed.success) {
-      logError('Settings file was invalid and has been reset to defaults');
-      await keepUnreadable(raw);
-      current = conservativeRecoveryConfig();
-    } else {
+    if (parsed.success) {
       const loaded = preserveDisabledRecording(parsed.data, source, options);
       current = enforceFeatureDependencies(
         adoptCurrentGoalPrompt(adoptWiderWindow(adoptAutoCompaction(recalibrateTokens(loaded))))
@@ -721,15 +717,19 @@ export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config>
         seen.add(key);
         return true;
       });
+    } else {
+      logError('Settings file was invalid and has been reset to defaults');
+      await keepUnreadable(raw);
+      current = conservativeRecoveryConfig();
     }
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // A fresh install has nothing new to show: it records its own version before anything can.
+      current = { ...defaultConfig(), ui: { ...defaultConfig().ui, lastSeenVersion: APP_VERSION } };
+    } else {
       logError(`Could not read settings: ${(err as Error).message}`);
       if (raw !== null) await keepUnreadable(raw);
       current = conservativeRecoveryConfig();
-    } else {
-      // A fresh install has nothing new to show: it records its own version before anything can.
-      current = { ...defaultConfig(), ui: { ...defaultConfig().ui, lastSeenVersion: APP_VERSION } };
     }
   }
   return current;
