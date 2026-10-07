@@ -1007,7 +1007,7 @@ function scheduleRetry() {
 function clearRetryIfIdle() {
   if (retryWanted()) return;
   try {
-    if (chrome.alarms && typeof chrome.alarms.clear === 'function') void chrome.alarms.clear(RETRY_ALARM);
+    if (chrome.alarms && typeof chrome.alarms.clear === 'function') chrome.alarms.clear(RETRY_ALARM);
     retryAlarmScheduled = false;
   } catch {
     // No alarms API in narrow test harnesses.
@@ -1135,7 +1135,7 @@ function forgetPort() {
  */
 async function latchAppDisconnect() {
   closeWakeSocket();
-  void getBrowserController().then(controller => controller?.revoke()).catch(() => undefined);
+  getBrowserController().then(controller => controller?.revoke()).catch(() => undefined);
   token = null;
   disconnected = true;
   await activeTabs?.revoke().catch(() => undefined);
@@ -1965,7 +1965,7 @@ function offerDesktopInput(tabId, message) {
   // The reply is not a delivery receipt: the content script synchronously owns
   // one desktopInputBusy slot, then the app's durable browser claim and one-time
   // sendAuthorizedAt fence every later offer. Waiting here only starves repairs.
-  void chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
+  chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
 }
 
 async function deliverDesktopInputs(inputs, background, reusableConversations = [], activeIds, refreshRendering = async () => {}) {
@@ -2449,11 +2449,11 @@ function getBrowserController() {
 }
 function pumpBrowserControl() { return getBrowserController().then(controller => controller?.pump()); }
 globalThis.chrome?.debugger?.onEvent.addListener((source, method, params) => {
-  void getBrowserController().then(controller => controller?.event(source, method, params)).catch(() => undefined);
+  getBrowserController().then(controller => controller?.event(source, method, params)).catch(() => undefined);
 });
 globalThis.chrome?.debugger?.onDetach.addListener(source => {
-  void activeTabs?.detached(source).catch(() => undefined);
-  void getBrowserController().then(controller => controller?.detached(source)).catch(() => undefined);
+  activeTabs?.detached(source).catch(() => undefined);
+  getBrowserController().then(controller => controller?.detached(source)).catch(() => undefined);
 });
 function closeWakeSocket() {
   const previous = wakeSocket; wakeSocket = null;
@@ -2475,17 +2475,17 @@ function connectWakeSocket() {
   connection.onmessage = (event) => {
     if (wakeSocket !== connection) return;
     if (event.data === 'ping') connection.send('pong');
-    else if (event.data === 'browser-control') void pumpBrowserControl().catch(() => undefined);
+    else if (event.data === 'browser-control') pumpBrowserControl().catch(() => undefined);
     else if (event.data === 'wake') {
-      void pumpBrowserControl().catch(() => undefined);
-      void maintain(true).catch(() => undefined);
+      pumpBrowserControl().catch(() => undefined);
+      maintain(true).catch(() => undefined);
     }
   };
   connection.onerror = () => connection.close();
   connection.onclose = () => {
     if (wakeSocket === connection) {
       wakeSocket = null;
-      void activeTabs?.revoke().catch(() => undefined);
+      activeTabs?.revoke().catch(() => undefined);
     }
   };
   // Existing startup/maintenance reconnects after app/browser restart. No retry timer.
@@ -2831,7 +2831,7 @@ async function maintainOnce() {
   // Diagnostic page reads share one bounded flight and never delay recovery or input.
   publishCompanionDiagnostics();
   connectWakeSocket();
-  void pumpBrowserControl().catch(() => undefined);
+  pumpBrowserControl().catch(() => undefined);
   // Quoted back exactly as they arrived. A token names the handout being answered, so that a
   // receipt this pass sends late cannot close a repair the app has since raised for a different
   // turn. An entry missing either half is not actionable and is dropped rather than guessed at.
@@ -3241,7 +3241,7 @@ async function releaseTab(tab, expected = null, expectedDocument = null, expecte
   // the same document and await its claim through that queue: awaiting it here
   // deadlocks New Chat reuse. Request the existing flight's next pass, then release
   // tab ownership so the elected document can claim its queued input.
-  if (delivered.pending === 0) void maintain(true).catch(() => undefined);
+  if (delivered.pending === 0) maintain(true).catch(() => undefined);
   return { ok: true, closed: delivered.pending === 0, pendingClose: delivered.pending };
 }
 
@@ -3386,7 +3386,7 @@ const HANDLERS = {
     if (body.length > 310000) return { ok: false };
     const result = await call('/plugin-refresh', { method: 'POST', body });
     if (!ownsDocument(source) || pluginRefreshMarker(await chrome.tabs.get(source.tab)) !== message.id) return { ok: false };
-    if (['current', 'manual', 'complete', 'fail'].includes(message.action) && result.ok && result.data?.ok) void maintain();
+    if (['current', 'manual', 'complete', 'fail'].includes(message.action) && result.ok && result.data?.ok) maintain();
     return result;
   },
   async model_catalog(message, _sender, source) {
@@ -3487,8 +3487,8 @@ const HANDLERS = {
   },
   async register_document(_message, sender) {
     const result = await registerDocument(sender, _message);
-    if (result?.ok === true) void maintain(true).catch(() => undefined);
-    if (result?.ok === true) void recoverDeferredRevivals().catch(() => undefined);
+    if (result?.ok === true) maintain(true).catch(() => undefined);
+    if (result?.ok === true) recoverDeferredRevivals().catch(() => undefined);
     return result;
   },
   async cos_sign_in_transfer(message, sender) {
@@ -4317,7 +4317,7 @@ function conversationForTab(tab) {
 // Document unload is not conversation lifetime. A real tab close is: reload keeps the
 // same tab id, while closing it wakes the service worker and retires only that tab's claim.
 chrome.tabs.onRemoved.addListener((id) => {
-  void activeTabs?.navigation(id).catch(() => undefined);
+  activeTabs?.navigation(id).catch(() => undefined);
   clearDeferredRevivalOffersForTab(id);
   if (discardProtectedTabs[String(id)]) {
     delete discardProtectedTabs[String(id)];
@@ -4379,7 +4379,7 @@ chrome.tabs.onUpdated.addListener((id, changeInfo, tab) => {
     // must re-read the outbox instead of leaving that unclaimed offer until the
     // 30-second alarm. Reuse the elected tab and single maintenance flight; the
     // app's current claim/receipt still decides whether anything may be sent.
-    void load().then(async () => {
+    load().then(async () => {
       if (Object.values(inputOpenings).some(opening => opening.tab === id) ||
           discardProtectedTabs[String(id)]?.commandId) return maintain(true);
       const owner = (await chrome.storage.session.get('modelCatalogOwner')).modelCatalogOwner;
@@ -4414,7 +4414,7 @@ chrome.tabs.onUpdated.addListener((id, changeInfo, tab) => {
     })().catch(() => undefined);
     return;
   }
-  void serializeTab(id, async () => {
+  serializeTab(id, async () => {
     if (await sameDocument || (documentId && tabDocuments[String(id)] !== documentId)) return;
     if (fullNavigation || leftChatGpt) clearDeferredRevivalOffersForTab(id);
     // A brand-new chat can be reloaded before ChatGPT has assigned /c/<id>. Keep only that
@@ -4937,7 +4937,7 @@ async function restoreOpenChatgptTabs() {
 
 chrome.runtime.onInstalled.addListener(() => {
   void restoreOpenChatgptTabs().then(() => recoverDeferredRevivals()).catch(() => undefined);
-  void load()
+  load()
     .then(() => ensurePaired())
     .catch(() => undefined)
     .then(() => scheduleRetry());
@@ -4945,7 +4945,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 if (chrome.runtime.onStartup && typeof chrome.runtime.onStartup.addListener === 'function') {
   chrome.runtime.onStartup.addListener(() => {
-    void load()
+    load()
       .then(() => drainCommandAcks())
       .then(() => drain())
       .then(() => drainCloses())
@@ -5147,11 +5147,11 @@ function reportPresence() {
 
 if (!globalThis.__cosBrowserWorker) {
   chrome.tabs.onUpdated.addListener((_id, changeInfo, tab) => {
-    if (changeInfo.status === 'complete' && signInStage(tab?.url || '') === 'done') void reportPresence();
+    if (changeInfo.status === 'complete' && signInStage(tab?.url || '') === 'done') reportPresence();
   });
 }
 
-void load()
+load()
   .then(() => ensurePaired())
   .catch(() => undefined)
   .then(() => reportPresence())

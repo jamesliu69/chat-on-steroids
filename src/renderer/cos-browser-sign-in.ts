@@ -62,7 +62,7 @@ function paint(state: SignInState): void {
   const card = $('card');
   if (!card.hidden && (card.classList.contains('is-waiting') !== waiting || card.classList.contains('is-done') !== done)) {
     card.classList.remove('swap');
-    void card.offsetWidth;
+    card.offsetWidth;
     card.classList.add('swap');
   }
   card.classList.toggle('is-waiting', waiting);

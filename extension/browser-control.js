@@ -78,8 +78,8 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
           if (tabs.get(state.tabId) === state) {
             tabs.delete(state.tabId);
             void cleanup(removeIndicator(state));
-            if (method === 'Runtime.evaluate') void chrome.debugger.sendCommand({tabId:state.tabId,...(sessionId ? {sessionId}: {})},'Runtime.terminateExecution').catch(() => {});
-            void chrome.debugger.detach({tabId:state.tabId}).catch(() => {});
+            if (method === 'Runtime.evaluate') chrome.debugger.sendCommand({tabId:state.tabId,...(sessionId ? {sessionId}: {})},'Runtime.terminateExecution').catch(() => {});
+            chrome.debugger.detach({tabId:state.tabId}).catch(() => {});
             void save().catch(() => {});
           }
           reject(new Error(`BROWSER_CDP_TIMEOUT: ${method} did not acknowledge within its deadline. This attachment was retired; the tab was not closed. List tabs, explicitly attach the same existing tab, then inspect before repeating any input.`));

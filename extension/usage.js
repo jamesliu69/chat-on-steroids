@@ -113,7 +113,7 @@
     const copy = response.clone(), reader = copy.body?.getReader();
     if (!reader) return;
     readers.add(reader);
-    const timer = setTimeout(() => void reader.cancel().catch(() => {}), 10000);
+    const timer = setTimeout(() => reader.cancel().catch(() => {}), 10000);
     let bytes = 0, text = ''; const decoder = new TextDecoder();
     try {
       while (true) {
@@ -143,7 +143,7 @@
       coreMention = { type: 'cos-core-mention', path: plain?.path ?? null, name: plain?.path ? CORE_APP_NAME : null, candidates, pluginList };
       post(coreMention, location.origin);
     } catch { /* An unreadable list proves nothing; prompts keep going without a mention. */ }
-    finally { clearTimeout(timer); readers.delete(reader); void reader.cancel().catch(() => {}); }
+    finally { clearTimeout(timer); readers.delete(reader); reader.cancel().catch(() => {}); }
   }
   async function inspect(response, observedAt, order) {
     if (!active) return;
@@ -154,7 +154,7 @@
     const copy = response.clone(), reader = copy.body?.getReader();
     if (!reader) return;
     readers.add(reader);
-    const timer = setTimeout(() => void reader.cancel().catch(() => {}), 10000);
+    const timer = setTimeout(() => reader.cancel().catch(() => {}), 10000);
     let bytes = 0, text = ''; const decoder = new TextDecoder();
     try {
       while (true) {
@@ -164,7 +164,7 @@
       }
       project(JSON.parse(text + decoder.decode()), observedAt, order);
     } catch { /* Unsupported metadata is unavailable, never guessed. */ }
-    finally { clearTimeout(timer); readers.delete(reader); void reader.cancel().catch(() => {}); }
+    finally { clearTimeout(timer); readers.delete(reader); reader.cancel().catch(() => {}); }
   }
   /**
    * Reads bounded complete SSE events from a clone without changing the page's response.
@@ -254,7 +254,7 @@
     if (!reader) return;
     originReaders.add(reader);
     readers.add(reader);
-    const timer = setTimeout(() => void reader.cancel().catch(() => {}), ORIGIN_LISTEN_MS);
+    const timer = setTimeout(() => reader.cancel().catch(() => {}), ORIGIN_LISTEN_MS);
     const decoder = new TextDecoder(), emitted = new Set(), stream = {};
     let bytes = 0, buffer = '';
     const scan = (frame) => {
@@ -287,7 +287,7 @@
       buffer += decoder.decode();
       scan(buffer);
     } catch { /* A missing stream observation leaves the existing Fiber path in charge. */ }
-    finally { clearTimeout(timer); originReaders.delete(reader); readers.delete(reader); void reader.cancel().catch(() => {}); }
+    finally { clearTimeout(timer); originReaders.delete(reader); readers.delete(reader); reader.cancel().catch(() => {}); }
   }
   let observedFetch = null;
   let observedWebSocket = null;
@@ -463,7 +463,7 @@
       post({ type: 'cos-request-origin', conversationId, requestIds: [requestId], observedAt }, location.origin);
   };
   const hide = () => {
-    for (const reader of originReaders) void reader.cancel().catch(() => {});
+    for (const reader of originReaders) reader.cancel().catch(() => {});
     origins.clear();
   };
   window.addEventListener('message', request);
@@ -474,7 +474,7 @@
     current: () => active && window.fetch === observedFetch && window.WebSocket === observedWebSocket,
     dispose() {
       active = false;
-      for (const reader of readers) void reader.cancel().catch(() => {});
+      for (const reader of readers) reader.cancel().catch(() => {});
       readers.clear(); origins.clear(); latest = null;
       window.removeEventListener('message', request); window.removeEventListener('pagehide', hide);
       window.removeEventListener('DOMContentLoaded', installFetchObserver);

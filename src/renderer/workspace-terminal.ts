@@ -157,7 +157,7 @@ export function createWorkspaceTerminal(onToggleBottom: () => void, initialMount
       tabsHost.querySelector<HTMLButtonElement>('.terminal-tab.is-selected > .btn:first-child')?.focus();
     });
   }
-  add.addEventListener('click', () => { addMenu.open = false; void create(); }); empty.addEventListener('click', () => void create());
+  add.addEventListener('click', () => { addMenu.open = false; create(); }); empty.addEventListener('click', () => create());
   addMenu.addEventListener('keydown', event => { if (event.key === 'Escape') { addMenu.open = false; addTrigger.focus(); } });
   document.addEventListener('click', event => { if (addMenu.open && !addMenu.contains(event.target as Node)) addMenu.open = false; });
   const observer = new ResizeObserver(fit); observer.observe(body);
@@ -168,7 +168,7 @@ export function createWorkspaceTerminal(onToggleBottom: () => void, initialMount
     show(mount: HTMLElement, createIfEmpty = true): void {
       if (panel.parentElement !== mount) mount.append(panel);
       setOpen(true);
-      if (createIfEmpty && !tabs.size) void create();
+      if (createIfEmpty && !tabs.size) create();
     },
     newTab(): string | null { return create(); },
     tabs(): WorkspaceTerminalTab[] { return [...tabs.values()].map(tab => ({ id: tab.id, title: tab.title, exited: tab.exited })); },

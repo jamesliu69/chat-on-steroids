@@ -2640,7 +2640,7 @@
       // is being written right now. Tearing the panel down here as well made every tick
       // destroy and rebuild the node injectStage() had just put back — a fresh element once a
       // second, so its progress animation never survived long enough to play a single cycle.
-      void flush();
+      flush();
       return;
     }
 
@@ -2881,7 +2881,7 @@
       // already blocked waiting for exactly this id, and the wait is measured in seconds.
       void refreshFiber(fiberSettled).then(() => {
         if (!alive || !sameChat()) return;
-        void flush();
+        flush();
       });
     }
 
@@ -3052,7 +3052,7 @@
     // only DOM mutations, so wake those waiters whenever an observation publishes a new view of
     // the lifecycle. They still re-check the exact conversation and every readiness predicate.
     notifyCommandReadiness();
-    void flush();
+    flush();
   }
 
   const turnIdOf = (section) => CLF_DOM.turnIdOf(section);
@@ -3103,7 +3103,7 @@
       if (!sawConnector) return;
       void refreshFiber().then(() => {
         if (!alive || !sameChat()) return;
-        void flush();
+        flush();
       });
     });
     observer.observe(document.body, { childList: true, subtree: true });
@@ -3855,7 +3855,7 @@
       ...(image.providerStatus ? { providerStatus: image.providerStatus } : {}),
       ...(image.width ? { width: image.width } : {}), ...(image.height ? { height: image.height } : {}),
       previewStatus: 'unavailable', previewError: reason });
-    void flush();
+    flush();
   }
 
   /**
@@ -3948,7 +3948,7 @@
         ...(image.width ? { width: image.width } : {}), ...(image.height ? { height: image.height } : {}),
         previewStatus: 'available', previewWidth: width, previewHeight: height, previewDataUrl });
       nativeImageCaptures.set(key, { status: 'available', fingerprint });
-      void flush();
+      flush();
     } catch (error) {
       if (!nativeImageCaptureOwnerCurrent(key, image, observation, heldEpoch, heldConversation) || nativeImageNode(image) !== node ||
           !node.complete || node.naturalWidth !== sourceWidth || node.naturalHeight !== sourceHeight || (node.currentSrc || node.src) !== sourceUrl) {
@@ -4426,7 +4426,7 @@
     // same route/epoch-validated Fiber snapshot has updated presentation identity.
     if (presentationOnly) return true;
     CLF_DOM.presentUserPrompts?.(message => userMessageSource(message)?.text ?? null);
-    for (const check of pageViewChecks) void check();
+    for (const check of pageViewChecks) check();
     completeDesktopDecision();
     const markedTurns = markedContinuationTurns();
     const continuationReconciliation = reconcileContinuationMarkers(markedTurns);
@@ -4871,7 +4871,7 @@
     // observe() starts this asynchronous scan before its own flush. A final Fiber reply may
     // therefore be the last producer after that flush has already finished. Transfer its
     // canonical revisions now instead of waiting for visibilitychange or the next timer.
-    void flush();
+    flush();
     return true;
   }
 
@@ -6904,7 +6904,7 @@
       // Push page observations immediately after the Fiber pass instead of waiting for the
       // normal recorder debounce. The next fast live pull can then consume them; emit/flush is
       // idempotent at the app boundary, so this tightens latency without manufacturing rows.
-      void flush();
+      flush();
       // Checked again: refreshFiber() talks to the page context, so the tab can move
       // between the check above and the painting below.
       if (!current()) return;
@@ -7773,7 +7773,7 @@
   }
 
   function toggleMenu() {
-    if (menuOpen) return void closeMenu();
+    if (menuOpen) { closeMenu(); return; }
     menuOpen = true;
     hideTip();
     renderMenu();
@@ -8114,8 +8114,8 @@
   }
 
   function renderMenu() {
-    if (!menuOpen) return void closeMenu();
-    if (!control || !control.root.isConnected) return void closeMenu();
+    if (!menuOpen) { closeMenu(); return; }
+    if (!control || !control.root.isConnected) { closeMenu(); return; }
     const root = menuElement();
     const view = menuView();
     // Everything the sheet is drawn from: the view, and the three pieces of local state the
@@ -8126,7 +8126,7 @@
       goalConfig?.proLoopDelivery, goalConfig?.afterTurn]);
     // Unchanged, so the sheet on screen is already the right sheet. Only its position is
     // still worth re-deciding: the composer it hangs off moves as ChatGPT grows it.
-    if (painted === menuPainted && root.firstChild) return void placeMenu(root, control.button);
+    if (painted === menuPainted && root.firstChild) { placeMenu(root, control.button); return; }
     menuPainted = painted;
     // A rebuild can still land while somebody is halfway through typing a goal, because the
     // app can change what the sheet says at any moment. The text itself survives in menuDraft;
@@ -9728,12 +9728,12 @@
     };
 
     if (!current()) return;
-    if (!prompt) return void (await abandonBeforeSend(
+    if (!prompt) { await abandonBeforeSend(
       t('content_compact_missing_handoff_instruction', 'The app did not send the handoff instruction.')
-    ));
-    if (!token) return void (await abandonBeforeSend(
+    ); return; }
+    if (!token) { await abandonBeforeSend(
       t('content_compact_missing_token', 'The app did not send a compaction token, so nothing could be tracked.')
-    ));
+    ); return; }
 
     try {
       nativePhase = 'prompting';
@@ -9748,19 +9748,19 @@
       // the existing DOM waiter; an unavailable host is not a provider rejection.
       const ready = editable() || await waitPageView(editable, () => current() && sameSource(), INTERRUPT_WAIT_MS);
       if (!current()) return;
-      if (!sameSource()) return void (await abandonBeforeSend(
+      if (!sameSource()) { await abandonBeforeSend(
         t('content_compact_chat_changed_preparing', 'The chat changed while preparing the handoff. Nothing was sent.'),
         true
-      ));
+      ); return; }
       if (!ready) {
         const reason = CLF_DOM.composer() ? 'composer_unavailable' : 'composer_missing';
-        return void (await abandonBeforeSend(
+        { await abandonBeforeSend(
           t(
             'content_chatgpt_message_box_not_ready',
             'The ChatGPT message box is not ready ($1). Wait for the page to load and retry.',
             reason
           )
-        ));
+        ); return; }
       }
       const existing = CLF_DOM.composer();
       const occupiedByOtherDraft =
@@ -9768,7 +9768,7 @@
         squeeze(existing?.textContent) !== squeeze(prompt);
       let insertionFailure = '';
       if (squeeze(existing?.textContent) !== squeeze(prompt) && !CLF_DOM.insertPrompt(prompt, false, reason => { insertionFailure = reason; })) {
-        return void (await abandonBeforeSend(
+        { await abandonBeforeSend(
           occupiedByOtherDraft
             ? t(
               'content_compact_existing_draft',
@@ -9785,25 +9785,25 @@
           // itself stays untouched. Missing/replaced composer failures remain recoverable on the
           // existing WAL.
           occupiedByOtherDraft
-        ));
+        ); return; }
       }
       await Promise.resolve();
       if (!current()) return;
       if (!sameSource()) {
         CLF_DOM.clearPromptExact(prompt);
-        return void (await abandonBeforeSend(
+        { await abandonBeforeSend(
           t('content_compact_chat_changed_preparing', 'The chat changed while preparing the handoff. Nothing was sent.'),
           true
-        ));
+        ); return; }
       }
       const composer = CLF_DOM.composer();
       if (!composer || squeeze(composer.textContent) !== squeeze(prompt)) {
-        return void (await abandonBeforeSend(
+        { await abandonBeforeSend(
           t(
             'content_compact_message_box_changed',
             'The message box changed before the handoff instruction could be sent. Its draft was preserved; nothing was compacted.'
           )
-        ));
+        ); return; }
       }
       // Claiming the prompt. Nothing has been submitted under this state, and the app knows
       // that because this write happens before the composer is submitted at all — so a
@@ -9828,13 +9828,13 @@
       const sendComposer = editable();
       if (!sameSource() || !sendComposer || squeeze(sendComposer.textContent) !== squeeze(prompt)) {
         CLF_DOM.clearPromptExact(prompt);
-        return void (await abandonBeforeSend(
+        { await abandonBeforeSend(
           t(
             'content_compact_message_box_changed_preserved',
             'The message box changed before the handoff could be sent. Its draft was preserved.'
           ),
           true
-        ));
+        ); return; }
       }
       rememberUserSend();
       const sent = await sendSubmittedText(current, true, async stillSending => {
@@ -9857,12 +9857,12 @@
       if (!current()) return;
       if (!sent) {
         CLF_DOM.clearPromptExact(prompt);
-        if (!attemptCrossed) return void (await abandonBeforeSend(
+        if (!attemptCrossed) { await abandonBeforeSend(
           t(
             'content_compact_send_not_ready',
             'The handoff request was not submitted because the Send button or message box was not ready. Retry after the page is ready.'
           )
-        ));
+        ); return; }
         nativeBusy = false;
         nativePhase = 'waiting';
         pressedAt = 0;
@@ -10065,7 +10065,7 @@
   function releaseContinuationJournal() {
     continuationJournalPending = false;
     commandJournalGate = false;
-    void flush();
+    flush();
   }
 
   const continuationReconciliationKey = (key, marked, ownerConversation = conversationId) =>
@@ -10284,11 +10284,11 @@
     }
     // A normally observed generation already entered Goal, or a draft restored from the app
     // proves another page-side trigger got there first. Either way the recovery hint is spent.
-    if (goalTurnId || goalDraft) return void clearResumeGoalPending();
+    if (goalTurnId || goalDraft) { clearResumeGoalPending(); return; }
     // Null means B's post-commit policy has not arrived yet. That is the exact race this helper
     // exists to bridge, so keep the hint rather than deciding from stale/default settings.
     if (!goalConfig) return;
-    if (!goalUsable()) return void clearResumeGoalPending();
+    if (!goalUsable()) { clearResumeGoalPending(); return; }
     if (goalBusy || generating || CLF_DOM.generating() || nativeBusy || (job?.busy)) return;
 
     // The resume bootstrap is the only user turn we are entitled to reason from. If somebody
@@ -10297,7 +10297,7 @@
     const users = CLF_DOM.messages().filter(
       (message) => message?.role === 'user' && !retiredMessages.has(message.id) && !isStale(message.node)
     );
-    if (users.length > 1) return void clearResumeGoalPending();
+    if (users.length > 1) { clearResumeGoalPending(); return; }
     if (users.length !== 1) return;
 
     const turns = CLF_DOM.turns();
@@ -10315,7 +10315,7 @@
       }
     }
     if (result.outcome === 'unknown') return;
-    if (!GOAL_CONTINUABLE.has(result.outcome)) return void clearResumeGoalPending();
+    if (!GOAL_CONTINUABLE.has(result.outcome)) { clearResumeGoalPending(); return; }
 
     // Stable across a content-script reload, and deliberately a local generation-style id rather
     // than a website message id. The app's /goal/draft idempotency therefore sees one turn even
@@ -10407,9 +10407,9 @@
         await sleep(GOAL_POLL_MS);
         if (!current()) return;
         // Somebody — the user, or a turn ChatGPT started on its own — is talking again.
-        if (generating) return void setGoalPhase('');
-        if (nativeBusy || (job?.busy)) return void setGoalPhase('');
-        if (!goalUsable()) return void setGoalPhase('');
+        if (generating) { setGoalPhase(''); return; }
+        if (nativeBusy || (job?.busy)) { setGoalPhase(''); return; }
+        if (!goalUsable()) { setGoalPhase(''); return; }
         const nextText = briefSoFar(ended, text);
         const nextActivity = briefActivityMark(ended);
         const pending = await peekPendingTools();
@@ -11309,7 +11309,7 @@
       reportClaim(false);
       if (commandAttempt === attempt) commandAttempt = null;
       if (gateJournal && !continuationJournalPending) commandJournalGate = false;
-      void flush();
+      flush();
     }
   }
 
@@ -11382,7 +11382,7 @@
       // The app may have durably assigned this RUN_ID as owner even if the MV3 reply disappears.
       // Keep retry bounded to the pre-Send handshake; destinationAttempt has its own no-replay fence.
       const timer = setTimeout(() => finish(null), 30_000);
-      void ask(redeemRequest).then(finish, () => finish(null));
+      ask(redeemRequest).then(finish, () => finish(null));
     });
     // Retry for as long as the app still waits for this page, not three times in two seconds.
     // A burst of fresh worker tabs can leave the service worker unreachable for a few seconds;
@@ -11449,10 +11449,10 @@
     if (projectEntry) {
       if (!fromUrl || !OPENED_PROJECT_ENTRY || target || openedConversation !== projectEntry.sourceConversationId ||
           markerId() !== id || CLF_DOM.conversationId() !== openedConversation) {
-        return void (await fail(t(
+        { await fail(t(
           'content_bootstrap_project_source_changed',
           'the Project entry no longer matches the source conversation; nothing was sent'
-        )));
+        )); return; }
       }
       let projectEntryFailure = 'unknown';
       if (!(await CLF_DOM.enterProject(
@@ -11460,10 +11460,10 @@
         () => alive && !attempt?.cancelled,
         reason => { if (typeof reason === 'string' && reason) projectEntryFailure = reason; }
       ))) {
-        return void (await fail(t(
+        { await fail(t(
           'content_bootstrap_project_open_failed',
           'ChatGPT could not open the source Project through its native link; nothing was sent'
-        ), 'project-entry:' + projectEntryFailure));
+        ), 'project-entry:' + projectEntryFailure); return; }
       }
       // The provider's own SPA link consumes the opening URL. Carry this claimed command
       // onto the proven Project route, then fence every later await to that navigation epoch.
@@ -11473,10 +11473,10 @@
       history.replaceState(history.state, '', marked.href);
       observe();
     } else if (OPENED_PROJECT_ENTRY) {
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_project_not_authorized',
         'the command did not authorize Project entry; nothing was sent'
-      )));
+      )); return; }
     }
     if (fromUrl && openedConversation && !target && !projectEntry) {
       // Current bridges reject this before leasing the command. Keep the page-side half too:
@@ -11486,22 +11486,22 @@
     }
     if (!fromUrl && !target) {
       // Only a command that names a conversation is ever handed to an existing document.
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_missing_target',
         'it was offered to a chat that already exists and it does not name one'
-      )));
+      )); return; }
     }
     if (target && openedConversation !== target) {
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_wrong_conversation',
         'the page that was opened for it was showing a different conversation'
-      )));
+      )); return; }
     }
     if (!target && CLF_DOM.conversationId()) {
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_fresh_chat_changed',
         'the marked fresh chat changed before bootstrap send; nothing was sent'
-      )));
+      )); return; }
     }
     const sendEpoch = epoch;
     const onTarget = () => (target ? CLF_DOM.conversationId() === target : !CLF_DOM.conversationId()) &&
@@ -11537,18 +11537,18 @@
     // is what turned a fresh resume tab into a blank tab for a minute on a throttled page.
     step('composer');
     const readyComposer = await waitForComposer();
-    if (!readyComposer) return void (await fail(t(
+    if (!readyComposer) { await fail(t(
       'content_bootstrap_composer_unavailable',
       'ChatGPT never exposed a usable composer for bootstrap'
-    )));
+    )); return; }
     if (await failIfRetargeted()) return;
 
     if (boot.model || boot.reasoningEffort) step('model');
     if ((boot.model || boot.reasoningEffort) && !(await CLF_DOM.selectModelSettings(boot.model, boot.reasoningEffort, stillOnTarget))) {
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_model_unavailable',
         'The requested model or reasoning is unavailable or could not be confirmed in ChatGPT'
-      )));
+      )); return; }
     }
     // ChatGPT's Chat/Work/model transition can replace the entire home composer after
     // the picker has already confirmed the requested selection. Do not treat that
@@ -11558,10 +11558,10 @@
     if (boot.model || boot.reasoningEffort) step('composer-after-model');
     if ((boot.model || boot.reasoningEffort) && !(await waitForComposer(commandWaitMs(12_000, 5_000), stillOnTarget))) {
       if (await failIfRetargeted()) return;
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_composer_unavailable',
         'ChatGPT never re-exposed a usable composer after model selection'
-      )));
+      )); return; }
     }
     const selectionConfirmedAt = Date.now();
     const publishBootstrapSelection = async (id) => {
@@ -11609,11 +11609,11 @@
     let insertionFailure = '';
     step('inserting');
     if (!CLF_DOM.insertPrompt(boot.text, true, reason => { insertionFailure = reason; })) {
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_insert_refused',
         'ChatGPT refused the inserted text$1',
         insertionFailure ? ` (${insertionFailure})` : ''
-      )));
+      )); return; }
     }
     const submittedLifetime = submittedSendLifetime(target);
     const sendingBootstrap = () => commandAlive() && submittedLifetime();
@@ -11648,20 +11648,20 @@
     const squeeze = (value) => (value || '').replaceAll(/\s+/g, '');
     const expectedText = squeeze(boot.text);
     if (!composer || squeeze(composer.textContent) !== expectedText) {
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_composer_replaced',
         'ChatGPT replaced the composer while inserting the bootstrap'
-      )));
+      )); return; }
     }
     // The browser opener can focus this fresh tab while the user is typing elsewhere. The
     // point-in-time empty check above is not enough: any edit after insertion must preserve
     // the user's draft and abort, never submit a bootstrap/user-text mixture as a worker task.
     composer = CLF_DOM.composer();
     if (!composer || squeeze(composer.textContent) !== expectedText) {
-      return void (await fail(t(
+      { await fail(t(
         'content_bootstrap_composer_changed_before_send',
         'the composer changed before bootstrap send; the draft was preserved'
-      )));
+      )); return; }
     }
     if (await failIfRetargeted()) return;
     const resumeMarker = boot.type === 'resume' ? String(boot.text || '').match(CONTINUATION_MARKER) : null;
@@ -11704,10 +11704,10 @@
     };
     if (boot.type === 'resume') {
       if (!resumeMarker || resumeMarker[1] !== 'RESUME') {
-        return void (await fail(t(
+        { await fail(t(
           'content_bootstrap_resume_marker_invalid',
           'the resume bootstrap had no valid continuation marker'
-        )));
+        )); return; }
       }
       continuationJournalPending = true;
       const permit = await ask({ type: 'compact', token: resumeMarker[2], commandId: boot.id, client: RUN_ID, destinationAttempt: true });
@@ -11754,7 +11754,7 @@
       // to send (#864). Clear only our own unchanged text; anything the user typed stays.
       await bootstrapDraft.clear();
       const notAccepted = t('content_bootstrap_send_not_accepted', 'ChatGPT did not accept the bootstrap send');
-      return void (await fail(sendRefusal ? `${notAccepted} (${sendRefusal})` : notAccepted));
+      { await fail(sendRefusal ? `${notAccepted} (${sendRefusal})` : notAccepted); return; }
     }
     agent = boot.agent || null;
     agentCommandId = agent && typeof boot.id === 'string' ? boot.id : null;
@@ -12023,7 +12023,7 @@
       text: 'The response stream is unavailable (resume HTTP 404).' });
     // Existing journal/wake/repair owners decide action; the failure neither ends this turn
     // nor renews its activity. A live native stream still vetoes navigation.
-    void flush();
+    flush();
   });
   window.addEventListener('message', (event) => {
     if (!alive || event.source !== window || event.origin !== location.origin || event.data?.type !== 'cos-usage') return;
@@ -12073,7 +12073,7 @@
     sentRequests.push({ id: ids[0], at, epoch });
     while (sentRequests.length > 8) sentRequests.shift();
     // A Send still waiting on its receipt re-checks now rather than on the next page mutation.
-    for (const check of pageViewChecks) void check();
+    for (const check of pageViewChecks) check();
   });
   window.addEventListener('message', (event) => {
     if (!alive || event.source !== window || event.origin !== location.origin || event.data?.type !== 'cos-send-model') return;
@@ -13263,7 +13263,7 @@
     // no observation, evidence or command of its can reach the app afterwards. Its
     // intervals drain themselves on their next tick through every().
     alive = false;
-    for (const check of pageViewChecks) void check();
+    for (const check of pageViewChecks) check();
     if (activityTimer !== null) {
       cancelLater(activityTimer);
       activityTimer = null;

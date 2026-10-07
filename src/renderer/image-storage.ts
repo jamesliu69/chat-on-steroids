@@ -9,7 +9,7 @@ let cleanup: { pending: boolean; result: ImageStorageClearResult | null; done: P
 export function imageStorageButton(): HTMLButtonElement {
   const button = el('button', 'btn small', () => t('Free image storage')) as HTMLButtonElement;
   button.type = 'button';
-  button.addEventListener('click', () => void showImageStorage());
+  button.addEventListener('click', () => showImageStorage());
   return button;
 }
 

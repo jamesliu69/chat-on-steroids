@@ -118,7 +118,7 @@ async function measure(url, bearer, timeoutMs, maxBytes, fetchImpl) {
     clearTimeout(timer);
     if (!completed) {
       controller.abort();
-      void reader?.cancel().catch(() => {});
+      reader?.cancel().catch(() => {});
     } else reader?.releaseLock();
   }
 }

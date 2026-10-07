@@ -2379,7 +2379,7 @@ async function revealSearchMatch(id: string, query: string): Promise<void> {
   readTimeline();
   row.scrollIntoView({ block: 'center' });
   row.classList.remove('is-search-hit');
-  void row.offsetWidth;
+  row.offsetWidth;
   row.classList.add('is-search-hit');
   window.setTimeout(() => row.classList.remove('is-search-hit'), 2600);
 }
@@ -4128,7 +4128,7 @@ function paintTurnNow(): void {
     turnNowText.title = text;
     // A new step fades in; restarting the animation needs the class off for one style pass.
     turnNow.classList.remove('is-new');
-    void turnNow.offsetWidth;
+    turnNow.offsetWidth;
     if (text) turnNow.classList.add('is-new');
   }
   const seconds = now?.since === undefined ? 0 : Math.max(0, Math.floor((Date.now() - now.since) / 1000));
