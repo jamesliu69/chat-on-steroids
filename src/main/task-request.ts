@@ -49,7 +49,7 @@ export function runTaskRequest<T>(id: string, fingerprint: string, work: (signal
   publish: (progress: TaskProgressUpdate) => void): Promise<T> {
   const previous = requests.get(id);
   if (previous) return previous.fingerprint === fingerprint ? previous.promise as Promise<T> : Promise.reject(new Error('task_request_conflict'));
-  for (const [key, request] of requests) { if (requests.size < 64) break; if (request.settled) requests.delete(key); }
+  for (const [key, request] of requests) { if (requests.size < 64) { break; } if (request.settled) requests.delete(key); }
   if (requests.size >= 64) return Promise.reject(new Error('too_many_task_requests'));
   const controller = new AbortController();
   const row: Request = { fingerprint, controller, promise: Promise.resolve(), settled: false };

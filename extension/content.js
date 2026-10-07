@@ -1473,7 +1473,7 @@
    * renames them when bindConversation() reports the real id.
    */
   async function flush() {
-    if (temporaryPlannerPage()) { while (queue.length) removeQueueEntry(0); return true; }
+    if (temporaryPlannerPage()) { while (queue.length) { removeQueueEntry(0); } return true; }
     if (commandJournalGate) return false;
     if (queue.length === 0) return true;
     if (flushWork) return flushWork;
@@ -11378,7 +11378,7 @@
       (openedConversation ? CLF_DOM.conversationId() === openedConversation : !CLF_DOM.conversationId());
     const redeemOnce = () => new Promise(resolve => {
       let done = false;
-      const finish = value => { if (done) return; done = true; clearTimeout(timer); resolve(value); };
+      const finish = value => { if (done) { return; } done = true; clearTimeout(timer); resolve(value); };
       // The app may have durably assigned this RUN_ID as owner even if the MV3 reply disappears.
       // Keep retry bounded to the pre-Send handshake; destinationAttempt has its own no-replay fence.
       const timer = setTimeout(() => finish(null), 30_000);
@@ -12718,13 +12718,13 @@
   function waitPageView(read, current, milliseconds, tickMs = 0) {
     return new Promise(resolve => {
       let busy = false, dirty = false, done = false, tick = null;
-      const finish = value => { if (done) return; done = true; pageViewChecks.delete(check); observer.disconnect(); clearTimeout(timer); if (tick) clearInterval(tick); resolve(value); };
+      const finish = value => { if (done) { return; } done = true; pageViewChecks.delete(check); observer.disconnect(); clearTimeout(timer); if (tick) { clearInterval(tick); } resolve(value); };
       const check = async () => {
         if (done) return;
         if (!current()) return finish(null);
         if (busy) { dirty = true; return; }
         busy = true;
-        try { let value = read(); if (value?.then) value = await value; if (current() && value) finish(value); }
+        try { let value = read(); if (value?.then) { value = await value; } if (current() && value) finish(value); }
         catch { finish(null); }
         finally { busy = false; if (dirty && !done) { dirty = false; void check(); } }
       };

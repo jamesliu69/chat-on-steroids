@@ -64,7 +64,7 @@ async function until(fn,description,timeout=12000){const end=Date.now()+timeout;
 let connection;let seq=0;const pending=new Map();
 async function cdp(method,params={},sessionId){const id=++seq;return new Promise((resolve,reject)=>{pending.set(id,{resolve,reject});connection.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}: {})}));});}
 const timings=[];
-async function tool(name,args,owner='session:fixture'){const start=Date.now();const result=await broker.execute(name,args,owner,null,async()=>true);timings.push({tool:name,action:args.action,ms:Date.now()-start,error:result.error});if(result.error)throw new Error(`${name}: ${result.error}`);return result;}
+async function tool(name,args,owner='session:fixture'){const start=Date.now();const result=await broker.execute(name,args,owner,null,async()=>true);timings.push({tool:name,action:args.action,ms:Date.now()-start,error:result.error});if(result.error){ throw new Error(`${name}: ${result.error}`); }return result;}
 async function snapshot(tabId){return until(async()=>{const r=await tool('browser_snapshot',{tabId,maxNodes:300,maxChars:16000});return r.value?.text ? r.value:null;},'snapshot');}
 const refFor=(snap,name)=>{const line=snap.text.split('\n').find(line=>/^\s*\[/.test(line)&&line.includes(name));assert.ok(line,`Missing ${name} in ${snap.text}`);return /^\s*\[([^\]]+)\]/.exec(line)?.[1];};
 const report={checks:[],run,timings};
@@ -267,4 +267,4 @@ try {
   report.ok=true;await fs.writeFile(path.join(output,'verification.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
   }
 } catch(e) {await fs.writeFile(path.join(output,'failure.json'),JSON.stringify({error:e.stack,stderr,checks:report.checks,timings},null,2));throw e;}
-finally {broker.reset();for(const ws of wakeClients)ws.terminate();connection?.close();chrome.kill();await new Promise(resolve=>wss.close(resolve));await new Promise(resolve=>server.close(resolve));}
+finally {broker.reset();for(const ws of wakeClients){ ws.terminate(); }connection?.close();chrome.kill();await new Promise(resolve=>wss.close(resolve));await new Promise(resolve=>server.close(resolve));}

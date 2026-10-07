@@ -42,7 +42,7 @@ export function planProgressText(raw: string): string {
   if (raw.length > 64_000) return '';
   const source = raw.trimStart();
   if (source[0] !== '{') return '';
-  const space = (text: string, at: number): number => { while (/\s/.test(text[at] ?? '') && at < text.length) at++; return at; };
+  const space = (text: string, at: number): number => { while (/\s/.test(text[at] ?? '') && at < text.length) { at++; } return at; };
   let at = 1;
   let reply: string | undefined;
   const keys = new Set<string>();

@@ -121,7 +121,7 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     return point;
   };
-  const until = async expression => { const end = Date.now() + 15_000; while (Date.now() < end) { if (await js(expression)) return; await new Promise(resolve => setTimeout(resolve, 40)); } throw new Error('Timeout: ' + expression + ' ' + JSON.stringify(await js('({errors,outputs})'))); };
+  const until = async expression => { const end = Date.now() + 15_000; while (Date.now() < end) { if (await js(expression)) { return; } await new Promise(resolve => setTimeout(resolve, 40)); } throw new Error('Timeout: ' + expression + ' ' + JSON.stringify(await js('({errors,outputs})'))); };
   try {
     await server.listen(); await win.loadURL(server.resolvedUrls.local[0] + 'fixture.html'); await until('window.ready');
     await js("window.setTerminalProject(null);document.getElementById('terminalToggle').click()");

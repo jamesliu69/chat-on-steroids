@@ -36,7 +36,7 @@ function field(parent: HTMLElement, label: string | (() => string), value = '', 
   const wrap = el('label', 'plugin-field'); const input = document.createElement('input');
   input.type = secret ? 'password' : 'text'; input.value = value;
   if (secret) { input.autocomplete = 'new-password'; input.spellcheck = false; }
-  wrap.append(el('span', '', label), input); if (hint) wrap.append(el('small', 'muted', hint)); parent.append(wrap); return input;
+  wrap.append(el('span', '', label), input); if (hint) { wrap.append(el('small', 'muted', hint)); } parent.append(wrap); return input;
 }
 function dialog(title: string | (() => string)): { box: HTMLDialogElement; body: HTMLElement } {
   document.querySelector('#pluginDialog')?.remove();
@@ -114,12 +114,12 @@ function showConnection(): void {
   actions.append(button(() => t("Open ChatGPT plugins"), async () => { await run(window.api.openLink('https://chatgpt.com/plugins')); }), button(() => t("Save & connect"), async () => {
     if (!appState) return;
     if (tunnel && !tunnel.value.trim()) { tunnel.focus(); throw new Error(t("Enter your Plugins tunnel ID.")); }
-    if (key?.value) { const next = await run(window.api.setApiKey(key.value, config.tunnel.profileId)); if (!next) return; key.value = ''; applyAppState(next); applyPluginsState(next); }
+    if (key?.value) { const next = await run(window.api.setApiKey(key.value, config.tunnel.profileId)); if (!next) { return; } key.value = ''; applyAppState(next); applyPluginsState(next); }
     if (tunnel) {
       const { capabilities, readOnly, commandAllowlist, tunnel: previousTunnel, ui, sessions, compaction, multiAgent, goal, mcp } = appState.config;
       const base: SettingsPatch = { capabilities, readOnly, commandAllowlist, tunnel: previousTunnel, ui, sessions, compaction, multiAgent, goal, mcp };
       const next = await run(window.api.saveSettings({ ...base, tunnel: { ...previousTunnel, pluginsTunnelId: tunnel.value.trim() } }, base));
-      if (!next) return; applyAppState(next); applyPluginsState(next);
+      if (!next) { return; } applyAppState(next); applyPluginsState(next);
     }
     const next = await run(window.api.connect());
     if (next) { applyAppState(next); applyPluginsState(next); toast(t("Plugin connection saved")); }
@@ -263,7 +263,7 @@ function showRecipe(recipe: PluginCatalogEntry): void {
     body.append(el('h3', 'plugin-preview-title', () => t("Tool preview")), tools);
   }
   const setup = document.createElement('details'); setup.className = 'plugin-about'; setup.append(disclosureSummary(() => t("Setup requirements")));
-  const steps = el('ol', 'plugin-steps'); for (const step of recipe.instructions) steps.append(el('li', '', () => t(step))); setup.append(steps, button(() => t("Open project & setup guide"), async () => { await run(window.api.openLink(recipe.homepage)); })); body.append(setup);
+  const steps = el('ol', 'plugin-steps'); for (const step of recipe.instructions) { steps.append(el('li', '', () => t(step))); } setup.append(steps, button(() => t("Open project & setup guide"), async () => { await run(window.api.openLink(recipe.homepage)); })); body.append(setup);
   const values = new Map<string, HTMLInputElement>();
   for (const item of recipe.fields) { const input = field(body, item.label, '', item.secret, item.placeholder); input.required = !!item.required; values.set(item.key, input); }
   const remote = recipe.source.kind === 'remote';
@@ -300,7 +300,7 @@ function showCustom(kind: PluginSource['kind'], path = ''): void {
     const selected = select.value as PluginSource['kind']; const value = location.value.trim(); if (!value) throw new Error(t("Enter the server location first."));
     const parsed: unknown = JSON.parse(args.value); if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) throw new Error(t("Arguments must be a JSON array of strings."));
     const source: PluginSource = { kind: selected, args: parsed };
-    if (selected === 'remote' || selected === 'github') source.url = value; else if (selected === 'mcpb') source.path = value; else if (selected === 'command') source.command = value; else { source.package = value; if (version.value.trim()) source.version = version.value.trim(); }
+    if (selected === 'remote' || selected === 'github') { source.url = value; } else if (selected === 'mcpb') { source.path = value; } else if (selected === 'command') { source.command = value; } else { source.package = value; if (version.value.trim()) source.version = version.value.trim(); }
     const signIn = oauth(); if (signIn) source.auth = 'oauth';
     const before = new Set(snapshot.plugins.map(plugin => plugin.id));
     if (await mutate(window.api.pluginsInstall({ name: name.value, source, credentials: !signIn && key.value.trim() && credential.value ? { [key.value.trim()]: credential.value } : {} }))) {

@@ -1327,10 +1327,10 @@
       while (id && visited.size < MAX_CALLS && !visited.has(id)) {
         visited.add(id);
         const parent = byId.get(id);
-        if (!parent) { if (!byId.has(id)) parentId = id; break; }
+        if (!parent) { if (!byId.has(id)) { parentId = id; } break; }
         if (conflictingRequestScope(parent, message)) break;
         const request = requestOf(parent);
-        if (request) { if (identify(request, result)) parentId = id; break; }
+        if (request) { if (identify(request, result)) { parentId = id; } break; }
         if (parent.author?.role !== 'assistant' || parent.recipient !== 'all' ||
             parent.status !== 'finished_successfully' || parent.end_turn === true) break;
         id = str(parent.metadata?.parent_id);
@@ -1763,7 +1763,7 @@
       if (!Array.isArray(data) || data.length > 32) continue;
       for (const row of data) {
         if (!Array.isArray(row) || row.length > 1024) continue;
-        for (const item of row) { if (--remaining < 0) break; inspect(item); }
+        for (const item of row) { if (--remaining < 0) { break; } inspect(item); }
       }
     }
     return conflict || snapshots.size > 1 || remaining <= 0 ? false : snapshots.values().next().value || null;
@@ -1940,7 +1940,7 @@
     if (!entry || !turnId || entry.id !== turnId || entry.turn.items.length > MAX_ROWS) return null;
     const messages = [], calls = [], slots = [], seen = new Set(), callSources = new Map(), executionIds = [], images = new Map();
     let lastAnswer = null;
-    const remember = id => { if (!id || seen.has(id)) return false; seen.add(id); return true; };
+    const remember = id => { if (!id || seen.has(id)) { return false; } seen.add(id); return true; };
     let work = 0;
     for (const [index, item] of entry.turn.items.entries()) {
       if (++work > MAX_ROWS) return null;

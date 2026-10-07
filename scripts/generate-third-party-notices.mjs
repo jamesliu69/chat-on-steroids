@@ -37,7 +37,7 @@ for (const [relative, entry] of Object.entries(lock.packages).sort(([a], [b]) =>
   const directory = path.join(root, relative);
   let manifest;
   try { manifest = JSON.parse(await fs.readFile(path.join(directory, 'package.json'), 'utf8')); }
-  catch (error) { if (entry.optional && error.code === 'ENOENT') continue; throw new Error(`Missing or invalid production dependency: ${relative}`); }
+  catch (error) { if (entry.optional && error.code === 'ENOENT') { continue; } throw new Error(`Missing or invalid production dependency: ${relative}`); }
   if (manifest.version !== entry.version) throw new Error(`Production dependency version differs from lockfile: ${relative}`);
   const files = [];
   // Include package-supplied notices in subdirectories too. Nested dependencies are inventoried

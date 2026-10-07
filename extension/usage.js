@@ -306,11 +306,11 @@
           typeof payload?.conversation_id !== 'string' || !CONVERSATION.test(payload.conversation_id)) continue;
       const opaque = value => typeof value === 'string' && value.length > 0 && value.length <= 200;
       const key = opaque(payload.turn_id) ? `${payload.conversation_id}\u0000${payload.turn_id}` : null;
-      if (payload.type === 'done') { if (key) streams.delete(key); continue; }
+      if (payload.type === 'done') { if (key) { streams.delete(key); } continue; }
       if (payload.type !== 'stream-item') continue;
-      if (typeof payload.encoded_item !== 'string' || payload.encoded_item.length > 512 * 1024) { if (key) streams.delete(key); continue; }
+      if (typeof payload.encoded_item !== 'string' || payload.encoded_item.length > 512 * 1024) { if (key) { streams.delete(key); } continue; }
       const frames = payload.encoded_item.split(/\r?\n\r?\n/);
-      if (frames.length > 16) { if (key) streams.delete(key); continue; }
+      if (frames.length > 16) { if (key) { streams.delete(key); } continue; }
       let stream = {};
       if (key && opaque(payload.stream_item_id) && (payload.parent_stream_item_id === null || opaque(payload.parent_stream_item_id))) {
         const now = Date.now();

@@ -63,7 +63,7 @@ app.whenReady().then(async () => {
     await win.loadURL(server.resolvedUrls.local[0]+'fixture.html');
     const js=code=>win.webContents.executeJavaScript(code);
     const until=async predicate=>{
-      for(let i=0;i<100;i++) { if(await js(predicate)) return; await new Promise(r=>setTimeout(r,30)); }
+      for(let i=0;i<100;i++) { if(await js(predicate)) { return; } await new Promise(r=>setTimeout(r,30)); }
       throw new Error('Renderer did not reach: '+predicate+' '+await js(`JSON.stringify({ready:window.fixtureReady,rows:document.querySelectorAll('#sessionList [data-id]').length,toasts:document.getElementById('toasts')?.textContent,body:document.body.innerText.slice(-1600)})`));
     };
     await until('window.fixtureReady && document.querySelectorAll("#sessionList [data-id]").length===2');

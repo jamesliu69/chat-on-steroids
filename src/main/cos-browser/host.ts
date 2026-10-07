@@ -478,7 +478,7 @@ export class CosBrowser {
     const frame = this.frames.get(id);
     if (!frame) return;
     if (frame.base.isMinimized()) frame.base.restore();
-    if (focus) frame.base.show(); else frame.base.showInactive();
+    if (focus) { frame.base.show(); } else frame.base.showInactive();
     if (focus) {
       frame.base.focus();
       // Keys go to the page the user came for, not to the toolbar's first button.
@@ -871,7 +871,7 @@ export class CosBrowser {
             if (!ownsSession()) break;
             await ses.cookies.remove(HOME_URL, cookie.name);
           }
-          for (const cookie of previous) { if (!ownsSession()) break; await set(cookie); }
+          for (const cookie of previous) { if (!ownsSession()) { break; } await set(cookie); }
           await ses.cookies.flushStore();
         } catch { logWarn('cos browser: could not restore the previous sign-in after a failed transfer'); }
       }
@@ -954,7 +954,7 @@ export class CosBrowser {
 
     reload: (tabId, bypassCache) => {
       const contents = this.contentsOf(tabId);
-      if (bypassCache) contents.reloadIgnoringCache(); else contents.reload();
+      if (bypassCache) { contents.reloadIgnoringCache(); } else contents.reload();
     },
 
     activate: tabId => this.model.activate(tabId),

@@ -61,7 +61,7 @@ let stderr='',connection,seq=0;const pending=new Map();chrome.stderr.on('data',b
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(read,label,timeout=12000){const end=Date.now()+timeout;let last;while(Date.now()<end){try{const v=await read();if(v)return v;}catch(e){last=e;}await delay(100);}throw new Error(`${label}: ${last?.message||'timed out'}`);}
 function cdp(method,params={},sessionId){const id=++seq;return new Promise((resolve,reject)=>{pending.set(id,{resolve,reject});connection.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));});}
-async function evaluate(sessionId,expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},sessionId);if(r.exceptionDetails)throw new Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result?.value;}
+async function evaluate(sessionId,expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},sessionId);if(r.exceptionDetails){ throw new Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text); }return r.result?.value;}
 const report={run,checks:[],workerErrors:[]};
 try {
   const active=await until(async()=>(await fs.readFile(path.join(profile,'DevToolsActivePort'),'utf8')).split('\n'),'Chrome startup');
@@ -109,4 +109,4 @@ try {
   }
   report.requests=Object.fromEntries(requests);await fs.writeFile(path.join(output,expectUnavailable?'before.json':'verification.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
 } catch(error){await fs.writeFile(path.join(output,'failure.json'),JSON.stringify({...report,error:error.stack,stderr,requests:Object.fromEntries(requests)},null,2));throw error;}
-finally {broker.reset();for(const ws of clients)ws.terminate();connection?.close();chrome.kill();await new Promise(resolve=>wss.close(resolve));await new Promise(resolve=>server.close(resolve));}
+finally {broker.reset();for(const ws of clients){ ws.terminate(); }connection?.close();chrome.kill();await new Promise(resolve=>wss.close(resolve));await new Promise(resolve=>server.close(resolve));}

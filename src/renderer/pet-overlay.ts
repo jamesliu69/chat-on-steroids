@@ -114,7 +114,7 @@ function clearProps(view: PetView): void {
 function paintProps(view: PetView): void {
   const { machine, manifest } = view;
   const scene = machine.scene;
-  if (!scene) { if (view.propScene) clearProps(view); return; }
+  if (!scene) { if (view.propScene) { clearProps(view); } return; }
   if (view.propScene !== scene) {
     clearProps(view);
     view.propScene = scene;

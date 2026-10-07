@@ -65,7 +65,7 @@ app.whenReady().then(async () => {
       for (let y=0;y<size.height;y++) for(let x=0;x<size.width;x++) {
         const i=(y*size.width+x)*4;
         const delta = Math.max(...[0,1,2].map(c => Math.abs(a[i+c]-b[i+c])));
-        if(delta) { changed++; if(delta>2) material++; if(points.length<10) points.push({x,y,a:[...a.subarray(i,i+4)],b:[...b.subarray(i,i+4)]}); }
+        if(delta) { changed++; if(delta>2) { material++; } if(points.length<10) points.push({x,y,a:[...a.subarray(i,i+4)],b:[...b.subarray(i,i+4)]}); }
       }
       // Fractional DPI can re-rasterize a few edge pixels by 1–2 channel levels.
       // Geometry and hit targets remain exact; visible residue must still fail.

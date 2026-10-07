@@ -51,7 +51,7 @@
   sendInput:input=>{const entry={...input,sessionId:id,conversationId:'preview-chat',state:'queued',owner:null,createdAt:Date.now()};inputs.push(entry);notify();return ok(entry);},
   draftGoalOpening:text=>ok({reply:text,model:'sample'}),
   draftTaskPlan:()=>ok(['Inspect the current layout and behavior.','Implement the focused adjustment.','Verify keyboard and narrow layout.']),
-  editQueuedInput:(inputId,text)=>{const entry=inputs.find(e=>e.id===inputId);if(entry)entry.text=text;notify();return ok(entry);},
+  editQueuedInput:(inputId,text)=>{const entry=inputs.find(e=>e.id===inputId);if(entry){ entry.text=text; }notify();return ok(entry);},
   reorderQueuedInputs:(_id,order)=>{inputs.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));return ok(true);},
   skillLibrary:()=>ok({skills:['frontend-design','code-review','test-driven-development'].map((name,i)=>({id:name,name,displayName:name,description:['Build and polish frontend interfaces.','Review changes for bugs and regressions.','Write tests before implementing changes.'][i],path:'/sample/'+name+'/SKILL.md',scope:'user',source:'local'})),roots:[],warnings:[]}),
   chooseFiles:()=>ok([{id:'fixture-file',name:'layout.txt',mimeType:'text/plain',size:32}]),

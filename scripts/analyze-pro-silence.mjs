@@ -38,7 +38,7 @@ for (const [index, meta] of selected.entries()) {
   const users = [...new Set(rows.filter(e => e.kind === 'user_message').map(e => e.time))].sort((a,b) => a-b);
   const calls = rows.filter(e => e.kind === 'tool_call' && e.turn).sort((a,b) => a.time-b.time);
   const turns = new Map();
-  for (const call of calls) { if (!turns.has(call.turn)) turns.set(call.turn, []); turns.get(call.turn).push(call); }
+  for (const call of calls) { if (!turns.has(call.turn)) { turns.set(call.turn, []); } turns.get(call.turn).push(call); }
   const gaps = [];
   for (const [turn, calls] of turns) {
     const points = [...calls.map(e => ({ ...e, end: e.time + Math.max(0, e.duration) })),

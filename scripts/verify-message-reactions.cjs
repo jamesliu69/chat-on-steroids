@@ -48,7 +48,7 @@ app.whenReady().then(async () => {
     win.webContents.on('console-message',event=>{if(event.level==='error')console.error(event.message)});
     await win.loadURL(server.resolvedUrls.local[0]+'fixture.html');
     const js = code=>win.webContents.executeJavaScript(code);
-    const until=async predicate=>{for(let i=0;i<200;i++){if(await js(predicate))return;await new Promise(r=>setTimeout(r,30))}throw Error(predicate+' '+await js('document.body.innerText.slice(-1200)'))};
+    const until=async predicate=>{for(let i=0;i<200;i++){if(await js(predicate)){ return; }await new Promise(r=>setTimeout(r,30))}throw Error(predicate+' '+await js('document.body.innerText.slice(-1200)'))};
     await until('window.ready && document.querySelector("#sessionList [data-id]")');
     await js('document.querySelector("#sessionList [data-id]").click()');
     await until('document.querySelector(".said.is-user")');
@@ -62,7 +62,7 @@ app.whenReady().then(async () => {
       const measure=`(()=>{const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return [r.x,r.y,r.width,r.height]};return {bubble:rect('.user-message-text'),answer:rect('.ev-assistant_message'),scroll:document.getElementById('chatBody').scrollTop,height:document.getElementById('chatBody').clientHeight,innerWidth:window.innerWidth}})()`;
       // Resizing and zooming apply on the next layouts, not on return: read the geometry only once
       // two reads a frame apart agree. A first read mid-resize flaked under load (macOS) and on Windows.
-      const settled=async()=>{let last=null;for(let i=0;i<50;i++){await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');const now=JSON.stringify(await js(measure));if(now===last)return JSON.parse(now);last=now;await new Promise(r=>setTimeout(r,40))}return JSON.parse(last)};
+      const settled=async()=>{let last=null;for(let i=0;i<50;i++){await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');const now=JSON.stringify(await js(measure));if(now===last){ return JSON.parse(now); }last=now;await new Promise(r=>setTimeout(r,40))}return JSON.parse(last)};
       const before=await settled();
       await js('window.originalBubble=document.querySelector(".said.is-user");window.reaction("😂")');
       await until('document.querySelector(".message-reaction")?.textContent==="😂"');

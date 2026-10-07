@@ -110,7 +110,7 @@ export async function startChatModelDiscovery(allowOpen = true): Promise<ChatMod
       catch (error) {
         if (request?.nonce !== nonce) return;
         request = null;
-        if (deadline) clearTimeout(deadline); deadline = null;
+        if (deadline) { clearTimeout(deadline); } deadline = null;
         failed(`${(error as Error).message}. Retry model discovery.`.slice(0, 240));
         changed(); wakeBrowserWork();
       }
@@ -169,10 +169,10 @@ export function observeChatModels(raw: unknown): boolean {
     writeDurableSoon('chat-models', { observedAt: catalog.observedAt, models });
   } else failed(error);
   request = null;
-  if (deadline) clearTimeout(deadline); deadline = null;
+  if (deadline) { clearTimeout(deadline); } deadline = null;
   changed(); wakeBrowserWork(); return true;
 }
 export function resetChatModelsForTests(): void {
-  if (deadline) clearTimeout(deadline); deadline = null; launch = null;
+  if (deadline) { clearTimeout(deadline); } deadline = null; launch = null;
   request = null; lastProblem = null; unofferedAsked.clear(); catalog = { state: 'unknown', requestedAt: null, observedAt: null, models: [] };
 }

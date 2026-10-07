@@ -998,7 +998,7 @@ function paintSessions(): void {
     heading.addEventListener('click', event => {
       event.preventDefault();
       const open = !expandedProjects.has(id);
-      if (open) expandedProjects.add(id); else expandedProjects.delete(id);
+      if (open) { expandedProjects.add(id); } else expandedProjects.delete(id);
       section.open = open;
     });
     if (project) {
@@ -2553,7 +2553,7 @@ async function fillTimelineHistory(): Promise<void> {
       }
       const loaded = await loadDetail(true, demand.direction < 0 ? cursor : undefined, demand.direction > 0 ? cursor : undefined);
       if (demand.sessionId !== selectedId || demand.selection !== selectionGeneration || detailFor !== selectedId) continue;
-      if (!loaded) { if (demand === historyDemand) historyDemand = null; continue; }
+      if (!loaded) { if (demand === historyDemand) { historyDemand = null; } continue; }
       const next = demand.direction < 0
         ? events.reduce((oldest, event) => Math.min(oldest, positionOf(event)), Infinity)
         : events.reduce((newest, event) => Math.max(newest, positionOf(event)), 0);
@@ -2881,7 +2881,7 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
       summary.append(avatar, el('span', '', () => communicationTitle(event)));
       const communicationKey = `agent:${context?.id ?? selectedId}:${event.seq}`;
       box.open = openTools.has(communicationKey);
-      box.addEventListener('toggle', () => { if (box.open) openTools.add(communicationKey); else openTools.delete(communicationKey); });
+      box.addEventListener('toggle', () => { if (box.open) { openTools.add(communicationKey); } else openTools.delete(communicationKey); });
       box.append(summary);
       box.append(textBlock('msg', event.message.text, event.message.truncated, event.message.chars));
       if (!context) {
@@ -3438,7 +3438,7 @@ function foldRoutineActivity(rows: HTMLElement[]): HTMLElement[] {
       fold.open = openTools.has(`routine:${members[0]!.dataset.timelineKey}`);
       fold.addEventListener('toggle', () => {
         const key = `routine:${fold.dataset.firstKey}`;
-        if (fold.open) openTools.add(key); else openTools.delete(key);
+        if (fold.open) { openTools.add(key); } else openTools.delete(key);
       });
       fold.append(el('summary'), el('div', 'routine-activity-body'));
     }
@@ -3473,7 +3473,7 @@ function groupToolRows(rows: HTMLElement[], scope = selectedId, groups = toolGro
       const summary = document.createElement('summary');
       summary.append(el('span', 'activity-symbol'), el('span', 'activity-title'), disclosureChevron('ico activity-chevron'));
       group.append(summary, el('div', 'tool-group-body'));
-      group.addEventListener('toggle', () => { if (group!.open) openTools.add(key); else openTools.delete(key); });
+      group.addEventListener('toggle', () => { if (group!.open) { openTools.add(key); } else openTools.delete(key); });
       group.open = openTools.has(key) || rows.slice(i, end).some((row) => row.querySelector('details[open]')); groups.set(key, group);
     }
     // Name the group after ChatGPT's recap of the round ("Inspected downloads and updated the plan"):
@@ -5836,7 +5836,7 @@ export function initChat(next: Deps): void {
       const requestId = crypto.randomUUID(); goalProgress = { requestId, selection, phase: 'saving', text: '' }; paintGoalProgress();
       try {
         const saved = await run(api.setSessionObjective(id, text, mode));
-        if (goalProgress?.requestId === requestId) { goalProgress.phase = saved ? 'saved' : 'failed'; if (!saved) goalProgress.error = 'Task could not be saved'; paintGoalProgress(); }
+        if (goalProgress?.requestId === requestId) { goalProgress.phase = saved ? 'saved' : 'failed'; if (!saved) { goalProgress.error = 'Task could not be saved'; } paintGoalProgress(); }
         if (saved && selectedId === id && selectionGeneration === selection && objective.value === draft &&
             $<HTMLSelectElement>('sessionObjectiveMode').value === mode) { delete objective.dataset.edited; objective.dataset.saved = objective.value; }
       } finally {
@@ -5975,7 +5975,7 @@ export function initChat(next: Deps): void {
       ++sessionsLoadGeneration;
       projects = [...projects.filter(row => row.id !== project.id), project];
       expandedProjects.add(project.id);
-      if (generation === selectionGeneration) selectNewChat(project.id); else paintSessions();
+      if (generation === selectionGeneration) { selectNewChat(project.id); } else paintSessions();
     } finally { button.disabled = false; }
   });
   const composerMenus = [...document.querySelectorAll<HTMLDetailsElement>('.composer-menu, .session-controls')];

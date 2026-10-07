@@ -172,7 +172,7 @@ export function createWorkspaceTerminal(onToggleBottom: () => void, initialMount
     },
     newTab(): string | null { return create(); },
     tabs(): WorkspaceTerminalTab[] { return [...tabs.values()].map(tab => ({ id: tab.id, title: tab.title, exited: tab.exited })); },
-    selectTab(id: string): void { if (!tabs.has(id)) return; selected = id; paint(); fit(); if (open) tabs.get(id)?.term.focus(); },
+    selectTab(id: string): void { if (!tabs.has(id)) { return; } selected = id; paint(); fit(); if (open) tabs.get(id)?.term.focus(); },
     closeTab,
     hide(): void { setOpen(false); },
     visible(): boolean { return open; },

@@ -114,7 +114,7 @@ app.whenReady().then(async () => {
     };
     const until = async expression => {
       const deadline = Date.now() + 12_000;
-      while (Date.now() < deadline) { if (await js(expression)) return; await new Promise(resolve => setTimeout(resolve, 30)); }
+      while (Date.now() < deadline) { if (await js(expression)) { return; } await new Promise(resolve => setTimeout(resolve, 30)); }
       throw new Error('Renderer condition timed out: ' + expression + ' ' + JSON.stringify(await js('window.fixtureErrors')));
     };
     const screenshot = async name => {

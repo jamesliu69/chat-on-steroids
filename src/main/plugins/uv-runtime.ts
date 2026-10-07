@@ -102,7 +102,7 @@ export function ensureManagedUv(fetcher: typeof fetch = fetch, platform = proces
       for (const [name, bytes] of files) await fs.writeFile(path.join(stage, executable(name as 'uv' | 'uvx', platform)), bytes, { mode: 0o755, flag: 'wx' });
       await fs.mkdir(path.dirname(directory), { recursive: true });
       try { await fs.rename(stage, directory); }
-      catch (error) { if ((await fs.stat(target).catch(() => null))?.isFile()) return target; throw error; }
+      catch (error) { if ((await fs.stat(target).catch(() => null))?.isFile()) { return target; } throw error; }
     } finally { await fs.rm(stage, { recursive: true, force: true }); }
     return target;
   })().finally(() => { pending = null; });

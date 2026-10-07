@@ -815,7 +815,7 @@ export class PluginManager {
           return;
         }
         const tool = live.tools.find(tool => tool.name === name);
-        if (!tool) { if (live.users === 0) await this.disconnect(row); return; }
+        if (!tool) { if (live.users === 0) { await this.disconnect(row); } return; }
         live.users++;
         return { row, live, tool };
       });

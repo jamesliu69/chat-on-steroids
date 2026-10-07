@@ -84,13 +84,13 @@ export class PetMachine {
   private enter(state: PetAnimation): void { this.state=state; this.elapsed=0; }
   private cancel(): void { this.scene=null; this.phases=[]; this.walkDistance=0; }
   private rest(): void { this.enter('idle'); this.nextDecision=this.clock+2500+this.random()*3500; }
-  show(): void { if(this.visible)return; this.cancel(); this.clicks=[]; this.enter('spawn'); this.nextSpecial=this.clock+SPECIAL_COOLDOWN; }
+  show(): void { if(this.visible){ return; } this.cancel(); this.clicks=[]; this.enter('spawn'); this.nextSpecial=this.clock+SPECIAL_COOLDOWN; }
   hide(): void { this.cancel(); this.pointer=null; this.clicks=[]; this.state='hidden';this.elapsed=0; }
   reset(): void { this.cancel();this.pointer=null;this.position=clampPosition({x:this.width-200,y:this.height-230},this.width,this.height);if(this.visible)this.rest(); }
   /** A held pet stays held: the work area can change by a pixel mid-drag (menu bar, Dock). */
-  resize(width:number,height:number): void { this.width=width;this.height=height;this.position=clampPosition(this.position,width,height);if(this.pointer)return;this.cancel();if(this.visible)this.rest(); }
+  resize(width:number,height:number): void { this.width=width;this.height=height;this.position=clampPosition(this.position,width,height);if(this.pointer){ return; }this.cancel();if(this.visible)this.rest(); }
   setReducedMotion(value:boolean): void { this.reducedMotion=value;this.cancel();this.pointer=null;if(this.visible)this.rest(); }
-  beginPointer(id:number,p:Point): boolean { if(!this.visible || this.pointer)return false;this.pointer={id,start:p,origin:{...this.position},dragging:false};return true; }
+  beginPointer(id:number,p:Point): boolean { if(!this.visible || this.pointer){ return false; }this.pointer={id,start:p,origin:{...this.position},dragging:false};return true; }
   movePointer(id:number,p:Point): void {
     const pointer=this.pointer;if(pointer?.id!==id)return;
     const dx=p.x-pointer.start.x,dy=p.y-pointer.start.y;
@@ -99,7 +99,7 @@ export class PetMachine {
     this.position=clampPosition({x:pointer.origin.x+dx,y:pointer.origin.y+dy},this.width,this.height);
   }
   endPointer(id:number,cancelled=false): void {
-    const pointer=this.pointer;if(pointer?.id!==id)return;this.pointer=null;
+    const pointer=this.pointer;if(pointer?.id!==id){ return; }this.pointer=null;
     if(pointer.dragging){this.enter('landing');this.nextSpecial=this.clock+SPECIAL_COOLDOWN;}
     else if(!cancelled)this.poke();
   }
@@ -145,15 +145,15 @@ export class PetMachine {
       if(phase.distance)this.position=clampPosition({x:this.scene.from.x+this.facing*phase.distance*Math.min(1,this.elapsed/phase.duration),y:this.position.y},this.width,this.height);
       if(this.elapsed>=phase.duration){
         this.scene.phase++;this.scene.from={...this.position};const next=this.phases[this.scene.phase];
-        if(next)this.enter(next.animation);else{this.cancel();this.rest();}
+        if(next){ this.enter(next.animation); }else{this.cancel();this.rest();}
       }return;
     }
     if(this.state==='held')return;
     if(this.state==='walk'){
       this.position=clampPosition({x:this.walkOrigin.x+this.walkDistance*Math.min(1,this.elapsed/this.walkDuration),y:this.position.y},this.width,this.height);
-      if(this.elapsed>=this.walkDuration)this.rest();return;
+      if(this.elapsed>=this.walkDuration){ this.rest(); }return;
     }
-    if(this.state!=='idle') { if(this.elapsed>=animationDuration(this.state as PetAnimation,this.manifest))this.rest();return; }
+    if(this.state!=='idle') { if(this.elapsed>=animationDuration(this.state as PetAnimation,this.manifest)){ this.rest(); }return; }
     if(this.reducedMotion || this.pointer)return;
     if(this.clock>=this.nextSpecial){
       this.nextSpecial=this.clock+SPECIAL_COOLDOWN+this.random()*20_000;

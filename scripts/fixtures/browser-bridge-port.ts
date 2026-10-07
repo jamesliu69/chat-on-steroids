@@ -118,8 +118,8 @@ void app.whenReady().then(async () => {
     const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
     cdpSocket.on('message', raw => {
       const message = JSON.parse(String(raw)); const request = pending.get(message.id);
-      if (!request) return; pending.delete(message.id);
-      if (message.error) request.reject(new Error(message.error.message)); else request.resolve(message.result);
+      if (!request) { return; } pending.delete(message.id);
+      if (message.error) { request.reject(new Error(message.error.message)); } else request.resolve(message.result);
     });
     const cdp = (method: string, params = {}, sessionId?: string): Promise<any> => new Promise((resolve, reject) => {
       const id = ++sequence; pending.set(id, { resolve, reject });

@@ -43,7 +43,7 @@ app.on('web-contents-created', (_event, contents) => {
 const deadline = setTimeout(() => { console.error('Pet toggle timed out', { userData, errors }); app.exit(1); }, 45000);
 async function until(predicate, label) {
   const end = Date.now() + 5000;
-  while (Date.now() < end) { if (await predicate()) return; await sleep(40); }
+  while (Date.now() < end) { if (await predicate()) { return; } await sleep(40); }
   throw new Error(`Timed out: ${label}; ${errors.join('; ')}`);
 }
 async function petRect(id) {

@@ -230,7 +230,7 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
         // A preflight/attach refusal owns no debugger to detach. In particular, the
         // active-tab renderer may already own it; cleanup must not cancel that work.
         if (acquired) await release(state);
-        else { if (tabs.get(tabId) === state) tabs.delete(tabId); await save(); }
+        else { if (tabs.get(tabId) === state) { tabs.delete(tabId); } await save(); }
       }
       throw cause;
     }
@@ -241,7 +241,7 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
     await new Promise((resolve,reject) => {
       let done = false;
       const finish = cause => {
-        if(done)return;done=true;clearTimeout(timer);
+        if(done){ return; }done=true;clearTimeout(timer);
         chrome.tabs.onUpdated.removeListener(changed);chrome.tabs.onRemoved.removeListener(removed);
         cause?reject(cause):resolve();
       };
@@ -436,7 +436,7 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
       if (size > 24000) break;
       values.push(value);
     }
-    if (args.clear) { if (network) state.network.clear(); else state.console = []; }
+    if (args.clear) { if (network) { state.network.clear(); } else state.console = []; }
     return { entries:values,nextCursor:values.at(-1)?.seq || args.after || 0,truncated:values.length < matching.length,dropped:network ? state.networkDropped : state.consoleDropped,capture:'Since debugger attachment; older events are unavailable.' };
   }
   async function inspect(command) {
@@ -491,7 +491,7 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
               snapshot:navigating?'loading':attached?'interactive':tab.url==='about:blank'?'attach-required':'inspect',
               input:protectedPage?'protected':claimed&&!attached?'other-owner':!policy.write?'disabled':navigating?'loading':attached?'available':'attach-required'
             }};
-          size+=JSON.stringify(value).length;if(size>24000)break;values.push(value);
+          size+=JSON.stringify(value).length;if(size>24000){ break; }values.push(value);
         }
         const nextOffset=(args.offset || 0)+values.length;
         return {value:{browserId,tabs:values,total:matched.length,truncated:nextOffset<matched.length,nextOffset:nextOffset<matched.length?nextOffset:null,
@@ -566,7 +566,7 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
     for (const [key,val] of Object.entries(value || {}).slice(0,50)) {
       if (/authorization|cookie|token|api.?key/i.test(key)) { result[key] = '[redacted]'; continue; }
       const text = cut(val,1000); size += key.length+text.length;
-      if (size > 6000) break; result[cut(key,100)] = text;
+      if (size > 6000) { break; } result[cut(key,100)] = text;
     }
     return result;
   };
@@ -632,7 +632,7 @@ export function createBrowserControl(chrome, transport, protectedTab = () => fal
       receipt = null; await save();
     }
     const poll = await transport('/browser-control',{method:'POST',body:JSON.stringify({action:'poll',browserId,name:/Edg\//.test(navigator.userAgent) ? 'Edge' : 'Chrome / Chromium',enabled})});
-    if (!poll.ok) { if (poll.status === 401 || poll.status === 426) await revoke(); return; }
+    if (!poll.ok) { if (poll.status === 401 || poll.status === 426) { await revoke(); } return; }
     policy = poll.data.policy;
     if (epoch !== poll.data.epoch) { await Promise.all([...tabs.values()].map(release)); epoch = poll.data.epoch; await save(); }
     if (!enabled || !policy?.read) { await revoke(); return; }

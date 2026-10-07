@@ -97,7 +97,7 @@ export function browserPage(operation, args) {
       if (++visited > 15000 || emitted >= args.maxNodes || chars >= args.maxChars) { truncated = true; break; }
       const { node, depth, namedParent } = stack.pop();
       if (node.nodeType === Node.TEXT_NODE) {
-        if (namedParent) continue; // The ancestor's accessible name already includes this text.
+        if (namedParent) { continue; } // The ancestor's accessible name already includes this text.
         const text = compact(node.nodeValue, 500);
         if (text && (!filter || text.toLocaleLowerCase().includes(filter))) {
           const line = `${'  '.repeat(Math.min(depth, 16))}${text}`;
@@ -144,7 +144,7 @@ export function browserPage(operation, args) {
           }
         }
       }
-      if (node.tagName === 'SELECT') continue; // Options were emitted with their owning ref above.
+      if (node.tagName === 'SELECT') { continue; } // Options were emitted with their owning ref above.
       // Named containers (headings, cards, comboboxes) can contain independently
       // actionable links/editors. Traverse them without duplicating their label text.
       if (depth >= 40) { truncated = true; continue; }
@@ -244,7 +244,7 @@ export function boundedBrowserValue(value) {
       const item = descriptor && 'value' in descriptor ? read(descriptor.value, depth + 1) : '[accessor]';
       // Never assign an attacker-controlled sparse array index (JSON would expand its holes).
       if (Array.isArray(result)) result.push(item);
-      else { if (key.length > 200) truncated = true; result[key.slice(0,200)] = item; }
+      else { if (key.length > 200) { truncated = true; } result[key.slice(0,200)] = item; }
     }
     return result;
   };

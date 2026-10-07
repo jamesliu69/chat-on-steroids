@@ -2564,7 +2564,7 @@ async function readCatalogSummary(id: string): Promise<SessionSummary | null> {
         !legacyLabelPending(checkpoint.summary)) {
       const mutations = await Promise.all(['events.jsonl', 'messages.json', 'messages'].map(async name => {
         try { return (await fs.stat(path.join(dir, name))).mtimeMs; }
-        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw error; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return 0; } throw error; }
       }));
       if (metadata.mtimeMs > 0 && mutations.every(at => at < metadata.mtimeMs)) return checkpoint.summary;
     }

@@ -2506,7 +2506,7 @@ var CLF_DOM = (() => {
           // The editor may have drawn its own token in place of the one we inserted.
           const own = value ? [] : safe(ownMentions, []);
           if (own.length) {
-            safe(() => { for (const node of own) node.remove(); box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null })); }, undefined);
+            safe(() => { for (const node of own) { node.remove(); } box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null })); }, undefined);
           }
           if (observer) observer.disconnect();
           if (unsubscribeEvidence) unsubscribeEvidence();
@@ -2614,7 +2614,7 @@ var CLF_DOM = (() => {
         if (observeEvidence) unsubscribeEvidence = observeEvidence(check);
         // Readiness and acceptance share one deadline below the app's command lease.
         const timeout = Number.isFinite(acceptanceTimeoutMs) ? Math.max(1, Math.min(30000, acceptanceTimeoutMs)) : 30000;
-        timer = setTimeout(() => { if (attempted) check(); if (!attempted || !acceptUserReceipt) finish(false); }, timeout);
+        timer = setTimeout(() => { if (attempted) { check(); } if (!attempted || !acceptUserReceipt) finish(false); }, timeout);
         check();
       });
     } catch {
@@ -2844,13 +2844,13 @@ var CLF_DOM = (() => {
     };
     const wait = (read, timeout = 3000) => new Promise(resolve => {
       let reading = false, dirty = false, done = false;
-      const finish = value => { if (done) return; done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
+      const finish = value => { if (done) { return; } done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
       const check = async () => {
         if (done) return;
         if (!stillCurrent()) return finish(null);
         if (reading) { dirty = true; return; }
         reading = true;
-        try { let value = read(); if (value?.then) value = await value; if (stillCurrent() && value) finish(value); }
+        try { let value = read(); if (value?.then) { value = await value; } if (stillCurrent() && value) finish(value); }
         catch { finish(null); }
         finally { reading = false; if (dirty && !done) { dirty = false; void check(); } }
       };
@@ -2862,7 +2862,7 @@ var CLF_DOM = (() => {
     // The shell trigger needs MAIN ownership proof. A cold account can hydrate
     // after the first reply, so DOM readiness must refresh that proof as well.
     const readyTrigger = () => wait(async () => { await readPickerState(); return trigger(); }, 15000);
-    const key = (node, value) => { if (!node || !stillCurrent()) return false; node.focus(); node.dispatchEvent(new KeyboardEvent('keydown', { key: value, code: value, bubbles: true, cancelable: true })); return true; };
+    const key = (node, value) => { if (!node || !stillCurrent()) { return false; } node.focus(); node.dispatchEvent(new KeyboardEvent('keydown', { key: value, code: value, bubbles: true, cancelable: true })); return true; };
     return {
       state,
       async open() {
@@ -2965,7 +2965,7 @@ var CLF_DOM = (() => {
     if (before.work.getAttribute('aria-checked') !== 'true' || before.chat.disabled || before.chat.getAttribute('aria-disabled') === 'true') return false;
     return new Promise(resolve => {
       let done = false;
-      const finish = value => { if (done) return; done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
+      const finish = value => { if (done) { return; } done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
       const check = () => {
         if (!stillCurrent()) return finish(false);
         const next = state();
@@ -3213,7 +3213,7 @@ var CLF_DOM = (() => {
     const toggle = toggles[0], sidebarId = toggle.getAttribute('aria-controls');
     return new Promise(resolve => {
       let done = false;
-      const finish = value => { if (done) return; done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
+      const finish = value => { if (done) { return; } done = true; observer.disconnect(); clearTimeout(timer); resolve(value); };
       const check = () => {
         if (!stillCurrent()) return finish(null);
         const sidebar = document.getElementById(sidebarId), control = sidebar && link(sidebar);

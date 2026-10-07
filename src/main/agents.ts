@@ -2662,7 +2662,7 @@ export function pendingCount(id: string, runId?: string): number {
  * terminal-only release policy; pending reports are never discarded now.
  */
 export function releaseQuiescentRun(options: { allowPendingReports?: boolean; reason?: string } = {}, runId?: string): boolean {
-  if (runId === undefined) { let parked = false; for (const id of [...runs.keys()]) parked = releaseQuiescentRun(options, id) || parked; return parked; }
+  if (runId === undefined) { let parked = false; for (const id of [...runs.keys()]) { parked = releaseQuiescentRun(options, id) || parked; } return parked; }
   const run = scopedRun(runId);
   if (!run) return false;
   if (activeSpawnStages.has(run)) return false;

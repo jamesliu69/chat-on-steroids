@@ -60,7 +60,7 @@ app.whenReady().then(async () => {
     win=new BrowserWindow({show:false,width:1180,height:760,webPreferences:{offscreen:true,sandbox:true}});
     const js=e=>win.webContents.executeJavaScript(e);
     const pause=ms=>new Promise(r=>setTimeout(r,ms));
-    const until=async(expression,ms=6000)=>{const end=Date.now()+ms;while(Date.now()<end){if(await js(expression))return;await pause(40);}throw new Error('Timeout: '+expression);};
+    const until=async(expression,ms=6000)=>{const end=Date.now()+ms;while(Date.now()<end){if(await js(expression)){ return; }await pause(40);}throw new Error('Timeout: '+expression);};
     const open=async query=>{
       await win.loadURL(server.resolvedUrls.local[0]+'fixture.html?'+query);
       await until('window.fixtureReady===true');

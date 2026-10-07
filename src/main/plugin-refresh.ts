@@ -171,7 +171,7 @@ export function pendingPluginRefreshes(): Promise<PluginRefreshRequest[]> {
       // as already current while ChatGPT showed 8.
       const unconfirmed = found?.attempted === true && found.completedSchemaId !== found.schemaId;
       const next: Row = { surface: publication.surface, schemaId: publication.schemaId, id: randomUUID(), appId: found?.appId ?? null, completedSchemaId: unconfirmed ? null : found?.completedSchemaId ?? null, attempted: false, manual: false };
-      if (found) current[current.indexOf(found)] = next; else current.push(next);
+      if (found) { current[current.indexOf(found)] = next; } else current.push(next);
       changed = true;
     }
     if (changed) {
@@ -277,4 +277,4 @@ export function failPluginRefresh(input: { id: string; error: string }): Promise
 }
 /** Tests that are not about tunnel timing publish surfaces as if their tunnel were long live. */
 export function setPluginRefreshTunnelGraceForTests(ms: number): void { tunnelGraceMs = ms; }
-export function resetPluginRefreshForTests(): void { for (const row of settling.values()) if (row.timer) clearTimeout(row.timer); settling.clear(); publications.clear(); chain = Promise.resolve(); }
+export function resetPluginRefreshForTests(): void { for (const row of settling.values()) { if (row.timer) { clearTimeout(row.timer); } } settling.clear(); publications.clear(); chain = Promise.resolve(); }

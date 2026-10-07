@@ -94,7 +94,7 @@ export class PluginOAuth implements OAuthClientProvider {
   get clientMetadata() {
     return { client_name: 'Chat On Steroids', redirect_uris: [this.redirectUrl], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' };
   }
-  state(): string { this.check(); if (!this.interactive) throw new PluginNeedsAuth(); return this.interactive.state; }
+  state(): string { this.check(); if (!this.interactive) { throw new PluginNeedsAuth(); } return this.interactive.state; }
   clientInformation(context?: { issuer: string }): StoredOAuthClientInformation | undefined {
     this.check(); const value = this.data.client;
     const usable = context && value?.issuer !== context.issuer ? undefined : value;
@@ -130,8 +130,8 @@ export class PluginOAuth implements OAuthClientProvider {
     finally { this.controller.signal.removeEventListener('abort', abort); }
     this.check();
   }
-  saveCodeVerifier(value: string): void { this.check(); if (!this.interactive) throw new PluginNeedsAuth(); this.verifier = value; this.secret(value); }
-  codeVerifier(): string { this.check(); if (!this.verifier) throw new PluginNeedsAuth(); return this.verifier; }
+  saveCodeVerifier(value: string): void { this.check(); if (!this.interactive) { throw new PluginNeedsAuth(); } this.verifier = value; this.secret(value); }
+  codeVerifier(): string { this.check(); if (!this.verifier) { throw new PluginNeedsAuth(); } return this.verifier; }
   saveDiscoveryState(value: OAuthDiscoveryState): void {
     this.check();
     if (this.interactive && !value.authorizationServerMetadata?.registration_endpoint) throw new PluginOAuthSetupError();

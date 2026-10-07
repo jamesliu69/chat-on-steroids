@@ -92,7 +92,7 @@ async function approvedDirectory(file: string): Promise<{ real: string; virtual:
   const candidate = await approved(file, true);
   let stat: Awaited<ReturnType<typeof fs.lstat>>;
   try { stat = await fs.lstat(candidate.real); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return null; } throw error; }
   if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
   const current = await approved(file);
   if (!samePath(current.real, candidate.real) || !(await fs.lstat(current.real)).isDirectory()) throw new Error('Directory changed while it was being inspected');
@@ -102,7 +102,7 @@ async function readOptionalApproved(file: string): Promise<string | null> {
   const candidate = await approved(file, true);
   let stat: Awaited<ReturnType<typeof fs.lstat>>;
   try { stat = await fs.lstat(candidate.real); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return null; } throw error; }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Expected a regular file');
   return (await readApproved(file)).text;
 }
@@ -534,7 +534,7 @@ export async function listSkillLibrary(scope: SkillLibraryScope = {}, runtime: S
             }
           }
         } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') addError(`${candidate.source}: ${errorText(error)}`); }
-        if (hasSkill) continue; // Package references are resources, not a second catalog.
+        if (hasSkill) { continue; } // Package references are resources, not a second catalog.
         for await (const entry of await fs.opendir(current.directory)) {
           if (++entries > 4096) break;
           if (entry.name.startsWith('.') || current.depth >= 6) continue;
