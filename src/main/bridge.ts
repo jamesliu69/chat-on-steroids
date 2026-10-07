@@ -7925,6 +7925,13 @@ async function noteRecoveryObservations(
   }
 }
 
+/**
+ * Exact code-unit ordering (the default sort's behavior, made explicit): conversation-id
+ * lists cross the wire into status replies and incident keys, so they must not depend
+ * on the process locale the way `localeCompare` does.
+ */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /** A waking worker owns pending browser delivery. Ordinary broker active is not page activity. */
 function nonDiscardableAgentConversations(): string[] {
   return swarmState().agents
@@ -7934,7 +7941,7 @@ function nonDiscardableAgentConversations(): string[] {
         agent.state === 'waking'
     )
     .map((agent) => agent.conversationId as string)
-    .sort();
+    .sort(byCodeUnit);
 }
 
 /** Page observations are diagnostics, never new recovery or ownership authority. */
@@ -8093,14 +8100,14 @@ async function browserTabPolicy(openConversations: Set<string>) {
     cancelledDecisionClaims: cancelledDecisionClaims.map(row => ({ id: row.id, owner: row.owner, conversationId: row.conversationId })),
     // Only terminal/blocked helpers and superseded sources grant close authority.
     retiredConversations: [...new Set([...idle, ...supersededSourceConversations()])]
-      .filter(id => openConversations.has(id) && !protectedChats.has(id)).sort(),
+      .filter(id => openConversations.has(id) && !protectedChats.has(id)).sort(byCodeUnit),
     conversationActivityAt: Object.fromEntries(lastActivity),
-    managedConversations: [...managed].sort(),
+    managedConversations: [...managed].sort(byCodeUnit),
     reusableConversations: available.filter(id => quietFor(id, 120_000) && !isGoalDecisionChat(id) &&
-      !supersededSourceConversations().includes(id)).sort(),
-    nonDiscardableConversations: [...protectedChats].sort(),
-    blockedConversations: blocked.sort(),
-    closableConversations: [...new Set([...idlePages, ...idle, ...supersededSourceConversations().filter(id => openConversations.has(id) && !protectedChats.has(id))])].sort()
+      !supersededSourceConversations().includes(id)).sort(byCodeUnit),
+    nonDiscardableConversations: [...protectedChats].sort(byCodeUnit),
+    blockedConversations: blocked.sort(byCodeUnit),
+    closableConversations: [...new Set([...idlePages, ...idle, ...supersededSourceConversations().filter(id => openConversations.has(id) && !protectedChats.has(id))])].sort(byCodeUnit)
   };
 }
 
@@ -8957,7 +8964,7 @@ function noteCallAttribution(
   if (requestId && requestCorrelation(requestId)) return;
   retireSpentRepairs();
   const opening = repairCandidates().filter(unattributedCandidateCurrent);
-  const key = requestId ?? `headerless:${opening.map(entry => `${entry.sessionId}:${entry.turnId}`).sort().join(',')}`;
+  const key = requestId ?? `headerless:${opening.map(entry => `${entry.sessionId}:${entry.turnId}`).sort(byCodeUnit).join(',')}`;
   const heldIncident = unattributedIncidents.get(key);
   if (heldIncident) {
     heldIncident.lastUnknownStartedAt = Math.max(heldIncident.lastUnknownStartedAt, startedAt);

@@ -98,7 +98,7 @@ export async function refreshUsage(): Promise<void> {
 function paintRates(): void {
   if (!snapshot) return;
   const host = $('usageRates'); host.replaceChildren();
-  for (const model of [...new Set(snapshot.models.map(row => row.model))].sort()) {
+  for (const model of [...new Set(snapshot.models.map(row => row.model))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     const label = el('label', 'setting'); const text = el('span', 'setting-text');
     text.append(el('b', '', model), el('em', '', () => usageRate(model, DEFAULT_USAGE_FORMULA) !== undefined ? t("USD / 1M cached input · editable official baseline, checked 27 September 2026") : t("USD / 1M cached input · enter a verified comparison rate")));
     const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = '0.01'; ui(input, 'placeholder', () => t("Unknown rate")); input.value = usageRate(model, formula)?.toString() ?? '';

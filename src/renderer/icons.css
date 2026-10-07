@@ -33,8 +33,8 @@
   -webkit-font-smoothing: antialiased;
 }
 
-.ph { font-family: 'CoS Phosphor' !important; }
-.ph-fill { font-family: 'CoS Phosphor Fill' !important; }
+.ph { font-family: 'CoS Phosphor', sans-serif !important; }
+.ph-fill { font-family: 'CoS Phosphor Fill', sans-serif !important; }
 
 
 .ph.ph-activity::before { content: '\e000'; }

@@ -24,7 +24,7 @@ const special = {
 };
 
 const scripts = readdirSync(path.join(root, 'scripts'))
-  .filter(name => /^verify-.*\.cjs$/.test(name) && name.includes(filter)).sort();
+  .filter(name => /^verify-.*\.cjs$/.test(name) && name.includes(filter)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 // CI runners are shared and uneven: a different check timed out on each run while all of them
 // passed on a real machine. With VERIFY_UI_RETRY a failed check runs once more; a pass on retry
 // counts, and is named as a flake (a GitHub warning in CI) so it stays visible.

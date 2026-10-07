@@ -1246,7 +1246,7 @@ function expandGlob(pattern: string, list: DirectoryLister): { hits: string[]; d
   const hidden = location.leaf.startsWith('.');
   const hits = entries
     .filter((entry) => !/[\\/]/.test(entry) && (hidden || !entry.startsWith('.')) && matcher.test(entry))
-    .sort()
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .map((entry) => `${location.prefix}${entry}`);
   if (hits.length === 0 || hits.length > MAX_EXPANDED_NAMES) return null;
   return { hits, directory: location.directory };

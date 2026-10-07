@@ -3001,7 +3001,7 @@ function eventRow(event: SessionEvent): HTMLElement {
 function paintAgentFilter(): void {
   const box = $('chatAgentFilter');
   if (!deps.state()?.config.ui.developerMode) { box.hidden = true; agentFilter = null; return; }
-  const named = [...new Set(events.flatMap((event) => (event.agent ? [event.agent] : [])))].sort();
+  const named = [...new Set(events.flatMap((event) => (event.agent ? [event.agent] : [])))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const anyUnattributed = events.some((event) => !event.agent);
   // A filter belongs to the session it was chosen in. Carrying it across a selection
   // change showed the next session's timeline as empty with no chip lit to explain why —

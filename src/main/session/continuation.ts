@@ -588,7 +588,7 @@ export function supersededSourceConversations(): string[] {
   for (const entry of byToken.values()) {
     if (entry.state === 'committed' && entry.to && entry.to !== entry.from) out.add(entry.from);
   }
-  return [...out].sort();
+  return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 /** Compaction tickets still owed a real A -> B commit. */

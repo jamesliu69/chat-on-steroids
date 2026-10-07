@@ -72,7 +72,7 @@ function recognizable(tools: unknown, surface: PluginSurface = 'core'): tools is
 }
 function enrollable(tools: unknown, publication: PluginPublication): boolean {
   if (!recognizable(tools, publication.surface)) return false;
-  const names = (items: PluginToolSchema[]) => canonical(items.map(tool => tool.name).sort());
+  const names = (items: PluginToolSchema[]) => canonical(items.map(tool => tool.name).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
   if (names(tools) === names(publication.tools)) return true;
   // Older releases could publish only the first 64 external tools even when the
   // complete catalog fit within the byte budget. During first enrollment, accept

@@ -3,7 +3,7 @@ const emojiSegments = new Intl.Segmenter('en', { granularity: 'grapheme' });
 
 export function messageReaction(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 32 &&
-    /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|[\u200d\ufe0f\u20e3\u{e0020}-\u{e007f}0-9#*])+$/u.test(value) &&
+    /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\u200d|\ufe0f|[\u20e3\u{e0020}-\u{e007f}0-9#*])+$/u.test(value) &&
     /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(value) &&
     [...emojiSegments.segment(value)].length === 1 ? value : undefined;
 }

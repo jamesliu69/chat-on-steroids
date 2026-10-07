@@ -49,7 +49,7 @@ async function main() {
     const lastPushAt = commits.at(-1)?.commit.committer.date ?? pr.created_at;
     const maintainerTimes = [...reviews.map(review => ({ at: review.submitted_at, who: review.author_association })),
       ...comments.filter(comment => comment.user.type !== 'Bot').map(comment => ({ at: comment.created_at, who: comment.author_association }))]
-      .filter(event => MAINTAINER.has(event.who)).map(event => event.at).sort();
+      .filter(event => MAINTAINER.has(event.who)).map(event => event.at).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     const state = prState({ checks, lastPushAt, lastMaintainerAt: maintainerTimes.at(-1) });
     if (state) prs.push({ number: pr.number, title: pr.title, by: pr.user.login, state });
   }

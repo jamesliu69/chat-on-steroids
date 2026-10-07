@@ -676,7 +676,7 @@ var CLF_DOM = (() => {
     if (badges.length !== 1) return undefined;
     const emoji = badges[0].textContent?.trim() || '';
     // Keep aligned with shared/message-reaction.ts (extension ships unbundled).
-    return emoji.length <= 32 && /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|[\u200d\ufe0f\u20e3\u{e0020}-\u{e007f}0-9#*])+$/u.test(emoji) &&
+    return emoji.length <= 32 && /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\u200d|\ufe0f|[\u20e3\u{e0020}-\u{e007f}0-9#*])+$/u.test(emoji) &&
       /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(emoji) &&
       [...reactionSegments.segment(emoji)].length === 1 ? emoji : undefined;
   }
@@ -2645,7 +2645,7 @@ var CLF_DOM = (() => {
   }
   function composerAttachmentNames() {
     const host = composerBox() || composerActions()?.host;
-    return host ? [...host.querySelectorAll('button[aria-label]')].map(composerFileName).filter(Boolean).slice(0, 20).sort() : [];
+    return host ? [...host.querySelectorAll('button[aria-label]')].map(composerFileName).filter(Boolean).slice(0, 20).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) : [];
   }
   /**
    * This install's connector names in ChatGPT (core, desktop, plugins), as the app reports them.

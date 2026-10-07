@@ -68,7 +68,7 @@ for (const [relative, entry] of Object.entries(lock.packages).sort(([a], [b]) =>
   if (!files.length) missing.push(`${manifest.name}@${manifest.version}`);
   const license = typeof manifest.license === 'string' ? manifest.license : JSON.stringify(manifest.license ?? manifest.licenses ?? 'Not declared');
   notices.push('='.repeat(80), `${manifest.name}@${manifest.version}`, `Declared license: ${license}`, `Package: https://www.npmjs.com/package/${manifest.name}/v/${manifest.version}`, '');
-  for (const file of files.sort()) notices.push(`--- ${file.startsWith(directory + path.sep) ? path.relative(directory, file).replaceAll('\\', '/') : manifest.name.startsWith('@koromix/koffi-') ? 'koffi/LICENSE.txt (same-version binary distribution)' : 'Upstream license supplement (see docs/licenses/README.md)'} ---`, await fs.readFile(file, 'utf8'), '');
+  for (const file of files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) notices.push(`--- ${file.startsWith(directory + path.sep) ? path.relative(directory, file).replaceAll('\\', '/') : manifest.name.startsWith('@koromix/koffi-') ? 'koffi/LICENSE.txt (same-version binary distribution)' : 'Upstream license supplement (see docs/licenses/README.md)'} ---`, await fs.readFile(file, 'utf8'), '');
   count++;
 }
 if (missing.length) throw new Error(`Missing license texts for production packages: ${missing.join(', ')}`);

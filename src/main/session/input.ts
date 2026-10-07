@@ -1072,12 +1072,13 @@ export function noteInputStartupError(id: string, error: string | null): Promise
     if (row.state !== 'queued') return { ...row };
     // Retry session materialization through its accepted identity before releasing
     // browser delivery. A failed project write must not be hidden by a wake result.
+    let note = error;
     try { await materializeOpening(row); }
-    catch (failure) { error = 'Local chat setup failed: ' + (failure as Error).message; }
+    catch (failure) { note = 'Local chat setup failed: ' + (failure as Error).message; }
     // Releasing the app's own hold makes the message due now: the browser's 60-second pickup
     // window starts here, not when the message was first sent and held.
-    const released = !error && !!row.error?.startsWith('Message queued. ');
-    const next = { ...row, error: error ? error.slice(0, 200) : undefined, ...(released ? { dueAt: Math.max(row.dueAt, Date.now()) } : {}) };
+    const released = !note && !!row.error?.startsWith('Message queued. ');
+    const next = { ...row, error: note ? note.slice(0, 200) : undefined, ...(released ? { dueAt: Math.max(row.dueAt, Date.now()) } : {}) };
     await commit(current.map(entry => entry === row ? next : entry));
     return { ...next };
   });

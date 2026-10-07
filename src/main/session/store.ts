@@ -2063,7 +2063,7 @@ async function readRecentEventsFromDisk(
     // A late label/status revision can have an old work sequence. Filling the
     // row cap with it is not proof that we reached the newest actual work.
     const oldest = !forward && rawTail.length === cap
-      ? rawTail.reduce((a, b) => sequence(a) < sequence(b) ? a : b) : undefined;
+      ? rawTail.reduce((a, b) => sequence(a) < sequence(b) ? a : b, rawTail[0]!) : undefined;
     if (oldest && parsed.seq < sequence(oldest)) { reachedStart = true; return; }
     // Journal sequence is append ordered. Canonical revisions are joined below;
     // crossing the forward origin boundary retires this backwards scan.
@@ -3672,7 +3672,8 @@ async function deleteSelectedImage(file: StoredImageFile): Promise<number> {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error instanceof Error ? error : new Error(String(error));
+        if (error instanceof Error) throw error;
+        throw new Error(String(error));
       }
     }
   }

@@ -154,7 +154,7 @@ for (const dependency of ['node-pty', 'tree-sitter', 'tree-sitter-bash']) {
   const directories = readdirSync(prebuilds, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort();
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   if (directories.length !== 1 || directories[0] !== nativeDir) {
     throw new Error(`Packaged ${dependency} prebuilds are ${directories.join(',') || '(none)'}, expected only ${nativeDir}`);
   }
