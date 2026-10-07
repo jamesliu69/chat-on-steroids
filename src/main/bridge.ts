@@ -2789,7 +2789,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     // deadline into that same outbox row before acknowledging the observation.
     if (activeUntil.get(id)?.thinkingFailed) await fileSilenceInputTicket(id, Date.now());
     if (committed?.wake) wakeBrowserWork();
-    return json(res, 200, { sessionId: committed!.sessionId, stored: committed!.stored }, origin);
+    return json(res, 200, { sessionId: committed.sessionId, stored: committed.stored }, origin);
   }
 
   if (route === '/closed' && req.method === 'POST') {
@@ -3059,7 +3059,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       (sleptWorker.state === 'sleeping' || sleptWorker.state === 'waking') &&
       sleptWorker.sleptAt !== null && live.activeTurnStartedAt !== null && live.activeTurnStartedAt <= sleptWorker.sleptAt;
     const pendingStop = !superseded && summary?.conversationId === id && summary.activeTurnId === live.activeTurnId && stopRequestedFor(id, live.activeTurnId)
-      ? commands.find(command => command.spec.type === 'stop' && command.spec.sessionId === live!.sessionId && command.spec.turnId === live!.activeTurnId) : undefined;
+      ? commands.find(command => command.spec.type === 'stop' && command.spec.sessionId === live.sessionId && command.spec.turnId === live.activeTurnId) : undefined;
     if (!automaticCompactionAllowed(summary)) await cancelAutomaticResumesNow(live.sessionId);
     // Worker chats and user-blocked chats alike: neither may auto-compact — see goalBlockReason.
     const workerBlocked = goalFencedChat(id);
@@ -3983,7 +3983,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const text = typeof body['text'] === 'string' ? body['text'] : '';
     if (!text.trim()) return goalJson(res, 400, { error: 'no_objective' }, origin);
     const opening =
-      body['mode'] === 'goal' || body['mode'] === 'loop' ? (body['mode'] as 'goal' | 'loop') : null;
+      body['mode'] === 'goal' || body['mode'] === 'loop' ? body['mode'] : null;
     if (!(await goalKeyPresent(opening ?? goalModeFor()))) return goalJson(res, 409, { error: 'no_api_key' }, origin);
     const drafted = await draftOpeningMessage(text, opening);
     if ('error' in drafted) return goalJson(res, 502, drafted, origin);
@@ -4038,9 +4038,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       if ((err as Error).message === 'body_too_large') return tooLarge(res, origin);
       return json(res, 400, { error: 'bad_request' }, origin);
     }
-    const auto = typeof body['autoCompact'] === 'boolean' ? (body['autoCompact'] as boolean) : null;
-    const goal = typeof body['goal'] === 'boolean' ? (body['goal'] as boolean) : null;
-    const loop = typeof body['loop'] === 'boolean' ? (body['loop'] as boolean) : null;
+    const auto = typeof body['autoCompact'] === 'boolean' ? body['autoCompact'] : null;
+    const goal = typeof body['goal'] === 'boolean' ? body['goal'] : null;
+    const loop = typeof body['loop'] === 'boolean' ? body['loop'] : null;
     const settingsConversation = conversationId(body['conversationId']);
     if (typeof body['loopAfterTurn'] === 'boolean') {
       if (!settingsConversation || auto !== null || goal !== null || loop !== null) return json(res, 400, { error: 'bad_loop_delivery' }, origin);
@@ -4104,7 +4104,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     let driving: 'goal' | 'loop' | null = null;
     const before = scoped
       ? (() => {
-          const held = goalSwitchFor(settingsConversation as string);
+          const held = goalSwitchFor(settingsConversation);
           return held.enabled ? held.mode : null;
         })()
       : null;
@@ -4117,7 +4117,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       };
     });
     const chatSwitch = scoped
-      ? await setGoalSwitchNow(settingsConversation as string, which as 'goal' | 'loop', (goal ?? loop) as boolean)
+      ? await setGoalSwitchNow(settingsConversation, which, (goal ?? loop) as boolean)
       : null;
     if (auto === false) {
       try {

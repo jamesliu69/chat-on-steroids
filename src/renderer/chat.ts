@@ -1661,7 +1661,7 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
       // the reader's row even when they were at the bottom of the previous window.
       if (detail.events.length < TIMELINE_BATCH_SIZE) historyBefore = null;
     } else if (prepend) {
-      const boundary = olderBefore!;
+      const boundary = olderBefore;
       historyBefore = boundary;
       const retained = events.filter(event => positionOf(event) >= boundary);
       events = retainTimelinePage(chronological(foldProgress([...folded, ...retained])), 'older');

@@ -73,9 +73,9 @@ export function initBrowserSetup(actions: {
     const observation = state.bridge.externalExtension;
     const proof = observation?.proof ?? null;
     const live = observation?.present === true;
-    const shownVersion = live ? observation!.version : proof?.version ?? null;
+    const shownVersion = live ? observation.version : proof?.version ?? null;
     const knownVersion = !!shownVersion && /^\d+\.\d+\.\d+$/.test(shownVersion);
-    const outdated = knownVersion && isNewer(state.update.current, shownVersion!);
+    const outdated = knownVersion && isNewer(state.update.current, shownVersion);
     ready = state.bridge.running && state.bridge.paired && (live || proof !== null) && knownVersion && !outdated;
     if (!steered) phase = ready ? 'location' : 'extension';
     const cos = browser === 'cos';

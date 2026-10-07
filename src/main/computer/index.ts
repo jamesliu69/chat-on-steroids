@@ -896,7 +896,7 @@ function rememberUiRef(window: number, runtimeKey: string, index: number, snapsh
   const ref = `g${generation}_s${snapshotId}_e${index + 1}`;
   uiRefs.set(ref, { window, runtimeKey, generation, snapshotId });
   while (uiRefs.size > 1000) {
-    const oldest = uiRefs.keys().next().value as string | undefined;
+    const oldest = uiRefs.keys().next().value;
     if (!oldest) break;
     uiRefs.delete(oldest);
   }
@@ -922,7 +922,7 @@ function rememberFrame(frame: Frame): void {
   frames.set(frame.id, frame);
   lastFrame = frame;
   while (frames.size > MAX_FRAMES) {
-    const oldest = frames.keys().next().value as number | undefined;
+    const oldest = frames.keys().next().value;
     if (oldest === undefined) break;
     frames.delete(oldest);
   }
@@ -1063,7 +1063,7 @@ async function findUiLocked(
   for (const [source, target] of [['document_text', 'documentText'], ['selected_text', 'selectedText']] as const) {
     if (typeof reply[source] !== 'string' || !reply[source]) continue;
     context[target] = reply[source].slice(0, textBudget);
-    textBudget -= context[target]!.length;
+    textBudget -= context[target].length;
   }
   const focused = raw.findIndex(item => item['runtimeKey'] === reply['focused_element']);
   if (focused >= 0) context.focusedElement = elements[focused]!.ref;

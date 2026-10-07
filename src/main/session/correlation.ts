@@ -89,7 +89,7 @@ function wake(requestId: string): void {
 
 function trim(): void {
   while (byRequest.size > MAX_CORRELATIONS) {
-    const first = byRequest.keys().next().value as string | undefined;
+    const first = byRequest.keys().next().value;
     if (!first) break;
     byRequest.delete(first);
     wake(first);

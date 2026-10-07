@@ -1742,8 +1742,8 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
       if (at >= 0) reference.splice(at, 1);
       else {
         const largest = reference.reduce((best, message, index) => message.content.length > (reference[best]?.content.length ?? 0) ? index : best, 0);
-        if (!reference[largest] || reference[largest]!.content.length < 256) throw new Error('goal_context_too_large');
-        reference[largest] = { ...reference[largest]!, content: clip(reference[largest]!.content, Math.floor(reference[largest]!.content.length / 2)) };
+        if (!reference[largest] || reference[largest].content.length < 256) throw new Error('goal_context_too_large');
+        reference[largest] = { ...reference[largest], content: clip(reference[largest].content, Math.floor(reference[largest].content.length / 2)) };
       }
       omitted = true;
     }
@@ -2521,7 +2521,7 @@ async function committedResumeHandoffId(
     if (authored.some((text) => resumeBootstrapMatches(text, handoff.text))) {
       legacyCommittedResumeCache.set(sessionId, handoff.id);
       while (legacyCommittedResumeCache.size > 128) {
-        const oldest = legacyCommittedResumeCache.keys().next().value as string | undefined;
+        const oldest = legacyCommittedResumeCache.keys().next().value;
         if (!oldest) break;
         legacyCommittedResumeCache.delete(oldest);
       }

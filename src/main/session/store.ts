@@ -131,7 +131,7 @@ const MAX_MISSING_CONVERSATION_CACHE = 1024;
 function rememberMissingCurrentConversation(conversationId: string): void {
   missingCurrentConversations.add(conversationId);
   if (missingCurrentConversations.size <= MAX_MISSING_CONVERSATION_CACHE) return;
-  const oldest = missingCurrentConversations.values().next().value as string | undefined;
+  const oldest = missingCurrentConversations.values().next().value;
   if (oldest) missingCurrentConversations.delete(oldest);
 }
 

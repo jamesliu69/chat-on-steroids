@@ -814,7 +814,7 @@ export function reconcileAgentRequestOwners(): Promise<void> {
         // every fleet together; attaching directly to B here would veto A as a collision.
         const transferring = handoff && allFamilies().some(family => family !== owner &&
           family.primeConversationId === handoff.from && family.transfer?.from === handoff.from);
-        if (transferring) target = handoff!.from;
+        if (transferring) target = handoff.from;
         owner.primeConversationId = target;
         owner.agents.get(PRIME_ID)!.info.conversationId = target;
         for (const agent of owner.agents.values()) agent.info.primeConversationId = target;
@@ -1723,7 +1723,7 @@ function usableDefaults(
     notes.add(`The default worker model "${model}" saved in Settings is not offered by this ChatGPT account, so workers use ChatGPT's current model. Choose an available model in Settings → Agents & automation.`);
     model = null;
   } else if (resolved && resolved.id !== model && !resolved.aliases?.includes(model!)) model = resolved.id;
-  const offered = model ? (resolved ? [resolved] : models.filter(choice => choice.id === model || choice.aliases?.includes(model!))) : models;
+  const offered = model ? (resolved ? [resolved] : models.filter(choice => choice.id === model || choice.aliases?.includes(model))) : models;
   if (defaultEffort && effort && !offered.some(choice => choice.efforts.includes(effort!))) {
     notes.add(`The default worker reasoning "${effort}" saved in Settings is not offered${model ? ` for model "${model}"` : ''} by this ChatGPT account, so workers use ChatGPT's current reasoning. Choose an available level in Settings → Agents & automation.`);
     effort = null;

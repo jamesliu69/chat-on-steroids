@@ -1399,7 +1399,7 @@ export function deferSilenceInput(id: string, conversationId: string, turnId: st
     if (boundary.conversationId !== conversationId || boundary.turnId !== turnId) return false;
     if (row.recovery && boundary.nativeBusy) return false; // One half-window, never a rolling extension.
     await commit(current.map(entry => entry === row ? { ...row,
-      silenceBoundary: { ...boundary!, listenUntil: row.recovery
+      silenceBoundary: { ...boundary, listenUntil: row.recovery
         ? row.recovery.busyUntil
         : Date.now() + recoveryBusyMs(session.selectedModel?.conversationId === conversationId &&
             isProModel(session.selectedModel.model, session.selectedModel.reasoningEffort)), nativeBusy: true } } : entry));

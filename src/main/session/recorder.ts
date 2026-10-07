@@ -1085,10 +1085,10 @@ function redactArgs(tool: string, args: unknown): unknown {
   // Keep the destination and result for recovery without persisting the URL or file token.
   if (tool === 'download_artifact' && Object.hasOwn(copy, 'file')) copy['file'] = '<native file credentials not stored>';
   if (copy['env'] && typeof copy['env'] === 'object') {
-    copy['env'] = Object.fromEntries(Object.keys(copy['env'] as object).map((key) => [key, '***']));
+    copy['env'] = Object.fromEntries(Object.keys(copy['env']).map((key) => [key, '***']));
   }
   if (typeof copy['dataBase64'] === 'string') {
-    copy['dataBase64'] = `<${(copy['dataBase64'] as string).length} base64 characters not stored>`;
+    copy['dataBase64'] = `<${copy['dataBase64'].length} base64 characters not stored>`;
   }
   if (tool === 'write_clipboard' && typeof copy['text'] === 'string') {
     copy['text'] = `<${copy['text'].length} characters not stored>`;
@@ -1097,7 +1097,7 @@ function redactArgs(tool: string, args: unknown): unknown {
   // action rather than the tool name: the text the user copied is theirs, and one of these
   // steps buried in a batch of clicks must not be the thing that writes it to disk.
   if (tool === 'computer' && Array.isArray(copy['actions'])) {
-    copy['actions'] = (copy['actions'] as unknown[]).map((action) => {
+    copy['actions'] = copy['actions'].map((action) => {
       if (!action || typeof action !== 'object') return action;
       const step = action as Record<string, unknown>;
       if (step['type'] !== 'write_clipboard' || typeof step['text'] !== 'string') return action;

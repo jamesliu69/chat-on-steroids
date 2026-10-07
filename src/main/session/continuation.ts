@@ -1623,9 +1623,9 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
       handoff: null,
       claimedBy: typeof raw.claimedBy === 'string' ? raw.claimedBy : null,
       sourceSend:
-        raw.sourceSend && SEND_STATES.has(raw.sourceSend.state as ContinuationSendState)
+        raw.sourceSend && SEND_STATES.has(raw.sourceSend.state)
           ? {
-              state: raw.sourceSend.state as ContinuationSendState,
+              state: raw.sourceSend.state,
               messageId:
                 typeof raw.sourceSend.messageId === 'string' ? raw.sourceSend.messageId.slice(0, 200) : null
             }
@@ -1637,9 +1637,9 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
               messageId: null
             },
       destinationSend:
-        raw.destinationSend && SEND_STATES.has(raw.destinationSend.state as ContinuationSendState)
+        raw.destinationSend && SEND_STATES.has(raw.destinationSend.state)
           ? {
-              state: raw.destinationSend.state as ContinuationSendState,
+              state: raw.destinationSend.state,
               conversationId:
                 typeof raw.destinationSend.conversationId === 'string'
                   ? raw.destinationSend.conversationId.slice(0, 256)

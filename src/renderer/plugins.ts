@@ -220,7 +220,7 @@ function showPlugin(plugin: PluginView): void {
   const tools = el('section', 'plugin-detail-tools'); tools.dataset.pluginDetail = plugin.id; renderPluginTools(tools, plugin); body.append(tools);
   const about = document.createElement('details'); about.className = 'plugin-about'; about.append(disclosureSummary(() => t("About this plugin")));
   about.append(el('p', 'plugin-source', plugin.source.url ?? plugin.source.package ?? plugin.source.command ?? plugin.source.kind), el('p', 'muted', () => `${plugin.version || t("Custom version")} · ${plugin.license || t("License not supplied")}`), el('p', '', () => t("Runs while installed and enabled, including after reopening the app. Disable or uninstall it to stop its connection. Restart reconnects and refreshes its tools.")));
-  if (plugin.homepage ?? recipe?.homepage) about.append(button(() => t("Open upstream project"), async () => { await run(window.api.openLink((plugin.homepage ?? recipe!.homepage)!)); }));
+  if (plugin.homepage ?? recipe?.homepage) about.append(button(() => t("Open upstream project"), async () => { await run(window.api.openLink(plugin.homepage ?? recipe!.homepage)); }));
   body.append(about);
 }
 function showUninstall(plugin: PluginView): void {

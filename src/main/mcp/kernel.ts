@@ -194,7 +194,7 @@ async function recordUntrustedRefusalNotice(context: CallContext): Promise<void>
     return;
   }
   while (untrustedNoticeEpisodes.size > UNTRUSTED_NOTICE_MAX) {
-    const oldest = untrustedNoticeEpisodes.keys().next().value as string | undefined;
+    const oldest = untrustedNoticeEpisodes.keys().next().value;
     if (!oldest) break;
     untrustedNoticeEpisodes.delete(oldest);
   }

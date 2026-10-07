@@ -189,8 +189,8 @@ export async function searchSessions(query: string, limit = MAX_SEARCH_RESULTS):
     }
     if (!entry) continue;
     // A word may be in the title and the rest in the text.
-    if (terms.every(term => title.includes(term) || entry!.lower.includes(term))) {
-      const inText = terms.filter(term => entry!.lower.includes(term));
+    if (terms.every(term => title.includes(term) || entry.lower.includes(term))) {
+      const inText = terms.filter(term => entry.lower.includes(term));
       byText.push({ ...result, snippet: snippetFor(entry.text, entry.lower, inText) });
     }
     if (byTitle.length + byText.length >= limit * 2) break;

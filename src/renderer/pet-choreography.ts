@@ -7,7 +7,7 @@ export const THROW_RELEASE = throwRelease(defaultManifest);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 function anchor(authored: PetAnimationManifest, frame: number, textWidth: number): Point {
   const [x, y, side] = authored.hands[String(frame)] ?? authored.hands['79']!;
-  return { x: x! + side! * (textWidth / 2 - 3), y: y! - 8 };
+  return { x: x + side * (textWidth / 2 - 3), y: y - 8 };
 }
 
 export function throwRelease(authored: PetAnimationManifest = defaultManifest): number {

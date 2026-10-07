@@ -151,7 +151,7 @@ function paintProps(view: PetView): void {
     place(view.bin, scene.bin.x - 16, scene.bin.y - 48);
     view.bin.classList.toggle('is-open', machine.state === 'throw');
     if (machine.state === 'grab' && frame >= 69 || machine.state === 'carry') {
-      const hand = carriedText(machine.state as 'grab' | 'carry', machine.elapsed, view.targetWidth, manifest);
+      const hand = carriedText(machine.state, machine.elapsed, view.targetWidth, manifest);
       const attachedX = machine.position.x + 80 + dir * (hand.x - 80);
       const attachedY = machine.position.y + hand.y;
       const blend = machine.state === 'grab' ? Math.min(1, Math.max(0, (machine.elapsed - 370) / 320)) : 1;
