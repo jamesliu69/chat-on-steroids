@@ -366,7 +366,7 @@
   function noteSendModel(args, observedAt) {
     try {
       const init = args[1];
-      const method = String((init && init.method) || (args[0] && typeof args[0] === 'object' && args[0].method) || 'GET').toUpperCase();
+      const method = String((init?.method) || (args[0] && typeof args[0] === 'object' && args[0].method) || 'GET').toUpperCase();
       if (method !== 'POST' || !init || typeof init.body !== 'string' || init.body.length > 2_000_000) return;
       const url = new URL(typeof args[0] === 'string' ? args[0] : args[0] instanceof URL ? args[0].href : args[0].url, location.origin);
       if (url.origin !== location.origin || !/^\/backend-api\/(?:f\/)?conversation$/.test(url.pathname)) return;

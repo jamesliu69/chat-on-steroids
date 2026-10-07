@@ -63,7 +63,7 @@ function persist(): void {
 
 /** An authenticated request from the extension in the person's own browser. True when the proof changed. */
 export function noteExternalInstalled(browserId: string, version: string, at = Date.now()): boolean {
-  if (proof && proof.browserId === browserId && proof.version === version) return false;
+  if (proof?.browserId === browserId && proof.version === version) return false;
   // Another instance (another browser or profile) proves nothing about the old one's login.
   const same = proof?.browserId === browserId;
   proof = { browserId, version, installedAt: at, signedInAt: same ? proof!.signedInAt : null, signedOutAt: same ? proof!.signedOutAt : null };

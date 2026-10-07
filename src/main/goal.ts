@@ -1587,7 +1587,7 @@ export function startGoalDraft(input: StartGoalDraftInput): GoalDraftView {
   // its answer once the setting that broke it is fixed.
   const spentFailure =
     existing?.stage === 'failed' && existing.acknowledged && !SETTLED_FAILURE.test(existing.error ?? '');
-  if (existing && existing.turnId === input.turnId && !spentFailure) return view(existing);
+  if (existing?.turnId === input.turnId && !spentFailure) return view(existing);
   // A different turn supersedes whatever the last one left behind, including an unfinished
   // request: the answer it was writing was about a conversation that has since moved on.
   if (existing) {
@@ -2915,7 +2915,7 @@ async function allGoalModels(): Promise<GoalModel[]> {
     : key
       ? createHash('sha256').update(key).digest('hex')
       : 'public';
-  if (modelCache && modelCache.keyScope === keyScope && Date.now() - modelCache.at < MODEL_CACHE_MS) {
+  if (modelCache?.keyScope === keyScope && Date.now() - modelCache.at < MODEL_CACHE_MS) {
     return modelCache.models;
   }
   const abort = new AbortController();

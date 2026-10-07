@@ -136,7 +136,7 @@ export function applyTurnIdentity(identity: TurnIdentity, event: Chronological):
     if (requests[requestId] !== null) identity.requestTurns = { ...requests, [requestId]: null };
     return;
   }
-  if (held && held.turnId === owner && held.origin <= origin) return;
+  if (held?.turnId === owner && held.origin <= origin) return;
   identity.requestTurns = { ...requests, [requestId]: {
     turnId: owner, conversationId, origin: Math.min(held?.origin ?? Infinity, origin)
   } };

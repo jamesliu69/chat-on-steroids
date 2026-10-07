@@ -1714,7 +1714,7 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
         entry.state = 'committed';
         entry.error = null;
         logInfo(`continuation ${entry.token.slice(0, 8)} recovered after durable commit`);
-      } else if (entry.state === 'committing' && session && session.conversationId === entry.from) {
+      } else if (entry.state === 'committing' && session?.conversationId === entry.from) {
         if (!entry.handoff) {
           entry.state = 'aborted';
           entry.to = null;

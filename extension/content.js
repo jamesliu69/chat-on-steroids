@@ -625,7 +625,7 @@
   let streamGone = null;
   const latestQuestionId = () => CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id ?? null;
   function currentStreamGone() {
-    return streamGone && streamGone.epoch === epoch && streamGone.turnId === turnId &&
+    return streamGone?.epoch === epoch && streamGone.turnId === turnId &&
       streamGone.questionId === latestQuestionId();
   }
   /**
@@ -1302,7 +1302,7 @@
     try {
       return await chrome.runtime.sendMessage(message);
     } catch (err) {
-      const text = String(err && err.message ? err.message : err);
+      const text = String(err?.message ? err.message : err);
       if (text.includes('Extension context invalidated')) recorderHandle.stop();
       return null;
     }
@@ -1320,7 +1320,7 @@
       // A sleeping/reloading service worker is transient. Keep the document unregistered
       // (and therefore fail closed) for this call, but let the next observer tick retry.
       documentReady = null;
-      observed.blocked = (registered && registered.error) || 'worker_unreachable';
+      observed.blocked = (registered?.error) || 'worker_unreachable';
       return registered;
     }
     if (current && !current()) return null;
@@ -1340,7 +1340,7 @@
   function appAnswered(reply) {
     if (!reply) return false;
     if (reply.ok === true) return true;
-    if (reply.retryable === true || (reply.data && reply.data.retryable === true)) return false;
+    if (reply.retryable === true || (reply.data?.retryable === true)) return false;
     return reply.error !== 'app_not_found' && reply.error !== 'not_paired' && reply.error !== 'disconnected';
   }
 
@@ -1502,11 +1502,11 @@
       // it here cannot be repaired after a service-worker restart.
       observed.sends += 1;
       if (!reply || reply.ok !== true) observed.failures += 1;
-      if (reply && reply.ok === true && (reply.durable === true || reply.pending === 0)) {
+      if (reply?.ok === true && (reply.durable === true || reply.pending === 0)) {
         retireBoundProjectInput(projectInput, reply.projectBound);
         for (const entry of batch) {
           if (entry?.event?.kind !== 'tool_evidence') continue;
-          for (const call of entry.event.calls || []) traceStage(call && call.requestId, 'queued');
+          for (const call of entry.event.calls || []) traceStage(call?.requestId, 'queued');
         }
         const sent = new Set(batch);
         for (let index = queue.length - 1; index >= 0; index--) {
@@ -2229,7 +2229,7 @@
   /** The turn section a node is rendered in, or null. */
   function sectionOf(node) {
     try {
-      return node && node.closest ? node.closest(TURN_SECTION) : null;
+      return node?.closest ? node.closest(TURN_SECTION) : null;
     } catch {
       return null;
     }
@@ -2382,7 +2382,7 @@
         const settledContinuation = continuation && [...reconciledContinuations.keys()].some(
           key => key.startsWith(`${continuation[1]}:${continuation[2]}\u0000${conversationId || ''}\u0000`)
         );
-        if (continuation && continuation[1] === 'RESUME' && bootstrap !== 'resume' && !settledContinuation) {
+        if (continuation?.[1] === 'RESUME' && bootstrap !== 'resume' && !settledContinuation) {
           continuationJournalPending = true;
           commandJournalGate = true;
         }
@@ -2611,7 +2611,7 @@
         // standing switch's answer rather than the one the user actually chose.
         void ask({ type: 'goal_objective', conversationId: id, text: carried, mode: carriedMode }).then((reply) => {
           if (!alive || epoch !== boundEpoch || conversationId !== id) return;
-          if (reply && reply.ok === true) {
+          if (reply?.ok === true) {
             const stored = reply.data && typeof reply.data.objective === 'string' ? reply.data.objective : carried;
             const switched =
               reply.data && typeof reply.data.mode === 'string' && typeof reply.data.enabled === 'boolean'
@@ -2822,7 +2822,7 @@
     }
 
     const turn = generating ? generationTurn(observedTurns) : currentAssistantTurn(observedTurns);
-    if (generating && turn && turn.id) {
+    if (generating && turn?.id) {
       pageTurnIds.set(turnId, turn.id);
       if (pageTurnIds.size > 500) pageTurnIds.delete(pageTurnIds.keys().next().value);
     }
@@ -3210,11 +3210,11 @@
         return;
       }
       const ownStreamNode = (node) => {
-        const element = node && node.nodeType === 1 ? node : node?.parentElement;
+        const element = node?.nodeType === 1 ? node : node?.parentElement;
         return Boolean(element && (element.matches?.('.clf-stream') || element.closest?.('.clf-stream')));
       };
       const relevant = records.some((record) => {
-        const target = record.target && record.target.nodeType === 1 ? record.target : record.target.parentElement;
+        const target = record.target?.nodeType === 1 ? record.target : record.target.parentElement;
         if (!target || (target.closest && target.closest('.clf-stream'))) return false;
         // A chunk is inserted into a native parent, so checking only the mutation target
         // feeds our own paint back into this observer. Added/removed app roots and their
@@ -3231,7 +3231,7 @@
       if (!relevant) return;
       const authoredSelector = CLF_DOM.AUTHORED_SELECTOR;
       const nativeAuthoredNode = (node) => {
-        const element = node && node.nodeType === 1 ? node : node?.parentElement;
+        const element = node?.nodeType === 1 ? node : node?.parentElement;
         return Boolean(element && !ownStreamNode(element) &&
           (element.matches?.(authoredSelector) || element.closest?.(authoredSelector) || element.querySelector?.(authoredSelector)));
       };
@@ -3766,7 +3766,7 @@
     const endMessageId = cap(raw.endMessageId, 200);
     const codeModeCalls = [], codeIds = new Set();
     for (const entry of (Array.isArray(raw.codeModeCalls) ? raw.codeModeCalls : []).slice(0, FIBER_MAX_CALLS)) {
-      const messageId = cap(entry && entry.messageId, 200);
+      const messageId = cap(entry?.messageId, 200);
       if (!messageId) continue;
       if (codeIds.has(messageId)) return null;
       codeIds.add(messageId);
@@ -4073,7 +4073,7 @@
    */
   function settledTurnOwner(turn) {
     const requests = new Set();
-    for (const call of (turn && turn.calls) || []) if (call && call.requestId) requests.add(call.requestId);
+    for (const call of (turn?.calls) || []) if (call?.requestId) requests.add(call.requestId);
     if (requests.size !== 1) return null;
     const requestId = requests.values().next().value;
     return streamRequestTurnOwners.get(requestId) || null;
@@ -4186,7 +4186,7 @@
         projectInput
       }, owns);
       if (!owns()) return;
-      const data = reply && reply.ok === true && reply.data && typeof reply.data === 'object' ? reply.data : null;
+      const data = reply?.ok === true && reply.data && typeof reply.data === 'object' ? reply.data : null;
       retireBoundProjectInput(projectInput, data?.projectBound);
       const confirmed = new Set(data && Array.isArray(data.confirmed) ? data.confirmed : []);
       for (const call of batch) {
@@ -4278,7 +4278,7 @@
       // downgrades health; otherwise a transient timeout would flicker Overwrite and could
       // falsely complete interim prose through the degraded DOM fallback.
       const repair = await repairFiberReader();
-      if (repair && repair.ok === true) answer = await askFiber();
+      if (repair?.ok === true) answer = await askFiber();
       if (answer === null) {
         if (!alive || epoch !== askedEpoch || conversationId !== askedConversation ||
             (askedConversation && CLF_DOM.conversationId() !== askedConversation)) return false;
@@ -4575,7 +4575,7 @@
       );
       const awaitingOwner = answer.turns.some((turn) =>
         (turn.calls || []).some((call) =>
-          call && call.requestId && (!askedConversation || requestOwnersConfirmed.get(call.requestId) !== askedConversation)
+          call?.requestId && (!askedConversation || requestOwnersConfirmed.get(call.requestId) !== askedConversation)
         )
       );
       if (!awaitingRequestId && !awaitingOwner) fiberSettleUntil = 0;
@@ -4776,7 +4776,7 @@
         const ownerConflict = Boolean(
           priorMessage?.conflicted || (localOwner && priorMessage?.owner && priorMessage.owner !== localOwner)
         );
-        let owner = ownerConflict ? '' : localOwner || (priorMessage && priorMessage.owner) || '';
+        let owner = ownerConflict ? '' : localOwner || (priorMessage?.owner) || '';
         // Ownership may strengthen after an earlier scan saw the message before its DOM turn
         // was bound. It may never weaken merely because a concurrent later scan has no local
         // claim: that was the 2026-08-31 final-without-turnId race. A contradictory positive
@@ -5253,12 +5253,12 @@
     const anchorSeq = Number(anchor.seq);
     let nextAnchorSeq = Infinity;
     for (const candidate of userAnchorByMessage.values()) {
-      const seq = Number(candidate && candidate.seq);
+      const seq = Number(candidate?.seq);
       if (Number.isFinite(seq) && seq > anchorSeq && seq < nextAnchorSeq) nextAnchorSeq = seq;
     }
     const candidates = groups.filter((group) => {
       const start = (group.entries || []).find((entry) => entry.kind === 'turn_start');
-      const seq = Number(start && start.seq);
+      const seq = Number(start?.seq);
       if (!Number.isFinite(seq) || seq <= anchorSeq || seq >= nextAnchorSeq) return false;
       // A generation that produced nothing is not a candidate reconstruction of a visible
       // response. ChatGPT re-mounting its stop control for a couple of seconds — which a page
@@ -5277,7 +5277,7 @@
       const descriptor = fiberTurnFor(turn);
       if (!descriptor) return null;
       const requestIds = new Set();
-      for (const call of descriptor.calls || []) if (call && call.requestId) requestIds.add(call.requestId);
+      for (const call of descriptor.calls || []) if (call?.requestId) requestIds.add(call.requestId);
       if (requestIds.size !== 1) return null;
       const requestId = requestIds.values().next().value;
       selected = candidates.filter((group) =>
@@ -5326,11 +5326,11 @@
   function strongStreamIdentityKeys(entries) {
     const keys = new Set();
     for (const entry of entries || []) {
-      const key = entry && entry.kind === 'assistant_message'
+      const key = entry?.kind === 'assistant_message'
         ? websiteKey('message', entry.messageId)
         : null;
       if (key) keys.add(key);
-      if (entry && entry.kind === 'assistant_message' && entry.providerMessageId) {
+      if (entry?.kind === 'assistant_message' && entry.providerMessageId) {
         keys.add(websiteKey('provider', entry.providerMessageId));
       }
     }
@@ -5412,10 +5412,10 @@
     const owners = new Map();
     const keysOf = (entry) => {
       const out = [];
-      const message = websiteKey('message', entry && entry.kind === 'assistant_message' ? entry.messageId : null);
-      const provider = websiteKey('provider', entry && entry.kind === 'assistant_message' ? entry.providerMessageId : null);
-      const activity = websiteKey('activity', entry && entry.kind === 'page_tool' ? entry.messageId : null);
-      const request = websiteKey('request', entry && entry.kind === 'tool_call' ? entry.requestId : null);
+      const message = websiteKey('message', entry?.kind === 'assistant_message' ? entry.messageId : null);
+      const provider = websiteKey('provider', entry?.kind === 'assistant_message' ? entry.providerMessageId : null);
+      const activity = websiteKey('activity', entry?.kind === 'page_tool' ? entry.messageId : null);
+      const request = websiteKey('request', entry?.kind === 'tool_call' ? entry.requestId : null);
       if (message) out.push(message);
       if (provider) out.push(provider);
       if (activity) out.push(activity);
@@ -5478,7 +5478,7 @@
       result.messageMatches.push(match);
     }
     for (const activity of descriptor.activities || []) {
-      const key = websiteKey('activity', activity && activity.messageId);
+      const key = websiteKey('activity', activity?.messageId);
       const entries = key ? lookup.byKey.get(key) || [] : [];
       if (!key || !entries.length) result.missingActivities = true;
       if (key && (lookup.owners.get(key) || []).length > 1) result.conflict = true;
@@ -5527,7 +5527,7 @@
     // turn could collapse back to mostly-native ChatGPT after the next user message.
     const requestKeys = new Set();
     for (const call of descriptor.calls || []) {
-      const key = websiteKey('request', call && call.requestId);
+      const key = websiteKey('request', call?.requestId);
       if (key) requestKeys.add(key);
     }
     // One Fiber turn describing two different response requests is a React transition, not a
@@ -5797,7 +5797,7 @@
     const icon = document.createElement('span');
     icon.className = 'clf-stream-icon';
     icon.setAttribute('aria-hidden', 'true');
-    if (entry.kind === 'tool_call') setToolIcon(icon, entry.summary && entry.summary.kind);
+    if (entry.kind === 'tool_call') setToolIcon(icon, entry.summary?.kind);
     else if (entry.kind === 'page_tool') setToolIcon(icon, 'thought');
     else icon.textContent = entry.kind === 'chat_error' ? '!' : entry.kind === 'agent_message' ? '↔' : entry.kind === 'repair' ? '↻' : '';
     row.append(icon);
@@ -5812,10 +5812,10 @@
     const body = document.createElement('span');
     body.className = 'clf-stream-text';
     if (entry.kind === 'tool_call') {
-      body.textContent = entry.summary && entry.summary.title
+      body.textContent = entry.summary?.title
         ? entry.summary.title
         : t('content_tool_ran', 'Ran $1', entry.tool || 'tool');
-      if (entry.summary && entry.summary.detail) {
+      if (entry.summary?.detail) {
         const detail = document.createElement('span');
         detail.className = 'clf-tool-detail';
         detail.textContent = entry.summary.detail;
@@ -5861,7 +5861,7 @@
     if (Number.isSafeInteger(entry.detailRevision) && entry.detailRevision > 0) {
       disclosure.dataset.clfDetailRevision = String(entry.detailRevision);
     }
-    disclosure.open = Boolean(expandedTools && expandedTools.has(disclosure.dataset.clfCall));
+    disclosure.open = Boolean(expandedTools?.has(disclosure.dataset.clfCall));
     const panel = document.createElement('div');
     panel.className = 'clf-stream-tool-panel';
     for (const detail of streamToolDetails(entry)) {
@@ -6055,7 +6055,7 @@
     // the reader's scroll position is the jump presentationScrollActive() exists to prevent.
     const tail = sourceTurns[sourceTurns.length - 1];
     const tailNode = tail ? (tail.nodes || [tail.node])[(tail.nodes || [tail.node]).length - 1] : null;
-    let previous = tailNode && tailNode.parentElement ? tailNode : null;
+    let previous = tailNode?.parentElement ? tailNode : null;
     const before = new Map();
     for (const entry of notices) {
       const next = userTurns.find((held) => held.seq > entry.seq);
@@ -6123,7 +6123,7 @@
    * helps in a viewport containing only one long assistant response.
    */
   function presentationScrollContainer(node) {
-    for (let parent = node && node.parentElement; parent; parent = parent.parentElement) {
+    for (let parent = node?.parentElement; parent; parent = parent.parentElement) {
       try {
         const style = globalThis.getComputedStyle ? globalThis.getComputedStyle(parent) : null;
         const overflow = style ? String(style.overflowY || '') : '';
@@ -6136,7 +6136,7 @@
   }
 
   function presentationViewportAnchor(sourceTurns) {
-    const viewport = Number(globalThis.innerHeight) || Number(document.documentElement && document.documentElement.clientHeight) || 0;
+    const viewport = Number(globalThis.innerHeight) || Number(document.documentElement?.clientHeight) || 0;
     const pick = (role) => {
       let best = null;
       for (const turn of sourceTurns || []) {
@@ -6149,8 +6149,8 @@
           } catch {
             continue;
           }
-          const top = Number(rect && rect.top);
-          const bottom = Number(rect && rect.bottom);
+          const top = Number(rect?.top);
+          const bottom = Number(rect?.bottom);
           if (!Number.isFinite(top) || !Number.isFinite(bottom)) continue;
           if (bottom < 0 || (viewport > 0 && top > viewport)) continue;
           // Prefer the first fully/partly visible turn below the top edge. If every candidate
@@ -6177,7 +6177,7 @@
     const delta = after - anchor.top;
     if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
     try {
-      if (anchor.scrollRoot && anchor.scrollRoot.isConnected) anchor.scrollRoot.scrollTop += delta;
+      if (anchor.scrollRoot?.isConnected) anchor.scrollRoot.scrollTop += delta;
       else if (typeof globalThis.scrollBy === 'function') globalThis.scrollBy(0, delta);
     } catch {
       // Presentation compensation is best effort; never make rendering depend on scroll APIs.
@@ -6399,7 +6399,7 @@
       const nodes = turn.nodes || (turn.node ? [turn.node] : []);
       const priorKeys = new Set(
         nodes
-          .map((node) => node && node.dataset ? node.dataset.clfStreamKey : '')
+          .map((node) => node?.dataset ? node.dataset.clfStreamKey : '')
           .filter(Boolean)
       );
       const priorKey = priorKeys.size === 1 ? priorKeys.values().next().value : null;
@@ -6468,7 +6468,7 @@
       // used by websiteRenderForTurn(); use them as the sibling-root key too so moving the
       // stream out of the React section does not throw away that identity.
       const renderedMessageIds = [...new Set(
-        rendered.filter(entry => entry && entry.kind === 'assistant_message').map(entry => entry.messageId).filter(Boolean)
+        rendered.filter(entry => entry?.kind === 'assistant_message').map(entry => entry.messageId).filter(Boolean)
       )];
       const canonicalKey = renderedMessageIds.length > 0 ? `messages:${renderedMessageIds.join(',')}` : null;
       // Once this exact native turn already points at a sibling stream, keep that render key.
@@ -6734,8 +6734,8 @@
         if (Number.isFinite(truncatedFrom) && truncatedFrom >= 0) since = truncatedFrom;
       }
       for (const anchor of Array.isArray(data.userAnchors) ? data.userAnchors : []) {
-        const seq = Number(anchor && anchor.seq);
-        const messageId = typeof (anchor && anchor.messageId) === 'string' ? anchor.messageId : '';
+        const seq = Number(anchor?.seq);
+        const messageId = typeof (anchor?.messageId) === 'string' ? anchor.messageId : '';
         if (!Number.isFinite(seq) || !messageId) continue;
         userAnchorByMessage.set(messageId, { seq, time: Number(anchor.time) || 0, messageId });
       }
@@ -6755,7 +6755,7 @@
       const isWork = (entry) =>
         entry &&
         (entry.turnId === turnId || steeredTurns.has(entry.turnId)) &&
-        !(entry.kind === 'tool_call' && entry.process && entry.process.completedAt !== undefined) &&
+        !(entry.kind === 'tool_call' && entry.process?.completedAt !== undefined) &&
         !(entry.kind === 'assistant_message' && (entry.final === true || entry.state === 'final')) &&
         !(fiberSettled?.reason === 'thinking_failed' && entry.time <= fiberSettled.endedAt) &&
         !browserRepairRow(entry) &&
@@ -6764,7 +6764,7 @@
           entry.kind === 'progress' ||
           entry.kind === 'assistant_message');
       for (const entry of freshStream) {
-        const seq = Number(entry && entry.seq);
+        const seq = Number(entry?.seq);
         if (!Number.isFinite(seq)) continue;
         if (seq >= since) since = seq + 1;
         // The app's own verdict on a request id, arriving on the feed this page already
@@ -6774,7 +6774,7 @@
           traceStage(entry.requestId, 'app', entry.attribution);
           traceStage(entry.requestId, 'tool', entry.tool);
         }
-        if (entry && entry.kind === 'assistant_message' && entry.messageId) {
+        if (entry?.kind === 'assistant_message' && entry.messageId) {
           const messageId = String(entry.messageId);
           const priorSeq = streamMessageSeq.get(messageId);
           const prior = Number.isFinite(priorSeq) ? streamBySeq.get(priorSeq) : null;
@@ -6832,7 +6832,7 @@
 
       const fresh = Array.isArray(data.entries) ? data.entries : [];
       for (const entry of fresh) {
-        const seq = Number(entry && entry.seq);
+        const seq = Number(entry?.seq);
         if (!Number.isFinite(seq)) continue;
         // Old app builds expose only this compatibility list. It has no presentation owner
         // anymore, but it still advances the shared cursor past what was delivered.
@@ -6890,7 +6890,7 @@
         releaseContinuationJournal();
       }
       bootstrapAgent = typeof data.bootstrapAgent === 'string' && data.bootstrapAgent ? data.bootstrapAgent : null;
-      if (job && job.busy) pressedAt = 0;
+      if (job?.busy) pressedAt = 0;
       // The local phase describes this tab's part of a native compaction, which is over
       // the moment the app's job has moved past waiting for the handoff. Leaving it set
       // would make the button go on saying "ChatGPT is writing…" over a finished job.
@@ -6955,14 +6955,14 @@
       };
     }
 
-    if (job && job.busy && error && !phase) {
+    if (job?.busy && error && !phase) {
       // The ticket is alive but this page's checkpoint failed. Say the failure without
       // declaring the durable job failed; a later generation/reload may pick it up, and the
       // only immediate action offered here is the explicit cancel that closes the ticket.
       return { mode: 'error', label: t('content_paused', 'Paused'), hint: error, action: 'cancel' };
     }
 
-    if (job && job.busy) {
+    if (job?.busy) {
       if (job.stage === 'opening') {
         return {
           mode: 'busy',
@@ -7003,7 +7003,7 @@
      * long turn they no longer want to wait out, and a button that disappears exactly then
      * is a button that is missing whenever it is wanted.
      */
-    if (job && job.stage === 'done') {
+    if (job?.stage === 'done') {
       return {
         mode: 'done',
         label: t('content_opened', 'Opened'),
@@ -7011,7 +7011,7 @@
         action: 'start'
       };
     }
-    if (job && job.stage === 'failed') {
+    if (job?.stage === 'failed') {
       if (job.error === 'cancelled') {
         return {
           mode: 'idle',
@@ -7096,18 +7096,18 @@
     // refused, so nothing this app types may drive it on). 'continued' is neither — that chat
     // is finished, and its controls are moot rather than fenced.
     const fenced = blocked === 'worker' || blocked === 'blocked';
-    const auto = Boolean(context && context.auto) && !fenced;
+    const auto = Boolean(context?.auto) && !fenced;
     const threshold = context && context.threshold > 0 ? context.threshold : 0;
     // One setting, one control. The app sends the mode beside `enabled`, so there is a single
     // value to read and the slider can only ever be in one of its three positions.
-    const mode = goal && goal.mode === 'loop' ? 'loop' : 'goal';
+    const mode = goal?.mode === 'loop' ? 'loop' : 'goal';
     const goalOn = Boolean(goal && (goal.configuredEnabled ?? goal.enabled)) && mode === 'goal';
     const loopOn = Boolean(goal && (goal.configuredEnabled ?? goal.enabled)) && mode === 'loop';
     // Whether this chat has moved its own switch, which is what tells an Off somebody chose
     // here from an Off inherited from the app-wide setting. Only the second lets a saved goal
     // speak for the chat — see goalArmedFor() in src/main/goal.ts, which this mirrors.
-    const own = Boolean(goal && goal.own);
-    const hasKey = Boolean(goal && goal.hasKey);
+    const own = Boolean(goal?.own);
+    const hasKey = Boolean(goal?.hasKey);
     const objective = goal && typeof goal.objective === 'string' ? goal.objective : '';
     // The app's own reason, rather than this tab's guess. Today there is exactly one: a
     // worker chat, where the prime already writes the user's turns.
@@ -7204,7 +7204,7 @@
                 hint: t(
                   'content_mode_goal_hint',
                   'Replies as you until this chat’s goal is reached, then stops. Written with $1.',
-                  modelLabel(goal && goal.model)
+                  modelLabel(goal?.model)
                 )
               },
               {
@@ -7213,7 +7213,7 @@
                 hint: t(
                   'content_mode_loop_hint',
                   'Replies as you for ever — only this slider ends it. Written with $1.',
-                  modelLabel(goal && goal.model)
+                  modelLabel(goal?.model)
                 )
               }
             ],
@@ -7404,7 +7404,7 @@
   let tipFor = null;
 
   function tipElement() {
-    if (tipNode && tipNode.isConnected) return tipNode;
+    if (tipNode?.isConnected) return tipNode;
     tipNode = document.createElement('div');
     tipNode.className = 'clf-tip';
     tipNode.setAttribute('role', 'tooltip');
@@ -7448,7 +7448,7 @@
   function wireTips() {
     const open = (event) => {
       const at = event.target;
-      const anchor = at && at.nodeType === 1 && at.closest ? at.closest('[data-clf-tip]') : null;
+      const anchor = at?.nodeType === 1 && at.closest ? at.closest('[data-clf-tip]') : null;
       if (!anchor || anchor === tipFor) return;
       hideTip();
       tipTimer = setTimeout(() => {
@@ -7457,7 +7457,7 @@
     };
     const close = (event) => {
       const at = event.target;
-      const anchor = at && at.nodeType === 1 && at.closest ? at.closest('[data-clf-tip]') : null;
+      const anchor = at?.nodeType === 1 && at.closest ? at.closest('[data-clf-tip]') : null;
       if (anchor && anchor !== tipFor && tipTimer === null) return;
       hideTip();
     };
@@ -7767,7 +7767,7 @@
   }
 
   function menuElement() {
-    if (menuNode && menuNode.isConnected) return menuNode;
+    if (menuNode?.isConnected) return menuNode;
     menuNode = buildMenu();
     return menuNode;
   }
@@ -7811,7 +7811,7 @@
         ...(conversationId ? { conversationId } : {}),
         [key]: on
       });
-      if (reply && reply.ok === true && reply.data) {
+      if (reply?.ok === true && reply.data) {
         context = readContext(reply.data.context) || context;
         if (reply.data.goal) goalConfig = { ...(goalConfig || {}), ...reply.data.goal };
       }
@@ -7884,7 +7884,7 @@
     menuMode = mode === 'loop' ? 'loop' : 'goal';
     objectiveError = '';
     renderMenu();
-    const box = menuNode && menuNode.querySelector('[data-clf-goal-input]');
+    const box = menuNode?.querySelector('[data-clf-goal-input]');
     if (box) {
       box.focus();
       box.setSelectionRange(box.value.length, box.value.length);
@@ -7961,7 +7961,7 @@
       // happened to finish a turn of its own — which, in a chat nobody is typing into, is
       // never. The turn key is the save, so a second save writes a second message and a
       // retried one does not.
-      if (!generating && !CLF_DOM.generating() && !goalBusy && !nativeBusy && !(job && job.busy)) {
+      if (!generating && !CLF_DOM.generating() && !goalBusy && !nativeBusy && !(job?.busy)) {
         goalTurnId = `objective-${Date.now().toString(36)}`;
         goalRetries = 0;
         setGoalPhase('');
@@ -8001,13 +8001,13 @@
    */
   function openRetryable(reply) {
     if (!reply || reply.ok === true) return false;
-    if (reply.retryable === true || (reply.data && reply.data.retryable === true)) return true;
+    if (reply.retryable === true || (reply.data?.retryable === true)) return true;
     return reply.status === 0 && reply.error !== 'app_not_found';
   }
 
   /** Keep the existing opening retry owner, but honor a provider's structured Retry-After. */
   function openRetryWait(reply) {
-    const failure = (reply && reply.data) || reply || {};
+    const failure = (reply?.data) || reply || {};
     const retryAfterMs = failure.retryAfterMs;
     if (typeof retryAfterMs !== 'number' || !Number.isFinite(retryAfterMs)) return GOAL_RETRY_MS;
     // A retryable Goal opening is still cancellable by navigation/settings while it waits. Bound
@@ -8049,7 +8049,7 @@
       // The mode as well, because there is no chat yet to hold a switch: this request is the
       // only thing that knows which instruction the opening message is being written under.
       reply = await ask({ type: 'goal_open', text: goal, mode: pendingObjectiveMode });
-      if (!current() || (reply && reply.ok === true) || !openRetryable(reply)) break;
+      if (!current() || (reply?.ok === true) || !openRetryable(reply)) break;
       goalRetryWaitMs = openRetryWait(reply);
       setGoalPhase('retrying', replyError(reply) || t('content_app_did_not_answer_lower', 'the app did not answer'));
       await sleep(goalRetryWaitMs);
@@ -8483,7 +8483,7 @@
     const pointerdown = (event) => {
       if (!menuOpen) return;
       const at = event.target;
-      if (at && at.nodeType === 1 && at.closest && (at.closest('[data-clf-menu]') || at.closest('.clf-compact-btn'))) return;
+      if (at?.nodeType === 1 && at.closest && (at.closest('[data-clf-menu]') || at.closest('.clf-compact-btn'))) return;
       closeMenu();
     };
     const keydown = (event) => {
@@ -8497,7 +8497,7 @@
       // Scrolling a long goal back into view inside the sheet is not "I am doing something
       // else now" — it is using the sheet. Only the page moving underneath closes it.
       const at = event.target;
-      if (at && at.nodeType === 1 && at.closest && at.closest('[data-clf-menu]')) return;
+      if (at?.nodeType === 1 && at.closest && at.closest('[data-clf-menu]')) return;
       closeMenu();
     };
     const resize = () => closeMenu();
@@ -8704,7 +8704,7 @@
 
   function stageView(input) {
     const { job, goal, phase = nativePhase, summary } = input;
-    if (job && job.busy) {
+    if (job?.busy) {
       const stage =
         job.stage === 'opening'
           ? t('content_stage_opening_fresh_chat', 'Opening a fresh chat')
@@ -8843,11 +8843,11 @@
           ? t('content_goal_backend_custom_endpoint', 'custom endpoint')
           : 'OpenRouter';
     const bar = (at, done = false) => ({ steps: GOAL_STEPS, at, done });
-    const failure = goal.error || (draft && draft.stage === 'failed'
+    const failure = goal.error || (draft?.stage === 'failed'
       ? goalFailureText(draft) || draft.error || t('content_goal_backend_no_answer', '$1 did not answer', dest)
       : '');
     if (failure) {
-      const at = draft && draft.stage === 'failed' ? 2 : (GOAL_STEP_AT[goal.phase] ?? 1);
+      const at = draft?.stage === 'failed' ? 2 : (GOAL_STEP_AT[goal.phase] ?? 1);
       if (goal.phase === 'retrying') {
         const seconds = Math.round((goal.retryMs || GOAL_RETRY_MS) / 1000);
         return {
@@ -8925,7 +8925,7 @@
                   : t('content_goal_checking_finished', 'Checking the answer is finished');
       return { stage, detail, body: '', kind: 'goal', ...bar(0) };
     }
-    if (goal.phase === 'sending' && draft && draft.reply) {
+    if (goal.phase === 'sending' && draft?.reply) {
       return {
         stage: t('content_goal_sending_to_chatgpt', 'Sending it to ChatGPT'),
         detail: '',
@@ -9179,7 +9179,7 @@
     // only works if it is exactly as wide. Measured rather than assumed: ChatGPT's composer
     // width follows the window and the sidebar, and the parent centres its children instead
     // of stretching them, so a fixed `max-width` left this sized to its own caption.
-    const box = spot.before && spot.before.getBoundingClientRect ? spot.before.getBoundingClientRect() : null;
+    const box = spot.before?.getBoundingClientRect ? spot.before.getBoundingClientRect() : null;
     const width = box && box.width > 0 ? `${Math.round(box.width)}px` : '';
     if (width && stagePanel.root.style.width !== width) {
       stagePanel.root.style.width = width;
@@ -9260,7 +9260,7 @@
 
     const policy = await ask({ type: 'activity', conversationId: forId, since });
     if (!current()) return;
-    const policyData = policy && policy.ok === true && policy.data ? policy.data : null;
+    const policyData = policy?.ok === true && policy.data ? policy.data : null;
     if (!policyData) {
       // Role authority is the prerequisite for the destructive barrier. If the app/service
       // worker is unavailable, interrupting first and discovering later that this was a worker
@@ -9428,7 +9428,7 @@
       nativePhase = data.sourceSend && data.sourceSend.state !== 'not-attempted' ? 'waiting' : '';
       pressedAt = 0;
       localError =
-        data.sourceSend && data.sourceSend.state === 'dispatched-unresolved'
+        data.sourceSend?.state === 'dispatched-unresolved'
           ? t(
             'content_compact_handoff_already_submitted',
             'The handoff instruction was already submitted here. It will finish on its own, or cancel it.'
@@ -9454,7 +9454,7 @@
    * ChatGPT's own marker or at an explicit cancel, never at a second Send.
    */
   async function maybeResumePendingCompaction(forId = conversationId, forEpoch = epoch) {
-    const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
+    const source = job?.stage === 'handoff-pending' ? job.sourceSend : null;
     if (!source || nativeBusy || localError) return;
     if (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved') return;
     if (!alive || conversationId !== forId || epoch !== forEpoch || CLF_DOM.conversationId() !== forId) return;
@@ -9490,7 +9490,7 @@
   const BROKEN_STREAM_PICKUP_MS = 60_000;
   let brokenStreamSince = 0;
   function resumePendingCompactionFromRepair(expectedConversationId) {
-    const source = job && job.stage === 'handoff-pending' ? job.sourceSend : null;
+    const source = job?.stage === 'handoff-pending' ? job.sourceSend : null;
     if (!alive || !expectedConversationId || conversationId !== expectedConversationId ||
         CLF_DOM.conversationId() !== expectedConversationId || !source ||
         (source.state !== 'not-attempted' && source.state !== 'attempted-unresolved')) return false;
@@ -9704,7 +9704,7 @@
       epoch === forEpoch &&
       CLF_DOM.conversationId() === forId;
     let attemptCrossed = false;
-    const automaticTicket = job && job.automatic === true;
+    const automaticTicket = job?.automatic === true;
     const abandonBeforeSend = async (why, retireAutomatic = false) => {
       if (!current()) return;
       nativeBusy = false;
@@ -9880,7 +9880,7 @@
       const why = t(
         'content_compact_handoff_request_failed',
         'Could not ask ChatGPT for a handoff: $1',
-        (err && err.message) || t('content_unknown_error', 'unknown error')
+        (err?.message) || t('content_unknown_error', 'unknown error')
       );
       if (!attemptCrossed) await abandonBeforeSend(why);
       else {
@@ -9973,7 +9973,7 @@
         found.set(key, found.has(key) ? null : marked);
       }
     }
-    return [...found.entries()].filter(([, marked]) => marked && marked.messageId);
+    return [...found.entries()].filter(([, marked]) => marked?.messageId);
   }
 
   // Only the bridge's terminal transaction dispositions retire a marker. An extension-local
@@ -10055,7 +10055,7 @@
     renderControl();
     const delivered = await ask({ type: 'compact', conversationId, token: marked.token, summary });
     if (!delivered || delivered.ok !== true) return false;
-    if (delivered.data && delivered.data.job) job = delivered.data.job;
+    if (delivered.data?.job) job = delivered.data.job;
     nativePhase = '';
     localError = '';
     renderControl();
@@ -10235,14 +10235,14 @@
   function noteGoalTurn(ended, outcome, endedTurnId) {
     // The accepted helper user receipt and current provider terminal own its result.
     // A renderer lifecycle edge must not create a second, captured-node owner.
-    if (desktopDecision && desktopDecision.onTarget()) return;
+    if (desktopDecision?.onTarget()) return;
     if (!endedTurnId || !goalUsable() || goalConfig?.queuePending) return;
     // Only a finished, non-partial answer. See GOAL_CONTINUABLE for why every other outcome —
     // including `interrupted` — belongs to recovery rather than to this loop.
     if (!GOAL_CONTINUABLE.has(outcome)) return;
     // A compaction owns this turn: its answer is the brief, not a message to reply to, and
     // the chat is about to be replaced anyway.
-    if (nativeBusy || (job && job.busy)) return;
+    if (nativeBusy || (job?.busy)) return;
     // One draft per generation, and this is the near half of that rule; the app holds the
     // other half against a retried request. See /goal/draft.
     if (goalTurnId === endedTurnId) return;
@@ -10289,13 +10289,13 @@
     // exists to bridge, so keep the hint rather than deciding from stale/default settings.
     if (!goalConfig) return;
     if (!goalUsable()) return void clearResumeGoalPending();
-    if (goalBusy || generating || CLF_DOM.generating() || nativeBusy || (job && job.busy)) return;
+    if (goalBusy || generating || CLF_DOM.generating() || nativeBusy || (job?.busy)) return;
 
     // The resume bootstrap is the only user turn we are entitled to reason from. If somebody
     // manually continued before recovery ran, the conversation has moved on and the old first
     // answer must not generate another user message behind theirs.
     const users = CLF_DOM.messages().filter(
-      (message) => message && message.role === 'user' && !retiredMessages.has(message.id) && !isStale(message.node)
+      (message) => message?.role === 'user' && !retiredMessages.has(message.id) && !isStale(message.node)
     );
     if (users.length > 1) return void clearResumeGoalPending();
     if (users.length !== 1) return;
@@ -10335,7 +10335,7 @@
    * ChatGPT's composer to be truly idle, then resumes that same turn id.
    */
   function maybeRecoverDurableGoalTurn() {
-    const pending = goalConfig && goalConfig.pending;
+    const pending = goalConfig?.pending;
     if (!pending || !pending.replyId || !pending.turnId || !conversationId) return;
     if (!goalUsable() || goalConfig?.queuePending || goalBusy || (pending.listenUntil ?? 0) > Date.now()) return;
     if (CLF_DOM.generating()) {
@@ -10358,7 +10358,7 @@
       return;
     }
     if (goalDraft || (generating && !goalRecoveryReady(pending)) || CLF_DOM.generating()) return;
-    if (nativeBusy || (job && job.busy)) return;
+    if (nativeBusy || (job?.busy)) return;
     const acceptedAt = Number(pending.acceptedAt);
     const ticketId = `${pending.replyId}:${Number.isFinite(acceptedAt) && acceptedAt > 0 ? acceptedAt : pending.eventSeq}`;
     if (goalTicketId === ticketId) return;
@@ -10408,7 +10408,7 @@
         if (!current()) return;
         // Somebody — the user, or a turn ChatGPT started on its own — is talking again.
         if (generating) return void setGoalPhase('');
-        if (nativeBusy || (job && job.busy)) return void setGoalPhase('');
+        if (nativeBusy || (job?.busy)) return void setGoalPhase('');
         if (!goalUsable()) return void setGoalPhase('');
         const nextText = briefSoFar(ended, text);
         const nextActivity = briefActivityMark(ended);
@@ -10474,7 +10474,7 @@
     // A turn that finished during the wait has taken the claim, and this retry is about an
     // older one. It says nothing and touches nothing: the phase on screen is that turn's now.
     if (!current()) return;
-    if (goalBusy || goalSourceGenerating() || CLF_DOM.generating() || nativeBusy || (job && job.busy) || !goalUsable()) {
+    if (goalBusy || goalSourceGenerating() || CLF_DOM.generating() || nativeBusy || (job?.busy) || !goalUsable()) {
       // This timer no longer owns a retry. Return its pickup to the existing
       // activity feed: retaining the claim here strands still-owed recovery after
       // temporary work/compaction ends. Only a current server obligation can collect
@@ -10561,7 +10561,7 @@
     }
     // From here the draft lives on /activity: its stage, its streaming text and — once — the
     // message to type. See maybeSendGoalReply, which runs on every pull.
-    goalDraft = (reply.data && reply.data.goal) || null;
+    goalDraft = (reply.data?.goal) || null;
     setGoalPhase('drafting');
     void pullActivity();
   }
@@ -10626,7 +10626,7 @@
         ? t('content_goal_backend_chatgpt_helper', 'ChatGPT helper')
         : draft.backend === 'templates'
           ? t('content_goal_backend_offline_templates_title', 'Offline templates')
-          : goalConfig && goalConfig.provider === 'custom'
+          : goalConfig?.provider === 'custom'
             ? t('content_goal_backend_custom_endpoint', 'custom endpoint')
             : 'OpenRouter';
       const why = goalFailureText(draft) || draft.error || t(
@@ -10634,7 +10634,7 @@
         '$1 did not answer',
         fallbackDestination
       );
-      const pending = goalConfig && goalConfig.pending;
+      const pending = goalConfig?.pending;
       let retrying = draft.retryable === true && goalTurnId === draft.turnId;
       // A reload loses the document-local claim while the app keeps both the failed attempt
       // and the durable obligation it was answering. Only that exact durable turn may restore
@@ -10649,7 +10649,7 @@
         !goalSourceGenerating(draft.turnId) &&
         !CLF_DOM.generating() &&
         !nativeBusy &&
-        !(job && job.busy)
+        !(job?.busy)
       ) {
         goalTurnId = draft.turnId;
         retrying = true;
@@ -10843,7 +10843,7 @@
     nativePhase = '';
     const reply = await ask({ type: 'compact', conversationId: forId, cancel: true });
     if (!current()) return;
-    if (reply && reply.ok === true && reply.data && reply.data.job) job = reply.data.job;
+    if (reply?.ok === true && reply.data?.job) job = reply.data.job;
     else if (!reply || reply.ok !== true) localError = replyError(reply) || t(
       'content_compact_cancel_failed',
       'Could not cancel compaction.'
@@ -11088,7 +11088,7 @@
   function revivalWaitReason(target) {
     if (!commandReadinessInitialized || !alive || CLF_DOM.conversationId() !== target) return 'revival-editor';
     if (generating || CLF_DOM.generating() || CLF_DOM.stopButton?.() ||
-        pendingTools > 0 || nativeBusy || goalBusy || (job && job.busy)) return 'revival-busy';
+        pendingTools > 0 || nativeBusy || goalBusy || (job?.busy)) return 'revival-busy';
     if (!CLF_DOM.composerWritable?.()) return 'revival-editor';
     return CLF_DOM.composerSubmitReady?.() ? null : 'revival-draft';
   }
@@ -11097,7 +11097,7 @@
   function revivalReadyButForDraft(target) {
     if (!commandReadinessInitialized || !alive || CLF_DOM.conversationId() !== target) return false;
     if (generating || CLF_DOM.generating()) return false;
-    return !(pendingTools > 0 || nativeBusy || goalBusy || (job && job.busy));
+    return !(pendingTools > 0 || nativeBusy || goalBusy || (job?.busy));
   }
 
   /**
@@ -11193,7 +11193,7 @@
     while (!attempt?.cancelled && alive && CLF_DOM.conversationId() === target) {
       const reply = await ask({ type: 'defer_revival', id, conversationId: target });
       if (attempt?.cancelled) return false;
-      if (reply && reply.ok === true && reply.deferred === true && reply.preferredElsewhere !== true) return true;
+      if (reply?.ok === true && reply.deferred === true && reply.preferredElsewhere !== true) return true;
       if (attempt?.cancelled || !alive || CLF_DOM.conversationId() !== target) return false;
       await sleep(1000);
     }
@@ -11226,7 +11226,7 @@
   function waitForComposer(timeoutMs = 12_000, stillCurrent = () => true) {
     if (!stillCurrent()) return Promise.resolve(null);
     const current = CLF_DOM.composer();
-    if (current && current.isConnected && CLF_DOM.composerWritable()) return Promise.resolve(current);
+    if (current?.isConnected && CLF_DOM.composerWritable()) return Promise.resolve(current);
     return new Promise((resolve) => {
       let timer = null;
       let observer = null;
@@ -11238,7 +11238,7 @@
       const check = () => {
         if (!stillCurrent()) return finish(null);
         const composer = CLF_DOM.composer();
-        if (composer && composer.isConnected && CLF_DOM.composerWritable()) finish(composer);
+        if (composer?.isConnected && CLF_DOM.composerWritable()) finish(composer);
       };
       observer = new MutationObserver(check);
       observer.observe(document.documentElement, {
@@ -11694,7 +11694,7 @@
       // proof on its local turn instead of comparing escaped bootstrap text again
       // under ordinary-input rules. Retain the original pre-Send answer baseline.
       const receipt = userSendReceipt;
-      if (receipt && receipt.text === sendText(boot.text) && receipt.previousMessageId !== message.id &&
+      if (receipt?.text === sendText(boot.text) && receipt.previousMessageId !== message.id &&
           (!receipt.conversationId || receipt.conversationId === found)) {
         receipt.accepted = { messageId: message.id, conversationId: found, epoch };
       }
@@ -11893,7 +11893,7 @@
 
   function currentActivityPullDelay() {
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-    const active = nativeBusy || Boolean(job && job.busy) || pendingTools > 0;
+    const active = nativeBusy || Boolean(job?.busy) || pendingTools > 0;
     // A goal draft lives entirely on this feed — its streamed text is what the stage panel
     // shows, and the finished message only arrives here — so it polls at the live cadence
     // even in a hidden tab, which is exactly the tab this feature runs in.
@@ -11961,7 +11961,7 @@
   }
 
   /** Apply popup changes immediately in every open ChatGPT tab. */
-  if (globalThis.chrome && chrome.storage && chrome.storage.onChanged) {
+  if (globalThis.chrome?.storage && chrome.storage.onChanged) {
     const storageChanged = (changes, areaName) => {
       if (!alive) return;
       if (areaName !== 'local' || !changes) return;
@@ -12982,7 +12982,7 @@
   }
 
   /** Popup commands target this tab directly; no bridge credential is involved. */
-  if (globalThis.chrome && chrome.runtime && chrome.runtime.onMessage) {
+  if (globalThis.chrome?.runtime && chrome.runtime.onMessage) {
     const runtimeMessage = (message, _sender, sendResponse) => {
       // Recorder takeover revokes every browser-facing control channel, not only observation.
       // A predecessor left registered in this same isolated world can otherwise win a ping or
@@ -13157,7 +13157,7 @@
             renderStreams();
             sendResponse({ ok: true, enabled: true });
           })
-          .catch((err) => sendResponse({ ok: false, error: String(err && err.message ? err.message : err) }));
+          .catch((err) => sendResponse({ ok: false, error: String(err?.message ? err.message : err) }));
         return true;
       }
       return false;
@@ -13287,7 +13287,7 @@
       if (menuNode) menuNode.remove();
       menuNode = null;
       removeStagePanel();
-      if (control && control.root) control.root.remove();
+      if (control?.root) control.root.remove();
       control = null;
     } catch {
       // Presentation cleanup is best effort; ownership was already revoked by `alive=false`.

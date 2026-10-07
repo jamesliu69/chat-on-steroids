@@ -1690,7 +1690,7 @@ async function targetSession(target: Target): Promise<string | null> {
   if (target.conversationId) {
     if (target.sessionId) {
       const exact = await getSession(target.sessionId);
-      if (exact && exact.chatIds.includes(target.conversationId)) return exact.id;
+      if (exact?.chatIds.includes(target.conversationId)) return exact.id;
       logWarn(
         `request attribution session ${target.sessionId} for conversation ${target.conversationId} is unavailable; refusing to downgrade to a newer conversation epoch`
       );
@@ -1927,7 +1927,7 @@ async function recordPageTool(
   }
 
   const held = live.pageTools.get(pageToolKey(id));
-  if (held && held.text === label) return false;
+  if (held?.text === label) return false;
 
   const event = await appendEvent(sessionId, {
     ...base,

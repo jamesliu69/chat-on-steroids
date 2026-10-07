@@ -1096,7 +1096,7 @@ export function reactivateSilentCeilingRunForTerminal(
   }
   if (!reactivateDormantRun(dormant.owner)) return false;
   agent = boundAgent(conversationId);
-  return Boolean(agent && agent.info.state === 'sleeping' && agent.info.silenceParked);
+  return Boolean(agent?.info.state === 'sleeping' && agent.info.silenceParked);
 }
 
 /** Explicitly ends a ceiling-silenced worker, including while its family is parked. */
@@ -1861,7 +1861,7 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
 
   if (run) {
     const caller = resolve(input.caller);
-    if (caller && caller.info.role === 'worker') {
+    if (caller?.info.role === 'worker') {
       throw new AgentError(
         `${caller.info.id} is a worker in this run. Workers must not create workers of their own — send the prime ` +
           'agent a message instead and let it decide.'

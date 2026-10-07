@@ -326,9 +326,9 @@
         } catch { /* Unresolved signal carries no durable identity. */ }
         conversations.set(conversation, serverId);
       }
-      const values = [props.clientThreadId, props.conversationId, conversation && conversation.id,
+      const values = [props.clientThreadId, props.conversationId, conversation?.id,
         Array.isArray(props.entry?.turn?.items) ? props.entry.conversationId : null,
-        conversations.get(conversation), turn && turn.clientThreadId, turn && turn.conversationId];
+        conversations.get(conversation), turn?.clientThreadId, turn?.conversationId];
       for (let index = 0; index < values.length; index++) {
         const value = str(values[index]);
         if (!value || value.startsWith('WEB:') || value.startsWith('local-chatgpt:')) continue;
@@ -929,7 +929,7 @@
       for (let at = 0; at < found.length; at++) {
         const block = found[at];
         if (block.closest && (block.closest(TOOL) || block.closest(OWN_SURFACES))) continue;
-        const parent = block.parentElement && block.parentElement.closest ? block.parentElement.closest(MARKDOWN) : null;
+        const parent = block.parentElement?.closest ? block.parentElement.closest(MARKDOWN) : null;
         if (parent && section.contains(parent)) continue;
         blocks.push(block);
         blockSections.push(sectionAt);
@@ -1123,7 +1123,7 @@
       const nestedParents = new Set();
       for (let at = 0; at < found.length; at++) {
         const row = found[at];
-        let parent = row && row.parentElement;
+        let parent = row?.parentElement;
         while (parent && parent !== section) {
           if (candidates.has(parent)) nestedParents.add(parent);
           parent = parent.parentElement;
@@ -1211,7 +1211,7 @@
     if (!recipient || recipient.indexOf('api_tool') !== 0) return null;
 
     let path = null;
-    const text = message.content && message.content.text;
+    const text = message.content?.text;
     if (typeof text === 'string' && text.length > 0) {
       const head = PATH_HEAD.exec(text);
       if (head) path = str(head[1]);
@@ -1300,7 +1300,7 @@
   function resultOf(message) {
     if (!message || typeof message !== 'object') return null;
     const meta = message.metadata;
-    const resource = meta && meta.invoked_resource;
+    const resource = meta?.invoked_resource;
     if (!resource || typeof resource !== 'object') return null;
     return { app: str(resource.app_name), resource: str(resource.resource_uri) };
   }
@@ -1432,7 +1432,7 @@
         messages[0].status === 'finished_successfully' && messages[1].status === 'finished_successfully' &&
         !conflictingRequestScope(messages[0], messages[1]) && ourPath(request.path)) {
       const displayed = completedCallOf(messages[1]);
-      if (displayed && displayed.requestId === request.requestId && identify(request, displayed) === displayed.tool) completed = displayed;
+      if (displayed?.requestId === request.requestId && identify(request, displayed) === displayed.tool) completed = displayed;
     }
     if (completed) return { v: VERSION, index, tool: completed.tool, path: null, app: completed.app,
       resource: completed.resource, messageId: completed.messageId, turnId: str(group.turnId),
@@ -1499,14 +1499,14 @@
   function codeModeReceipts(messages) {
     const byId = new Map();
     for (const message of messages) {
-      const id = str(message && message.id);
+      const id = str(message?.id);
       if (id) byId.set(id, byId.has(id) ? null : message);
     }
     const owners = new Map();
     const scope = message => {
-      const meta = message && message.metadata;
-      const request = str(meta && meta.request_id), working = str(meta && meta.working_turn_id),
-        exchange = str(meta && meta.turn_exchange_id);
+      const meta = message?.metadata;
+      const request = str(meta?.request_id), working = str(meta?.working_turn_id),
+        exchange = str(meta?.turn_exchange_id);
       return request && working && exchange ? `${request}\u0000${working}\u0000${exchange}` : null;
     };
     const ownerOf = message => {
@@ -1516,7 +1516,7 @@
         const id = str(cursor.id);
         if (!id || byId.get(id) !== cursor || visited.has(id)) break;
         visited.add(id);
-        const role = cursor.author && cursor.author.role;
+        const role = cursor.author?.role;
         if (role === 'assistant' && cursor.recipient === 'functions.exec') {
           owner = { id, scope: scope(cursor), valid: cursor.status === 'finished_successfully' && !!scope(cursor) };
           break;
@@ -1528,7 +1528,7 @@
             (role === 'tool' && cursor.recipient === 'all' &&
               (cursor.author.name === 'api_tool.call_tool' || cursor.author.name === 'functions.exec')))) break;
         trail.push(cursor);
-        cursor = byId.get(str(cursor.metadata && cursor.metadata.parent_id));
+        cursor = byId.get(str(cursor.metadata?.parent_id));
       }
       for (let index = trail.length - 1; index >= 0; index--) {
         if (owner) owner = { ...owner, valid: owner.valid && scope(trail[index]) === owner.scope };
@@ -1538,10 +1538,10 @@
     };
     const completed = new Set();
     for (const message of messages) {
-      if (message && message.author && message.author.role === 'tool' && message.author.name === 'functions.exec' &&
+      if (message?.author && message.author.role === 'tool' && message.author.name === 'functions.exec' &&
           message.recipient === 'all' && message.status === 'finished_successfully' && byId.get(message.id) === message) {
         const owner = ownerOf(message);
-        if (owner && owner.valid) completed.add(owner.id);
+        if (owner?.valid) completed.add(owner.id);
       }
     }
     const receipts = new Map();
@@ -2055,7 +2055,7 @@
       }
       const id = section.matches?.(SHELL_TURN) ? str(section.querySelector('[data-content-search-turn-key]')?.getAttribute('data-content-search-turn-key')) : str(section.getAttribute('data-turn-id'));
       const previous = groups[groups.length - 1];
-      if (id && previous && previous.turnId === id) previous.sections.push(section);
+      if (id && previous?.turnId === id) previous.sections.push(section);
       else groups.push({ turnId: id, sections: [section], fiberSection: section, search: false });
     }
     // Keep the latest user/assistant boundary even while reading older history.
@@ -2092,9 +2092,9 @@
         const viewTurn = group.search ? turnViewOf(fiber) : null;
         const messages = shell ? shell.messages : viewTurn ? messagesFromTurnView(viewTurn) : turnMessagesOf(fiber);
         const codeReceipts = codeModeReceipts(messages || []);
-        const codeModeCalls = (messages || []).filter(message => message && message.author &&
+        const codeModeCalls = (messages || []).filter(message => message?.author &&
           message.author.role === 'assistant' && message.recipient === 'functions.exec').slice(0, MAX_CALLS)
-          .map(message => ({ messageId: str(message.id), requestId: str(message.metadata && message.metadata.request_id),
+          .map(message => ({ messageId: str(message.id), requestId: str(message.metadata?.request_id),
             answered: codeReceipts.get(message.id) === true }));
         const legacyCalls = shell ? shell.calls : callsOf(messages, codeReceipts);
         const calls = legacyCalls.length ? legacyCalls : group.search ? viewCallsOf(fiber) : legacyCalls;
@@ -2430,7 +2430,7 @@
       if (typeof current !== 'string' || !/^[a-zA-Z0-9._-]{1,80}$/.test(current) || (model && model !== current)) return null;
       model = current;
     }
-    const effort = shellProExecutionModel(model) ? 'pro' : (lane && lane.model === model && lane.effort) ||
+    const effort = shellProExecutionModel(model) ? 'pro' : (lane?.model === model && lane.effort) ||
       (machine !== null ? (['none','minimal','low','medium','high','xhigh','max','ultra','pro'].includes(machine) ? machine : null) : captionEffort);
     if (!effort) return null;
     return model ? { id: model, effort } : null;

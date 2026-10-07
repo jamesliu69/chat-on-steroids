@@ -2482,7 +2482,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (route === '/core-plugin' && req.method === 'POST') {
     const body = await readBody(req) as Record<string, unknown>;
     // ChatGPT's complete plugins list no longer names this install's Core: deleted or disconnected.
-    if (body && body.missing === true && body.appId === undefined) {
+    if (body?.missing === true && body.appId === undefined) {
       notePluginMissing('core');
       return json(res, 200, { ok: true }, origin);
     }
@@ -2604,7 +2604,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       repair.claimed = true;
       if (repair.reason === 'assistant-error' && repair.assistantSource)
         turnRepairSpent.set(conversationId, { sessionId: repair.sessionId, turnKey: repair.assistantSource.key, token, at: Date.now() });
-      if (repair.attribution && repair.attribution.incident.firstAttemptAt === null)
+      if (repair.attribution?.incident.firstAttemptAt === null)
         repair.attribution.incident.firstAttemptAt = Date.now();
     }
     return json(res, 200, { allowed }, origin);
@@ -7443,7 +7443,7 @@ function settledQuestionOf(turns: TimelineTurns | undefined): string | null {
   if (!turns) return null;
   let newest: TimelineTurns[string] | null = null;
   for (const turn of Object.values(turns)) if (!newest || turn.origin > newest.origin) newest = turn;
-  return newest && newest.endTime !== undefined && typeof newest.questionId === 'string' ? newest.questionId : null;
+  return newest?.endTime !== undefined && typeof newest.questionId === 'string' ? newest.questionId : null;
 }
 
 async function assistantRepairSource(sessionId: string): Promise<NonNullable<Repair['assistantSource']>> {

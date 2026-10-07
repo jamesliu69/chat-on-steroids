@@ -3654,7 +3654,7 @@ function paintDetail(followBottom = historyBefore === null): void {
     keep.add(key);
     const cached = rowCache.get(key);
     const workerIds = JSON.stringify(item.kind === 'event' ? participatingWorkers(item.event, workers).map(worker => worker.id) : []);
-    if (cached && cached.sig === sig) {
+    if (cached?.sig === sig) {
       cached.row.dataset.workerSessions = workerIds;
       cached.row.dataset.activityBoundary = activityBoundary;
       if (item.kind === 'event' && item.event.kind === 'user_message') cached.row.dataset.askedAt = String(item.event.time);
@@ -4374,7 +4374,7 @@ function stateLine(): { text: string; tone: '' | 'is-live' | 'is-bad'; working?:
   // from another browser or from another machine can only be recorded as what it is:
   // real, complete, and not placeable in any chat this app can observe.
   const selected = sessions.find((entry) => entry.id === selectedId) ?? null;
-  if (selected && selected.conversationId === null) {
+  if (selected?.conversationId === null) {
     return {
       text: t("Work this app could not place in a chat — driven from another device, or with no ChatGPT tab open"),
       tone: ''

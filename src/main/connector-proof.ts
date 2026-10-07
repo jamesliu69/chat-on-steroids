@@ -91,7 +91,7 @@ export function noteConnectorUse(surface: SurfaceId, kind: 'request' | 'tool', a
   const tunnel = connectorTunnelKey(getConfig(), surface);
   if (!tunnel) return;
   const known = proofs.get(surface);
-  const proof: Proof = known && known.tunnel === tunnel ? { ...known } : { tunnel, requestAt: null, toolCallAt: null, installedAt: null };
+  const proof: Proof = known?.tunnel === tunnel ? { ...known } : { tunnel, requestAt: null, toolCallAt: null, installedAt: null };
   const field = kind === 'request' ? 'requestAt' : 'toolCallAt';
   const before = proof[field];
   proof[field] = at;
@@ -110,8 +110,8 @@ export function notePluginInstalled(surface: SurfaceId, at = Date.now()): void {
   const tunnel = connectorTunnelKey(getConfig(), surface);
   if (!tunnel) return;
   const known = proofs.get(surface);
-  if (known && known.tunnel === tunnel && known.installedAt !== null) return;
-  const proof: Proof = known && known.tunnel === tunnel ? { ...known } : { tunnel, requestAt: null, toolCallAt: null, installedAt: null };
+  if (known?.tunnel === tunnel && known.installedAt !== null) return;
+  const proof: Proof = known?.tunnel === tunnel ? { ...known } : { tunnel, requestAt: null, toolCallAt: null, installedAt: null };
   proof.installedAt = at;
   proofs.set(surface, proof);
   persist();

@@ -742,7 +742,7 @@ function noteDelivery(result, count, conversationId) {
 function nextJournalBatch(preferredConversationId = null, excluded = []) {
   const blocked = new Set(excluded);
   for (const ack of commandAckOutbox) {
-    if (ack && ack.conversationId) blocked.add(ack.conversationId);
+    if (ack?.conversationId) blocked.add(ack.conversationId);
   }
   const preferred = cleanConversationId(preferredConversationId);
   let conversationId =
@@ -946,7 +946,7 @@ async function fetchBounded(url, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const external = init.signal;
   const abort = () => controller.abort();
-  if (external && external.aborted) controller.abort();
+  if (external?.aborted) controller.abort();
   else if (external && typeof external.addEventListener === 'function') external.addEventListener('abort', abort, { once: true });
   // Aborted with a reason on purpose. An abort with none rejects as the platform's opaque
   // "signal is aborted without reason", which is exactly what this worker's own deadline
@@ -1025,7 +1025,7 @@ async function hello(candidate) {
     }, HELLO_TIMEOUT_MS);
     if (!response.ok) return null;
     const body = await response.json();
-    return body && body.app === 'chat-on-steroids' ? body : null;
+    return body?.app === 'chat-on-steroids' ? body : null;
   } catch {
     return null;
   }
@@ -1174,7 +1174,7 @@ async function call(path, init = {}, retried = false) {
     );
     const data = await response.json().catch(() => ({}));
     if (response.status === 401) {
-      if (data && data.error === 'browser_disconnected') {
+      if (data?.error === 'browser_disconnected') {
         await latchAppDisconnect();
         return { ok: false, status: 401, error: 'disconnected', data };
       }
@@ -1194,7 +1194,7 @@ async function call(path, init = {}, retried = false) {
     }
     return { ok: response.ok, status: response.status, data };
   } catch (err) {
-    const detail = String(err && err.message ? err.message : err);
+    const detail = String(err?.message ? err.message : err);
     // A deadline disproves nothing about where the app is. It answered on this port, and the
     // request simply outlived the wait — so keep the port, and say so in a way the caller can
     // act on. Dropping it here made every slow answer cost a rediscovery as well.
@@ -1228,11 +1228,11 @@ function provision(reconnect = false) {
   const intent = connectionEpoch;
   if (pairing && pairingEpoch === intent && pairingReconnect === reconnect) return pairing;
   const work = pairOnce(intent, reconnect).then((result) => {
-    pairingError = result && result.ok
+    pairingError = result?.ok
       ? null
       : {
-          error: result && result.error ? String(result.error) : 'pair_failed',
-          message: result && result.message ? String(result.message) : ''
+          error: result?.error ? String(result.error) : 'pair_failed',
+          message: result?.message ? String(result.message) : ''
         };
     return result;
   });
@@ -1262,7 +1262,7 @@ async function pairOnce(intent = connectionEpoch, reconnect = false) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || typeof data.token !== 'string') {
-      if (data && data.error === 'browser_disconnected') {
+      if (data?.error === 'browser_disconnected') {
         await latchAppDisconnect();
         return { ok: false, error: 'disconnected', message: data.message };
       }
@@ -1278,7 +1278,7 @@ async function pairOnce(intent = connectionEpoch, reconnect = false) {
     scheduleRetry();
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: String(err && err.message ? err.message : err) };
+    return { ok: false, error: String(err?.message ? err.message : err) };
   }
 }
 
@@ -1314,7 +1314,7 @@ async function redeemCommand(id, client, conversationId = null, projectEntry = f
     // throttling and server failures as retryable; ownership/validation replies stay terminal.
     retryable: result.status === 0 || result.status === 429 || result.status >= 500
   };
-  const command = result.data && result.data.command ? result.data.command : null;
+  const command = result.data?.command ? result.data.command : null;
   return { ok: true, command };
 }
 
@@ -1617,7 +1617,7 @@ async function adoptFreshReloadProvisional(tab, documentId) {
 }
 
 function tabId(sender) {
-  return sender && sender.tab && typeof sender.tab.id === 'number' ? sender.tab.id : null;
+  return sender?.tab && typeof sender.tab.id === 'number' ? sender.tab.id : null;
 }
 
 function senderDocument(sender) {
@@ -1626,7 +1626,7 @@ function senderDocument(sender) {
 }
 
 function messageEpoch(message) {
-  const value = Number(message && message.navigationEpoch);
+  const value = Number(message?.navigationEpoch);
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
@@ -2837,12 +2837,12 @@ async function maintainOnce() {
   // turn. An entry missing either half is not actionable and is dropped rather than guessed at.
   const repairs = (Array.isArray(reply.data.repairs) ? reply.data.repairs : [])
     .map((entry) => ({
-      conversationId: cleanConversationId(entry && entry.conversationId),
+      conversationId: cleanConversationId(entry?.conversationId),
       token: entry && typeof entry.token === 'string' ? entry.token : '',
       reason: typeof entry?.reason === 'string' ? entry.reason : '',
       requiresClaim: entry?.requiresClaim === true,
       suspended: entry?.reason === 'stalled',
-      focus: Boolean(entry && entry.focus === true)
+      focus: Boolean(entry?.focus === true)
     }))
     .filter((entry) => entry.conversationId && entry.token);
   // Fulfilling a due repair must not wait behind window layout, input preparation
@@ -2908,7 +2908,7 @@ async function maintainOnce() {
   if (protectionWork) {
     let changed = false;
     for (const tab of tabs) {
-      if (!Number.isInteger(tab && tab.id)) continue;
+      if (!Number.isInteger(tab?.id)) continue;
       const key = String(tab.id);
       const custody = discardProtectedTabs[key];
       const ours = Boolean(custody);
@@ -3123,7 +3123,7 @@ async function enqueueClose(conversationId, byExtension = false) {
   // Publish the final departure and let the existing maintenance pass revoke its protection.
   // The close itself never grants a replacement tab.
   recoveryMonitoring = true;
-  const previous = closeOutbox.find((entry) => entry && entry.conversationId === id);
+  const previous = closeOutbox.find((entry) => entry?.conversationId === id);
   if (!previous || (!byExtension && previous.byExtension === true)) {
     // A later user close must supersede an unacknowledged automatic departure.
     // Replace the entry so an older in-flight response cannot retire the new fact.
@@ -3143,7 +3143,7 @@ async function drainCloses() {
   let changed = false;
   try {
     for (const entry of [...closeOutbox]) {
-      const conversationId = cleanConversationId(entry && entry.conversationId);
+      const conversationId = cleanConversationId(entry?.conversationId);
       if (!conversationId) {
         closeOutbox = closeOutbox.filter((candidate) => candidate !== entry);
         changed = true;
@@ -3488,7 +3488,7 @@ const HANDLERS = {
   async register_document(_message, sender) {
     const result = await registerDocument(sender, _message);
     if (result?.ok === true) void maintain(true).catch(() => undefined);
-    if (result && result.ok === true) void recoverDeferredRevivals().catch(() => undefined);
+    if (result?.ok === true) void recoverDeferredRevivals().catch(() => undefined);
     return result;
   },
   async cos_sign_in_transfer(message, sender) {
@@ -3577,7 +3577,7 @@ const HANDLERS = {
     // explicit reconnect, then tell the app this /pair is allowed to clear its durable latch.
     connectionEpoch++;
     const result = await provision(true);
-    if (result && result.ok) {
+    if (result?.ok) {
       void drainCommandAcks()
         .then(() => drain())
         .then(() => drainCloses())
@@ -3629,7 +3629,7 @@ const HANDLERS = {
     for (const id of tabs) {
       try {
         const result = await chrome.tabs.sendMessage(id, { type: 'clf-overwrite-now' });
-        if (result && result.ok === true) applied += 1;
+        if (result?.ok === true) applied += 1;
       } catch {
         // A tab may be between navigations/reloads and temporarily have no receiver. The
         // registry is tab-lifetime state, so do not retire it merely because one send raced.
@@ -3655,7 +3655,7 @@ const HANDLERS = {
     }
     const tab = active && typeof active.id === 'number' ? active.id : null;
     const key = tab === null ? null : String(tab);
-    const isChat = isChatGptUrl(active && active.url);
+    const isChat = isChatGptUrl(active?.url);
     const bound = key ? cleanConversationId(tabConversations[key]) : null;
     const documentId = key && typeof tabDocuments[key] === 'string' ? tabDocuments[key] : null;
     const navigationEpoch = key ? tabEpochs[key] : null;
@@ -3682,11 +3682,11 @@ const HANDLERS = {
       chatTabs = 0;
     }
 
-    const conversationId = bound || (page && cleanConversationId(page.conversationId)) || conversationFromUrl(active && active.url);
+    const conversationId = bound || (page && cleanConversationId(page.conversationId)) || conversationFromUrl(active?.url);
     return {
       tab,
       isChat,
-      url: isChat ? String((active && active.url) || '') : null,
+      url: isChat ? String((active?.url) || '') : null,
       conversationId,
       bound: bound !== null,
       documentId,
@@ -3834,7 +3834,7 @@ const HANDLERS = {
     }
     // A fresh chat the app wants opened beside this one. Offered only to the home chat's own
     // poll, so the window this tab is in is the window its successor is created in.
-    if (ownsDocument(source) && result.ok && result.data && result.data.placement) {
+    if (ownsDocument(source) && result.ok && result.data?.placement) {
       await placeSuccessorChat(result.data.placement, source.tab);
     }
     return ownsDocument(source) ? result : { ok: false, error: 'stale_document' };
@@ -3938,7 +3938,7 @@ const HANDLERS = {
     // Chat B, for this window. The app produced it inside this very request precisely so that
     // the browser holding chat A is the browser that opens its successor — see
     // placeSuccessorChat for what the operating system does with the URL instead.
-    if (ownsDocument(source) && result.ok && result.data && result.data.placement) {
+    if (ownsDocument(source) && result.ok && result.data?.placement) {
       await placeSuccessorChat(result.data.placement, source.tab);
     }
     return ownsDocument(source) ? result : { ok: false, error: 'stale_document' };
@@ -4286,7 +4286,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const id = tabId(sender);
   const operation = owned.has(message.type) || message.type === 'register_document' ? serializeTab(id, run) : run();
   operation.then(sendResponse, (err) =>
-    sendResponse({ ok: false, error: String(err && err.message ? err.message : err) })
+    sendResponse({ ok: false, error: String(err?.message ? err.message : err) })
   );
   return true;
 });
@@ -4563,7 +4563,7 @@ function successorChatBase(offered, source) {
 }
 
 async function placeSuccessorChat(raw, tabId) {
-  const id = commandMarkerId(raw && raw.id);
+  const id = commandMarkerId(raw?.id);
   const placementError = error => error && typeof error.message === 'string' && error.message
     ? error.message
     : String(error);
@@ -4626,8 +4626,8 @@ async function placeSuccessorChat(raw, tabId) {
     if (typeof tabId !== 'number') {
       const base = successorChatBase(raw.project, raw.homeConversationId);
       const marker = `clf=${encodeURIComponent(id)}${base !== 'https://chatgpt.com/' ? '&clf_project=1' : ''}`;
-      const model = commandModelSlug(raw && raw.model);
-      const reasoningEffort = commandReasoningEffort(raw && raw.reasoningEffort);
+      const model = commandModelSlug(raw?.model);
+      const reasoningEffort = commandReasoningEffort(raw?.reasoningEffort);
       const query = [marker];
       if (model) query.push(`model=${encodeURIComponent(model)}`);
       if (reasoningEffort) query.push(`reasoning_effort=${encodeURIComponent(reasoningEffort)}`);
@@ -4661,8 +4661,8 @@ async function placeSuccessorChat(raw, tabId) {
   // during boot and which of the two survives has changed between builds.
   const base = successorChatBase(raw.project, raw.homeConversationId);
   const marker = `clf=${encodeURIComponent(id)}${base !== 'https://chatgpt.com/' ? '&clf_project=1' : ''}`;
-  const model = commandModelSlug(raw && raw.model);
-  const reasoningEffort = commandReasoningEffort(raw && raw.reasoningEffort);
+  const model = commandModelSlug(raw?.model);
+  const reasoningEffort = commandReasoningEffort(raw?.reasoningEffort);
   const query = [marker];
   if (model) query.push(`model=${encodeURIComponent(model)}`);
   if (reasoningEffort) query.push(`reasoning_effort=${encodeURIComponent(reasoningEffort)}`);
@@ -4826,7 +4826,7 @@ async function restoreChatgptTab(id, current = () => true, documentId = null) {
     // still pings. The recorder's own version guard retains a healthy equal peer.
     const live = documentId ? null : await tabReply(id, { type: 'clf-recorder-ping' });
     if (!current()) return false;
-    if (live && live.ok === true && live.recorderVersion === PAGE_RECORDER_VERSION) {
+    if (live?.ok === true && live.recorderVersion === PAGE_RECORDER_VERSION) {
       // Healthy content.js does not prove the independently running MAIN-world helper is
       // still present. Request-id ownership depends on fiber.js, and re-executing it is
       // idempotent because the helper keeps one listener per protocol version.
@@ -4957,7 +4957,7 @@ if (chrome.runtime.onStartup && typeof chrome.runtime.onStartup.addListener === 
   });
 }
 
-if (chrome.alarms && chrome.alarms.onAlarm && typeof chrome.alarms.onAlarm.addListener === 'function') {
+if (chrome.alarms?.onAlarm && typeof chrome.alarms.onAlarm.addListener === 'function') {
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (!alarm || alarm.name !== RETRY_ALARM) return;
     void drainCommandAcks()

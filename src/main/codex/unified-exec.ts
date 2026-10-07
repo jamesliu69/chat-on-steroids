@@ -1131,7 +1131,7 @@ export class UnifiedExecProcessManager {
         (entry.incarnation !== expectedIncarnation || entry.process.hasExited())) return false;
     if (!entry.process.hasExited()) await entry.process.terminate();
     const current = this.processes.get(processId);
-    if (current && current.process === entry.process) {
+    if (current?.process === entry.process) {
       // Match Codex's InitialExecCommandGuard: the initial exec response still
       // owns this entry until it has refreshed the process's terminal state.
       // Removing it here would turn a successful concurrent termination into

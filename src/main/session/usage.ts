@@ -152,7 +152,7 @@ async function computeOverview(signal?: AbortSignal): Promise<UsageOverview> {
       const previous = messages.get(message.id);
       // Re-observing the same native ID never adds a send, including copied history.
       // Conflicting proof abstains instead of choosing a model or a week arbitrarily.
-      messages.set(message.id, previous === undefined ? message : previous && previous.model === message.model && previous.time === message.time ? previous : null);
+      messages.set(message.id, previous === undefined ? message : previous?.model === message.model && previous.time === message.time ? previous : null);
     }
   }
   const ids = new Set(sessions.map((session) => session.id));

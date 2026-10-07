@@ -238,7 +238,7 @@ var CLF_DOM = (() => {
         // return it, and treating it as one would empty this preferred path.
         const parts = [...node.querySelectorAll('.whitespace-pre-wrap')]
           .filter((part) => {
-            const outer = part.parentElement && part.parentElement.closest &&
+            const outer = part.parentElement?.closest &&
               part.parentElement.closest('.whitespace-pre-wrap');
             return !outer || outer === node || !(node.contains && node.contains(outer));
           })
@@ -474,7 +474,7 @@ var CLF_DOM = (() => {
   ];
 
   function invalidateFrom(record) {
-    const target = record && record.target;
+    const target = record?.target;
     if (!target) return;
     const element = target.nodeType === 1 ? target : target.parentElement;
     const section = element && typeof element.closest === 'function' ? element.closest(TURN) : null;
@@ -521,7 +521,7 @@ var CLF_DOM = (() => {
   /** The explicit messages of one section: id, the role attribute, text. */
   function sectionRows(section) {
     const memo = memoOf(section);
-    if (memo && memo.rows) return memo.rows;
+    if (memo?.rows) return memo.rows;
     const rows = [];
     const directHolder = section.matches?.(`[data-message-id], ${SHELL_UNIT}, [data-chatgpt-search-message-ids], [data-chatgpt-selection-message-id]`);
     const holders = [
@@ -544,7 +544,7 @@ var CLF_DOM = (() => {
   /** The authored markdown blocks of one section, for a turn without explicit messages. */
   function sectionParts(section) {
     const memo = memoOf(section);
-    if (memo && memo.parts) return memo.parts;
+    if (memo?.parts) return memo.parts;
     const parts = [];
     for (const markdown of section.querySelectorAll('.markdown')) {
       if (markdown.closest && markdown.closest('[data-interrupted]')) continue;
@@ -652,7 +652,7 @@ var CLF_DOM = (() => {
   const presentationTurns = () => turns();
 
   const turnNodes = (turn) =>
-    turn && Array.isArray(turn.nodes) && turn.nodes.length > 0 ? turn.nodes : turn && turn.node ? [turn.node] : [];
+    turn && Array.isArray(turn.nodes) && turn.nodes.length > 0 ? turn.nodes : turn?.node ? [turn.node] : [];
 
   /**
    * Visible messages, newest last.
@@ -1108,7 +1108,7 @@ var CLF_DOM = (() => {
 
   function progressRoots(section) {
     return [...section.querySelectorAll('[data-interrupted]')].filter(
-      (node) => !(node.parentElement && node.parentElement.closest && node.parentElement.closest('[data-interrupted]'))
+      (node) => !(node.parentElement?.closest && node.parentElement.closest('[data-interrupted]'))
     );
   }
 
@@ -1135,8 +1135,8 @@ var CLF_DOM = (() => {
     const taken = new Set();
     const ids = [];
     for (const node of nodes) {
-      const stamp = node && node.getAttribute ? node.getAttribute(attribute) : null;
-      if (stamp && stamp.indexOf(namespace) === 0 && !taken.has(stamp)) {
+      const stamp = node?.getAttribute ? node.getAttribute(attribute) : null;
+      if (stamp?.indexOf(namespace) === 0 && !taken.has(stamp)) {
         taken.add(stamp);
         ids.push(stamp);
       } else {
@@ -1322,7 +1322,7 @@ var CLF_DOM = (() => {
    */
   function progressItems(turn, key) {
     return safe(() => {
-      const namespace = key || (turn && turn.id) || 'turn';
+      const namespace = key || (turn?.id) || 'turn';
       const boxes = [];
       for (const section of turnNodes(turn)) boxes.push(...progressRoots(section));
       const ids = stampIdentities(boxes, 'data-clf-progress-id', namespace, 'p');
@@ -1422,7 +1422,7 @@ var CLF_DOM = (() => {
       () =>
         turnNodes(turn).flatMap((section) => {
           const memo = memoOf(section);
-          if (memo && memo.blocks) return memo.blocks;
+          if (memo?.blocks) return memo.blocks;
           const current = [...section.querySelectorAll(TOOL)];
           const found = (current.length > 0 ? current : [...section.querySelectorAll(TOOL_LEGACY)]).filter(
             isToolBlock
@@ -1464,7 +1464,7 @@ var CLF_DOM = (() => {
       let markerBase = 0;
       for (const section of turnNodes(turn)) {
         const roots = [...section.querySelectorAll('[data-interrupted]')].filter((node) => {
-          const parent = node.parentElement && node.parentElement.closest
+          const parent = node.parentElement?.closest
             ? node.parentElement.closest('[data-interrupted]')
             : null;
           return !parent;
@@ -2248,7 +2248,7 @@ var CLF_DOM = (() => {
         else section.removeAttribute('data-clf-turn-replaced');
       }
       if (replaced && root) {
-        const anchor = placement && placement.anchor;
+        const anchor = placement?.anchor;
         if (anchor) {
           if (!anchor.isConnected || !sections.some(section => section.contains(anchor)) || !anchor.parentElement) return false;
           if (!placement.before && anchor.nextSibling === root) return true;

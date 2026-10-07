@@ -522,7 +522,7 @@ export class CosBrowser {
     }
     // The sign-in panel covers its own tab only: switching tabs shows the others as they are.
     const panel = this.signIn;
-    if (panel && panel.windowId === id) {
+    if (panel?.windowId === id) {
       panel.view.setBounds({ x: 0, y: TOOLBAR_HEIGHT, width, height: Math.max(0, height - TOOLBAR_HEIGHT) });
       panel.view.setVisible(panel.contents.id === active);
     }
@@ -753,7 +753,7 @@ export class CosBrowser {
     panel.notice = null;
     try {
       const pending = cosSignInTransfer.pending();
-      const offer = pending && pending.id === panel.offerId && pending.browser === browser ? pending
+      const offer = pending?.id === panel.offerId && pending.browser === browser ? pending
         : cosSignInTransfer.begin(browser, current, (cookies, owns) => this.importSignIn(ses!, contents, cookies, owns));
       panel.offerId = offer.id;
       this.waitForSession(panel, browser, offer.expiresAt);

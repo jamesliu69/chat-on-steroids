@@ -811,7 +811,7 @@ export class PluginManager {
         if (!live) { await this.connect(row); live = this.live.get(row.id); startupFailed = !live && row.enabled && row.status === 'error'; }
         // Discovery/configuration may have changed the exact declaration during startup.
         if (!live || !row.enabled || this.closing || this.exposure().owners.get(name) !== row.id) {
-          if (live && live.users === 0) await this.disconnect(row);
+          if (live?.users === 0) await this.disconnect(row);
           return;
         }
         const tool = live.tools.find(tool => tool.name === name);

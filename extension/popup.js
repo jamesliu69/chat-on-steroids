@@ -80,8 +80,8 @@ const ATTRIBUTION = {
  * owner acknowledgement do not claim a matching MCP invocation has run.
  */
 function pipeline(info, ready) {
-  const page = info && info.page;
-  const sent = info && info.delivery;
+  const page = info?.page;
+  const sent = info?.delivery;
   const pending = info ? info.pending : 0;
   const read = page ? page.events : 0;
   const calls = page && Array.isArray(page.trace) ? page.trace : [];
@@ -103,7 +103,7 @@ function pipeline(info, ready) {
       why: ['bad', t('popup_pipeline_delivery_blocked', 'Delivery is blocked until the app is connected and protocol compatibility is confirmed.')]
     };
   }
-  if (sent && sent.ok === false) {
+  if (sent?.ok === false) {
     return {
       read: readStage,
       sent: ['failed', String(sent.error || t('popup_status_failed', 'failed'))],
@@ -238,13 +238,13 @@ function paintCalls(page) {
 // ------------------------------------------------------------------- rendering
 
 function paintHeader(status) {
-  const connected = status && status.connected === true;
-  const paired = status && status.paired === true;
+  const connected = status?.connected === true;
+  const paired = status?.paired === true;
   const incompatible = connected && status.compatible === false;
   // Disconnected on purpose. This has to say so plainly rather than describing it as a
   // connection that has not finished yet, which is what it looked like back when the next
   // poll would silently undo it.
-  const off = status && status.disconnected === true && !paired;
+  const off = status?.disconnected === true && !paired;
   const ready = connected && paired && status.compatible === true;
 
   $('pill').className = `pill ${ready ? '' : incompatible ? 'bad' : 'off'}`;
@@ -267,19 +267,19 @@ function paintHeader(status) {
 }
 
 function paintAlert(status, info) {
-  const page = info && info.page;
-  const incompatible = status && status.connected === true && status.compatible === false;
-  const pairError = status && status.pairError;
-  const error = page && page.lastError;
+  const page = info?.page;
+  const incompatible = status?.connected === true && status.compatible === false;
+  const pairError = status?.pairError;
+  const error = page?.lastError;
   const text = incompatible
     ? t(
       'popup_version_mismatch_help',
       "App v$1 (protocol $2); companion v$3 (protocol $4). Open your browser's Extensions page, enable Developer mode, then Update / Reload this companion. If the mismatch remains, use Open extension folder in Chat On Steroids and load that folder. Reload ChatGPT tabs when their active work is finished.",
       [status.appVersion || '?', status.appProtocol ?? '?', status.extensionVersion || '?', status.extensionProtocol ?? '?']
     )
-    : pairError && pairError.message
+    : pairError?.message
       ? pairError.message
-      : pairError && pairError.error === 'secure_storage_unavailable'
+      : pairError?.error === 'secure_storage_unavailable'
         ? t('popup_secure_storage_unavailable', 'Secure credential storage is unavailable. Open Chat On Steroids for setup instructions.')
     : error && Date.now() - error.at < 10 * 60 * 1000
       ? error.text
@@ -308,8 +308,8 @@ function paintDetails(status, info) {
   if (!$('more').open) return;
   const grid = $('grid');
   grid.textContent = '';
-  const page = info && info.page;
-  const sent = info && info.delivery;
+  const page = info?.page;
+  const sent = info?.delivery;
 
   detail(
     grid,
@@ -320,10 +320,10 @@ function paintDetails(status, info) {
     grid,
     t('popup_detail_extension', 'extension'),
     status ? t('popup_detail_extension_value', 'v$1 · protocol $2', [status.extensionVersion, status.extensionProtocol]) : null,
-    status && status.compatible === false
+    status?.compatible === false
   );
-  detail(grid, t('popup_detail_chat_id', 'chat id'), (info && info.conversationId) || null);
-  detail(grid, t('popup_detail_app_session', 'app session'), (page && page.session) || null, Boolean(page && !page.session));
+  detail(grid, t('popup_detail_chat_id', 'chat id'), (info?.conversationId) || null);
+  detail(grid, t('popup_detail_app_session', 'app session'), (page?.session) || null, Boolean(page && !page.session));
   detail(
     grid,
     t('popup_detail_tab', 'tab'),
@@ -337,7 +337,7 @@ function paintDetails(status, info) {
       : info.bound
         ? t('popup_status_bound', 'bound')
         : t('popup_status_unbound', 'unbound')) : null,
-    Boolean(info && info.terminal)
+    Boolean(info?.terminal)
   );
   detail(
     grid,
@@ -363,23 +363,23 @@ function paintDetails(status, info) {
     grid,
     t('popup_detail_in_this_browser', 'in this browser'),
     info ? t('popup_detail_browser_queue_value', '$1 held · $2 total', [info.pending, info.pendingAll]) : null,
-    Boolean(info && info.pendingAll)
+    Boolean(info?.pendingAll)
   );
   const deliveryState = sent ? (sent.ok ? t('popup_status_ok', 'ok') : sent.error || t('popup_status_failed', 'failed')) : '';
   detail(
     grid,
     t('popup_detail_last_delivery', 'last delivery'),
-    sent && sent.at
+    sent?.at
       ? t('popup_detail_last_delivery_value', '$1 · $2 · $3 ago', [deliveryState, sent.events, ago(sent.at)])
       : null,
-    Boolean(sent && sent.ok === false)
+    Boolean(sent?.ok === false)
   );
   detail(grid, t('popup_detail_delivered', 'delivered'), sent ? sent.total : null);
   detail(
     grid,
     t('popup_detail_page_sends', 'page sends'),
     page ? t('popup_detail_page_sends_value', '$1 · $2 failed', [page.sends, page.failures]) : null,
-    Boolean(page && page.failures)
+    Boolean(page?.failures)
   );
 }
 
@@ -391,8 +391,8 @@ async function refresh() {
   latest = { status, tab: info };
 
   const ready = paintHeader(status);
-  const isChat = Boolean(info && info.isChat);
-  const page = info && info.page;
+  const isChat = Boolean(info?.isChat);
+  const page = info?.page;
 
   row('tab', isChat ? 'ok' : 'off', isChat ? '' : t('popup_status_none_open', 'none open'));
   row(
@@ -401,7 +401,7 @@ async function refresh() {
     !isChat ? '' : info.recorder ? (page.generating ? t('popup_status_answering', 'answering') : '') : t('popup_status_reload', 'reload')
   );
 
-  const chatId = info && info.conversationId;
+  const chatId = info?.conversationId;
   idRow(
     'chat',
     !isChat ? 'off' : chatId ? 'ok' : 'wait',
@@ -409,7 +409,7 @@ async function refresh() {
     chatId
   );
 
-  const requestId = page && page.requestId;
+  const requestId = page?.requestId;
   idRow(
     'req',
     !isChat ? 'off' : requestId ? 'ok' : 'wait',

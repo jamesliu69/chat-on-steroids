@@ -1183,11 +1183,11 @@ export function foldProgress(events: readonly SessionEvent[]): SessionEvent[] {
       continue;
     }
     const held = out[at];
-    if (held && held.kind === 'progress' && event.kind === 'progress') {
+    if (held?.kind === 'progress' && event.kind === 'progress') {
       out[at] = { ...held, message: event.message };
-    } else if (held && held.kind === 'page_tool' && event.kind === 'page_tool') {
+    } else if (held?.kind === 'page_tool' && event.kind === 'page_tool') {
       out[at] = { ...held, label: event.label };
-    } else if (held && held.kind === 'tool_call' && event.kind === 'tool_call') {
+    } else if (held?.kind === 'tool_call' && event.kind === 'tool_call') {
       out[at] = event.seq >= held.seq ? { ...event, origin: held.origin ?? held.seq, time: held.time } : held;
     }
     out[index] = null;

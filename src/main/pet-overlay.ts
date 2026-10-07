@@ -198,7 +198,7 @@ function startPointerTracking(pollForwarded = false): void {
       if (!Number.isFinite(zoom) || zoom <= 0) return;
       const point = { x: (cursor.x - area.x) / zoom, y: (cursor.y - area.y) / zoom };
       const now = Date.now();
-      if (previous && previous.x === point.x && previous.y === point.y && now - previous.at < 250) return;
+      if (previous?.x === point.x && previous.y === point.y && now - previous.at < 250) return;
       previous = { ...point, at: now };
       win.webContents.send('pet-overlay:pointer', point);
     } catch { /* display configuration can change between reads */ }

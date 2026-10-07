@@ -46,7 +46,7 @@
     if (!folder) return null;
     if (!extensionPage) {
       const reply = await chrome.runtime.sendMessage({ type: 'i18n_catalog', language });
-      return reply && reply.ok === true && reply.messages && typeof reply.messages === 'object' ? reply.messages : null;
+      return reply?.ok === true && reply.messages && typeof reply.messages === 'object' ? reply.messages : null;
     }
     // A language this extension has no catalog for yet reads as English, the app's own fallback,
     // rather than as whatever Chrome happens to be set to.

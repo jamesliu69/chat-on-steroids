@@ -134,7 +134,7 @@ async function measure() {
       const zoom = win.webContents.getZoomFactor();
       const point = { x: (cursor.x - content.x) / zoom, y: (cursor.y - content.y) / zoom };
       const now = Date.now();
-      if (previous && previous.x === point.x && previous.y === point.y && now - previous.at < 250) return;
+      if (previous?.x === point.x && previous.y === point.y && now - previous.at < 250) return;
       previous = { ...point, at: now };
       pointerMessages++;
       win.webContents.send('fixture:pointer', point);

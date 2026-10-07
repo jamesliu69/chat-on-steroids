@@ -929,7 +929,7 @@ function rememberFrame(frame: Frame): void {
 }
 
 function qualifiedFrame(frame: Frame | null, generation = helperGeneration): Frame | null {
-  return frame && frame.helperGeneration === generation && isHelperGenerationActive(generation) ? frame : null;
+  return frame?.helperGeneration === generation && isHelperGenerationActive(generation) ? frame : null;
 }
 
 function frameById(id: number | undefined): Frame | null {
