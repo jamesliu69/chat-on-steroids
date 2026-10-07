@@ -498,6 +498,12 @@ export function restoreGoalReplies(snapshot: GoalRepliesSnapshot | null): void {
       raw.acceptedAt <= 0 ||
       (raw.state !== 'pending' && raw.state !== 'handled')
     ) continue;
+    let restoredPickupStoppedAt: { pickupStoppedAt: number } | null = null;
+    if (Number.isSafeInteger(raw.pickupStoppedAt) && raw.pickupStoppedAt! > 0) {
+      restoredPickupStoppedAt = { pickupStoppedAt: raw.pickupStoppedAt! };
+    } else if (Number.isSafeInteger(raw.pickupAttempts) && raw.pickupAttempts! >= BROWSER_PICKUP_MAX_ATTEMPTS) {
+      restoredPickupStoppedAt = { pickupStoppedAt: raw.acceptedAt };
+    }
     goalReplies.set(raw.conversationId, {
       conversationId: raw.conversationId,
       sessionId: String(raw.sessionId).slice(0, 200),
@@ -511,10 +517,7 @@ export function restoreGoalReplies(snapshot: GoalRepliesSnapshot | null): void {
       ...(Number.isSafeInteger(raw.pickupAttempts) && raw.pickupAttempts! >= 0
         ? { pickupAttempts: Math.min(BROWSER_PICKUP_MAX_ATTEMPTS, raw.pickupAttempts!) } : {}),
       ...(Number.isSafeInteger(raw.pickupNextAt) && raw.pickupNextAt! > 0 ? { pickupNextAt: raw.pickupNextAt } : {}),
-      ...(Number.isSafeInteger(raw.pickupStoppedAt) && raw.pickupStoppedAt! > 0
-        ? { pickupStoppedAt: raw.pickupStoppedAt }
-        : Number.isSafeInteger(raw.pickupAttempts) && raw.pickupAttempts! >= BROWSER_PICKUP_MAX_ATTEMPTS
-          ? { pickupStoppedAt: raw.acceptedAt } : {}),
+      ...(restoredPickupStoppedAt ?? {}),
       ...(raw.explicitActivation === true ? { explicitActivation: true } : {}),
       eventSeq: raw.eventSeq,
       acceptedAt: raw.acceptedAt,
@@ -632,8 +635,10 @@ export async function syncGoalPickupRecoveryNow(conversationId: string, replyId:
   if (!reply || reply.replyId !== replyId || !Number.isSafeInteger(state.attempts) || state.attempts < 0) return false;
   const attempts = Math.min(BROWSER_PICKUP_MAX_ATTEMPTS, Math.max(reply.pickupAttempts ?? 0, state.attempts));
   const stoppedAt = reply.pickupStoppedAt ?? state.stoppedAt;
-  const nextAt = stoppedAt || attempts >= BROWSER_PICKUP_MAX_ATTEMPTS ? undefined
-    : state.attempts >= (reply.pickupAttempts ?? 0) ? state.nextAt ?? reply.pickupNextAt : reply.pickupNextAt;
+  let nextAt: number | undefined;
+  if (stoppedAt || attempts >= BROWSER_PICKUP_MAX_ATTEMPTS) nextAt = undefined;
+  else if (state.attempts >= (reply.pickupAttempts ?? 0)) nextAt = state.nextAt ?? reply.pickupNextAt;
+  else nextAt = reply.pickupNextAt;
   if (reply.pickupAttempts === attempts && reply.pickupStoppedAt === stoppedAt && reply.pickupNextAt === nextAt) return true;
   const previous = { ...reply };
   reply.pickupAttempts = attempts;
@@ -687,6 +692,10 @@ export async function acceptGoalReplyNow(input: {
     (goalSwitchFor(input.conversationId).mode !== 'loop' ||
       await automaticLoopHasMcpWork(input.sessionId, input.conversationId, input.silenceSourceTurnId ?? input.turnId));
   if (input.current && !input.current()) return;
+  let replyState: GoalReplyObligation['state'];
+  if (provisionalUpgrade) replyState = current!.state;
+  else if (active) replyState = 'pending';
+  else replyState = 'handled';
   goalReplies.set(input.conversationId, {
     conversationId: input.conversationId,
     sessionId: input.sessionId,
@@ -703,7 +712,7 @@ export async function acceptGoalReplyNow(input: {
     // stable assistant id. The later id strengthens that same row; it must not re-evaluate
     // policy or reopen a decision the page already acknowledged in the meantime.
     acceptedAt: provisionalUpgrade ? current!.acceptedAt : Date.now(),
-    state: provisionalUpgrade ? current!.state : active ? 'pending' : 'handled'
+    state: replyState
   });
   try {
     await writeDurableNow(GOAL_REPLIES_STATE, snapshotGoalReplies());
@@ -1212,10 +1221,15 @@ export function goalProgressFor(mode: GoalMode, draft?: GoalDraftView | null): {
 } {
   const settings = getConfig().goal;
   const backend = draft?.backend ?? goalBackendFor(mode);
+  const draftModel = draft?.model;
+  let model: string;
+  if (draftModel !== undefined) model = draftModel;
+  else if (backend === 'chatgpt') model = helperModelLabel();
+  else if (backend === 'templates') model = 'Offline templates';
+  else model = settings.model;
   return {
     backend,
-    model: draft?.model ?? (backend === 'chatgpt' ? helperModelLabel()
-      : backend === 'templates' ? 'Offline templates' : settings.model),
+    model,
     provider: settings.provider.kind
   };
 }
@@ -1812,7 +1826,10 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
   });
   if (!response.ok || !response.body) {
     const header = response.headers.get('retry-after');
-    const delay = header === null ? NaN : /^\d+(?:\.\d+)?$/.test(header.trim()) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+    let delay: number;
+    if (header === null) delay = NaN;
+    else if (/^\d+(?:\.\d+)?$/.test(header.trim())) delay = Number(header) * 1000;
+    else delay = Date.parse(header) - Date.now();
     return { action: 'http', error: await httpFailure(response), ...(Number.isFinite(delay) ? { retryAfterMs: Math.max(0, delay) } : {}) };
   }
   const completion = await readGoalCompletion(response, request.publish);
@@ -1858,7 +1875,10 @@ export function goalHelperSelection(): { model: string | null; reasoningEffort: 
   const resolved = model ? resolveChatModel(models, model) : undefined;
   if (model && !resolved) { notes.push(`model "${model}"`); model = null; }
   else if (resolved && resolved.id !== model && !resolved.aliases?.includes(model)) model = resolved.id;
-  const offered = model ? (resolved ? [resolved] : models.filter(choice => choice.id === model || choice.aliases?.includes(model))) : models;
+  let offered: typeof models;
+  if (!model) offered = models;
+  else if (resolved) offered = [resolved];
+  else offered = models.filter(choice => choice.id === model || choice.aliases?.includes(model));
   if (reasoningEffort && !offered.some(choice => choice.efforts.includes(reasoningEffort!))) {
     notes.push(`reasoning "${reasoningEffort}"`); reasoningEffort = null;
   }
@@ -1919,6 +1939,19 @@ async function run(draft: GoalDraft): Promise<void> {
   const abort = new AbortController();
   draft.abort = abort;
   const timer = setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS);
+  // Loop replaces the instruction, not the goal: a chat that carries one still hands it
+  // over verbatim, which is what "here is the task" in that prompt refers to. Without one
+  // the loop reads the job out of the conversation, exactly as the gate does.
+  let system: string[];
+  if (draft.mode === 'loop') {
+    if (draft.objective) system = [draft.loopSystemPrompt, goalObjectiveMessage(draft.objective)];
+    else system = [draft.loopSystemPrompt];
+  } else if (draft.objective) system = [draft.objectiveSystemPrompt, goalObjectiveMessage(draft.objective)];
+  else system = [draft.systemPrompt];
+  let trailer: string;
+  if (draft.mode === 'loop') trailer = GOAL_LOOP_TRAILER;
+  else if (draft.objective) trailer = GOAL_OBJECTIVE_TRAILER;
+  else trailer = GOAL_SYSTEM_TRAILER;
   try {
     const decision = draft.backend === 'templates' ? templateGoalDecision(messages.filter((message) => message.role === 'assistant').at(-1)?.content ?? '', Math.floor(Math.random() * 200), Math.floor(Math.random() * 200)) : await requestDrivingDecision({
       backend: draft.backend,
@@ -1928,24 +1961,9 @@ async function run(draft: GoalDraft): Promise<void> {
       key: key ?? '',
       model: draft.model,
       mode: draft.mode,
-      // Loop replaces the instruction, not the goal: a chat that carries one still hands it
-      // over verbatim, which is what "here is the task" in that prompt refers to. Without one
-      // the loop reads the job out of the conversation, exactly as the gate does.
-      system:
-        draft.mode === 'loop'
-          ? draft.objective
-            ? [draft.loopSystemPrompt, goalObjectiveMessage(draft.objective)]
-            : [draft.loopSystemPrompt]
-          : draft.objective
-            ? [draft.objectiveSystemPrompt, goalObjectiveMessage(draft.objective)]
-            : [draft.systemPrompt],
+      system,
       messages: messages.length > 0 ? messages : [{ role: 'user', content: GOAL_OBJECTIVE_OPENING_TURN }],
-      trailer:
-        draft.mode === 'loop'
-          ? GOAL_LOOP_TRAILER
-          : draft.objective
-            ? GOAL_OBJECTIVE_TRAILER
-            : GOAL_SYSTEM_TRAILER,
+      trailer,
       signal: abort.signal,
       publish: (text) => {
         draft.stage = 'answering';
@@ -1985,11 +2003,10 @@ async function run(draft: GoalDraft): Promise<void> {
     settle(draft, 'ready');
   } catch (err) {
     const detail = (err as Error).message;
-    const failure = abort.signal.aborted
-      ? 'timeout_or_cancelled'
-      : detail === 'reply_too_long' || detail === 'stream_record_too_long' || detail.startsWith('goal_browser_')
-        ? detail
-        : `request_failed: ${detail}`;
+    let failure: string;
+    if (abort.signal.aborted) failure = 'timeout_or_cancelled';
+    else if (detail === 'reply_too_long' || detail === 'stream_record_too_long' || detail.startsWith('goal_browser_')) failure = detail;
+    else failure = `request_failed: ${detail}`;
     logWarn(`goal: draft for ${draft.conversationId} failed — ${failure}`);
     settle(draft, 'failed', failure);
   } finally {
@@ -2040,13 +2057,20 @@ export async function draftFastFollowup(sessionId: string, signal: AbortSignal =
     ['tool', 'sent'].includes(entry.state)).slice(-5).map(entry => entry.text);
   const messages = preparedMessages ?? await conversationMessages(sessionId, appInput);
   if (!objective && !messages.some(message => message.role === 'user')) throw new Error('No recorded user request is available for Goal');
-  const prompt = mode === 'loop' ? settings.loopPrompt : objective ? settings.objectivePrompt : settings.prompt;
+  let prompt: string;
+  if (mode === 'loop') prompt = settings.loopPrompt;
+  else if (objective) prompt = settings.objectivePrompt;
+  else prompt = settings.prompt;
+  let trailer: string;
+  if (mode === 'loop') trailer = GOAL_LOOP_TRAILER;
+  else if (objective) trailer = GOAL_OBJECTIVE_TRAILER;
+  else trailer = GOAL_SYSTEM_TRAILER;
   const decision = backend === 'templates'
     ? templateGoalDecision(messages.filter(message => message.role === 'assistant').at(-1)?.content ?? '', Math.floor(Math.random() * 200), Math.floor(Math.random() * 200))
     : await requestDrivingDecision({ sourceSessionId: sessionId, backend, endpoint, reasoning: settings.reasoning, key: key ?? '', model: settings.model, mode,
     system: objective ? [prompt, goalObjectiveMessage(objective)] : [prompt],
     messages,
-    trailer: mode === 'loop' ? GOAL_LOOP_TRAILER : objective ? GOAL_OBJECTIVE_TRAILER : GOAL_SYSTEM_TRAILER, signal, publish })
+    trailer, signal, publish })
       .catch(error => {
         if (signal.aborted && signal.reason?.name === 'TimeoutError') throw nativeGoalFailure('timeout_or_cancelled: Goal request timed out', backend);
         signal.throwIfAborted();
@@ -2382,12 +2406,10 @@ async function readStream(
     if (parsed && typeof parsed === 'object' && 'error' in parsed) {
       const rawError = (parsed as { error?: unknown }).error;
       if (rawError) {
-        const rawMessage =
-          typeof rawError === 'string'
-            ? rawError
-            : rawError && typeof rawError === 'object' && 'message' in rawError
-              ? (rawError as { message?: unknown }).message
-              : null;
+        let rawMessage: unknown;
+        if (typeof rawError === 'string') rawMessage = rawError;
+        else if (rawError && typeof rawError === 'object' && 'message' in rawError) rawMessage = (rawError as { message?: unknown }).message;
+        else rawMessage = null;
         const detail =
           typeof rawMessage === 'string'
             ? rawMessage.replaceAll(/[\r\n\t]+/g, ' ').trim().slice(0, 200)
@@ -2673,8 +2695,12 @@ export async function conversationMessages(sessionId: string, deliveredInput: re
   // not merely the final array row, so a large injected request cannot hide actual progress.
   const newestResultAt = ordered.findLastIndex(message => message.role === 'assistant');
   const priorities = [...ordered.keys()].reverse().sort((left, right) => {
-    const rank = (at: number): number => at === newestResultAt ? 0 : at === ordered.length - 1 ? 1
-      : ordered[at]!.role === 'user' && ordered[at]!.origin !== 'automatic' ? 2 : 3;
+    const rank = (at: number): number => {
+      if (at === newestResultAt) return 0;
+      if (at === ordered.length - 1) return 1;
+      if (ordered[at]!.role === 'user' && ordered[at]!.origin !== 'automatic') return 2;
+      return 3;
+    };
     return rank(left) - rank(right);
   });
   for (const at of priorities) {
@@ -2909,11 +2935,12 @@ async function allGoalModels(): Promise<GoalModel[]> {
   // credential itself; replacing a key immediately changes the cache scope without retaining
   // either secret for the five-minute listing TTL. A custom endpoint joins the scope by URL,
   // so switching servers never serves the previous server's catalogue.
-  const keyScope = custom
-    ? `custom:${endpoint.baseUrl.trim()}:${key ? createHash('sha256').update(key).digest('hex') : 'public'}`
-    : key
-      ? createHash('sha256').update(key).digest('hex')
-      : 'public';
+  let keyScope: string;
+  if (custom) {
+    if (key) keyScope = `custom:${endpoint.baseUrl.trim()}:${createHash('sha256').update(key).digest('hex')}`;
+    else keyScope = `custom:${endpoint.baseUrl.trim()}:public`;
+  } else if (key) keyScope = createHash('sha256').update(key).digest('hex');
+  else keyScope = 'public';
   if (modelCache?.keyScope === keyScope && Date.now() - modelCache.at < MODEL_CACHE_MS) {
     return modelCache.models;
   }

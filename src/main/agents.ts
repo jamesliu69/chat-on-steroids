@@ -1723,7 +1723,10 @@ function usableDefaults(
     notes.add(`The default worker model "${model}" saved in Settings is not offered by this ChatGPT account, so workers use ChatGPT's current model. Choose an available model in Settings → Agents & automation.`);
     model = null;
   } else if (resolved && resolved.id !== model && !resolved.aliases?.includes(model!)) model = resolved.id;
-  const offered = model ? (resolved ? [resolved] : models.filter(choice => choice.id === model || choice.aliases?.includes(model))) : models;
+  let offered: typeof models;
+  if (!model) offered = models;
+  else if (resolved) offered = [resolved];
+  else offered = models.filter(choice => choice.id === model || choice.aliases?.includes(model));
   if (defaultEffort && effort && !offered.some(choice => choice.efforts.includes(effort!))) {
     notes.add(`The default worker reasoning "${effort}" saved in Settings is not offered${model ? (" for model \"" + model + "\"") : ''} by this ChatGPT account, so workers use ChatGPT's current reasoning. Choose an available level in Settings → Agents & automation.`);
     effort = null;
@@ -2798,10 +2801,9 @@ function planFinish(agent: Agent, result: string): { info: AgentInfo; report: Ag
       ).length
     : 0;
   const free = Math.max(0, max - stillWorking);
-  const slots =
-    free > 0
-      ? `${free} of ${max} worker slot${max === 1 ? '' : 's'} ${free === 1 ? 'is' : 'are'} free. `
-      : '';
+  let slots: string;
+  if (free <= 0) slots = '';
+  else slots = `${free} of ${max} worker slot${max === 1 ? '' : 's'} ${free === 1 ? 'is' : 'are'} free. `;
   // The one line in this whole file the prime reliably acts on, so it says the thing that
   // changed: this worker is reusable. Spawning a replacement for work its own chat already
   // understands is both the expensive answer and the one that fills ChatGPT with abandoned
@@ -3501,14 +3503,15 @@ function finishStoppedWorkerAtCeiling(agent: Agent, reason: string, sleptAt = Da
   agent.info.silenceRecoveryRequestOriginMax = null;
   recount(agent);
 
-  const missed =
-    neverOffered.length > 0
-      ? ` ${neverOffered.length} queued message${neverOffered.length === 1 ? '' : 's'} could not be delivered before that limit` +
-        ` (${neverOffered
-          .slice(0, 3)
-          .map((message) => ("“" + message.text.slice(0, 180) + "”"))
-          .join(', ')}${neverOffered.length > 3 ? ', …' : ''}). Those instructions are no longer queued.`
-      : '';
+  let missed: string;
+  if (neverOffered.length === 0) missed = '';
+  else {
+    missed = ` ${neverOffered.length} queued message${neverOffered.length === 1 ? '' : 's'} could not be delivered before that limit` +
+      ` (${neverOffered
+        .slice(0, 3)
+        .map((message) => ("“" + message.text.slice(0, 180) + "”"))
+        .join(', ')}${neverOffered.length > 3 ? ', …' : ''}). Those instructions are no longer queued.`;
+  }
   const report = newMessage(
     agent.info.id,
     PRIME_ID,
@@ -4281,7 +4284,11 @@ function stateForAgents(agents: Map<string, Agent>, running: boolean, retainedHi
   const list = [...agents.values()]
     .filter((agent) => !unpublishedAgents.has(agent))
     .map((agent) => ({ ...agent.info }));
-  list.sort((a, b) => (a.role === b.role ? a.id.localeCompare(b.id) : a.role === 'prime' ? -1 : 1));
+  list.sort((a, b) => {
+    if (a.role === b.role) return a.id.localeCompare(b.id);
+    if (a.role === 'prime') return -1;
+    return 1;
+  });
   return {
     enabled: getConfig().multiAgent.enabled,
     running,
@@ -4946,7 +4953,10 @@ export function restoreSwarm(snapshot: SwarmSnapshot | null): void {
     if (pruneDormantRuns()) repaired = true;
   }
 
-  const savedRuns = snapshot.version >= 6 ? (Array.isArray(snapshot.activeRuns) ? snapshot.activeRuns : []) : [snapshot];
+  let savedRuns: Array<Exclude<SwarmSnapshot['activeRuns'], undefined>[number] | SwarmSnapshot>;
+  if (snapshot.version < 6) savedRuns = [snapshot];
+  else if (Array.isArray(snapshot.activeRuns)) savedRuns = snapshot.activeRuns;
+  else savedRuns = [];
   for (const saved of savedRuns) {
     if (!saved) { repaired = true; continue; }
     const hasActive =

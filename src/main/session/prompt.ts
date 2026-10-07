@@ -15,8 +15,11 @@ type ProjectInstructions = { directory: string; text: string; truncated: boolean
 const limits: PromptLimits = { maxChars: MAX_CHATGPT_MESSAGE_CHARS, maxBytes: Infinity };
 const cutNotice = '\n\n[Cut off because of the message limit. Read AGENTS.md yourself for the remaining instructions.]';
 
-const promptFolder = (scope: PromptScope) => scope.sessionId ? getSessionProject(scope.sessionId)
-  : scope.projectId ? projectWorkspace(scope.projectId) : Promise.resolve(null);
+const promptFolder = (scope: PromptScope) => {
+  if (scope.sessionId) return getSessionProject(scope.sessionId);
+  if (scope.projectId) return projectWorkspace(scope.projectId);
+  return Promise.resolve(null);
+};
 
 /** One selected folder, never cwd inference, global discovery or a recursive document scan. */
 async function projectInstructions(scope: PromptScope): Promise<ProjectInstructions | null> {

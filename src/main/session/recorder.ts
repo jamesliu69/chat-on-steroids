@@ -1233,10 +1233,10 @@ export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | n
   } else {
     // Open the evidence wait before entering this workflow's queue, so sequential calls never
     // restart its deadline. No other request or page state can satisfy this exact join.
-    attributing = input.attributionFrozen
-      ? Promise.resolve<Target>({ conversationId: null, sessionId: null, attribution: 'unattributed', turnId: null })
-      : input.requestId
-      ? awaitRequestCorrelation(input.requestId, REQUEST_ID_GRACE_MS).then((correlation) => {
+    if (input.attributionFrozen) {
+      attributing = Promise.resolve<Target>({ conversationId: null, sessionId: null, attribution: 'unattributed', turnId: null });
+    } else if (input.requestId) {
+      attributing = awaitRequestCorrelation(input.requestId, REQUEST_ID_GRACE_MS).then((correlation) => {
           const conversationId = correlation?.conversationId ?? null;
           // Say which request id gave up, not just that something did. `unattributed` is the
           // one outcome whose cause always lives in the browser half of the join, so the log
@@ -1255,8 +1255,10 @@ export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | n
             attribution: conversationId ? ('request_id' as const) : ('unattributed' as const),
             turnId: conversationId ? conversations.get(conversationId)?.turnId ?? null : null
           };
-        })
-      : Promise.resolve<Target>({ conversationId: null, sessionId: null, attribution: 'unattributed', turnId: null });
+        });
+    } else {
+      attributing = Promise.resolve<Target>({ conversationId: null, sessionId: null, attribution: 'unattributed', turnId: null });
+    }
   }
   const file = async (): Promise<ToolCallRecord | null> => {
     const target = await attributing;
@@ -1363,9 +1365,10 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
         // Only fixed storage diagnostics may enter the transcript; arbitrary fs errors
         // can contain private paths. Recording failure never changes the MCP payload.
         const message = err instanceof Error ? err.message : '';
-        const reason = message === 'Global session asset quota exceeded' || message === 'Session asset quota exceeded'
-          ? 'recording storage limit reached'
-          : message === 'Session image exceeds the recording limit' ? 'recording image size limit' : 'recording write failed';
+        let reason: string;
+        if (message === 'Global session asset quota exceeded' || message === 'Session asset quota exceeded') reason = 'recording storage limit reached';
+        else if (message === 'Session image exceeds the recording limit') reason = 'recording image size limit';
+        else reason = 'recording write failed';
         imageRecordingReasons.add(reason);
         logWarn(`session image not stored: ${reason}`);
       }
@@ -1413,6 +1416,10 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
       for (const change of changes) if (change.reviewUnavailable === undefined) delete change.reviewUnavailable;
     }
 
+    let attributionMethod: ToolCallRecord['attributionMethod'];
+    if (target.attribution === 'superseded') attributionMethod = 'superseded';
+    else if (target.conversationId && input.requestId) attributionMethod = 'request_id';
+    else attributionMethod = 'unattributed';
     const call: ToolCallRecord = {
       ...(input.nested === true ? { nested: true } : {}),
       ...(target.attribution === 'request_id' && target.conversationId && evidence.processCompletion && evidence.processSessionId && input.tool === 'exec_command'
@@ -1423,12 +1430,7 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
       attribution: target.attribution,
       requestId: input.requestId ?? null,
       conversationId: target.conversationId,
-      attributionMethod:
-        target.attribution === 'superseded'
-          ? 'superseded'
-          : target.conversationId && input.requestId
-            ? 'request_id'
-            : 'unattributed',
+      attributionMethod,
       args: await storeText(sessionId, redactCredentialText(safeJson(redactArgs(input.tool, input.args))), MAX_TOOL_ARGS_CHARS),
       result: await storeText(sessionId, resultText, MAX_TOOL_RESULT_CHARS),
       outcome: input.outcome,
@@ -1929,6 +1931,9 @@ async function recordPageTool(
   const held = live.pageTools.get(pageToolKey(id));
   if (held?.text === label) return false;
 
+  let contentSeq: number | undefined;
+  if (held && held.contentSeq !== undefined) contentSeq = held.contentSeq;
+  else if (item.activeNow === false && !held) contentSeq = 0;
   const event = await appendEvent(sessionId, {
     ...base,
     ...(held?.turnId ? { turnId: held.turnId } : {}),
@@ -1936,7 +1941,7 @@ async function recordPageTool(
     kind: 'page_tool',
     messageId: id,
     label,
-    ...(held?.contentSeq === undefined ? item.activeNow === false && !held ? { contentSeq: 0 } : {} : { contentSeq: held.contentSeq }),
+    ...(contentSeq !== undefined ? { contentSeq } : {}),
     ...(held ? { origin: held.seq } : {})
   });
   live.pageTools.set(pageToolKey(id), {
@@ -2199,9 +2204,11 @@ async function recordChatObservationsNow(
         // A new stable final reply is stronger evidence about Goal than that lost id, but an
         // old final seen merely by opening an idle chat is not. The prior uncertain boundary is
         // therefore the exact fence; the stable reply id is the durable exactly-once identity.
+        let batchFallback: number | null;
+        if (live?.turnId === batchUncertainEndId) batchFallback = live.turnStartedAt;
+        else batchFallback = null;
         const batchUncertainStartedAt = batchUncertainEndId
-          ? batchTurnStarts.get(batchUncertainEndId) ??
-            (live?.turnId === batchUncertainEndId ? live.turnStartedAt : null)
+          ? batchTurnStarts.get(batchUncertainEndId) ?? batchFallback
           : null;
         const priorUncertainStartedAt =
           live?.turnStartedAt === null &&

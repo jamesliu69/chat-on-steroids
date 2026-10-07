@@ -178,7 +178,11 @@ export async function sessionInputPolicy(sessionId: string, observedActivity?: I
   const canInject = !stopped && activity.exact && !directTurn;
   // The bridge's retained exact MCP grant can outlive a native UI end. Project
   // that same turn for image custody, never invent an active recorder turn.
-  const injectionTurnId = canInject ? session.activeTurnId ?? (activity.turnId === end?.turnId ? activity.turnId ?? null : null) : null;
+  let injectionTurnId: string | null;
+  if (!canInject) injectionTurnId = null;
+  else if (session.activeTurnId !== undefined && session.activeTurnId !== null) injectionTurnId = session.activeTurnId;
+  else if (activity.turnId === end?.turnId) injectionTurnId = activity.turnId ?? null;
+  else injectionTurnId = null;
   const astra = session.origin?.kind !== 'worker' && session.origin?.kind !== 'helper' &&
     session.selectedModel?.conversationId === session.conversationId && isAstraModel(session.selectedModel.model, session.selectedModel.reasoningEffort);
   const completed = session.activeTurnId ? null : await readCompletedFinal(sessionId, session.conversationId);
@@ -499,8 +503,12 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // the uncertain outcome until receipt or explicit cancellation, regardless of
     // how long ChatGPT takes to assign its durable conversation identity.
     const companion = current.find(other => other.id === row.companionInputId);
+    let pickupTimeoutMs: number;
+    if (row.attachments?.length || companion?.attachments?.length) pickupTimeoutMs = 720_000;
+    else if (row.images?.length || companion?.images?.length) pickupTimeoutMs = 120_000;
+    else pickupTimeoutMs = 60_000;
     if (row.state === 'browser' && row.sendAuthorizedAt === undefined && row.requiresAuthorization === true &&
-        Date.now() - (row.offeredAt ?? row.createdAt) >= (row.attachments?.length || companion?.attachments?.length ? 720_000 : row.images?.length || companion?.images?.length ? 120_000 : 60_000)) {
+        Date.now() - (row.offeredAt ?? row.createdAt) >= pickupTimeoutMs) {
       // A never-authorized Continue still owes delivery. Retain its ticket and
       // pickup budget, but never replay a possibly consumed Stop after losing a page.
       if (row.recovery) return releaseRecoveryClaim(row);
@@ -593,9 +601,11 @@ async function transition(current: InputEntry[], next: InputEntry[], automated: 
     const reserved = new Map(automated.flatMap(entry => next.filter(row => sameDelivery(entry, row)).map(row => [row.id, row] as const)));
     await commit(current.map((entry): InputEntry => {
       const claimed = reserved.get(entry.id);
-      return claimed ? { ...claimed, state: 'failed', error: phase === 'after-send'
-        ? 'Message sent, but automation was not confirmed. Check its chat settings.'
-        : 'Automation was not confirmed; this message was not sent. Send again to retry.' } : entry;
+      if (!claimed) return entry;
+      let error: string;
+      if (phase === 'after-send') error = 'Message sent, but automation was not confirmed. Check its chat settings.';
+      else error = 'Automation was not confirmed; this message was not sent. Send again to retry.';
+      return { ...claimed, state: 'failed', error };
     }));
     for (const entry of automated) await deliveryHooks.applyAutomation(entry.conversationId!, entry.automation!, phase, entry.objective, entry.loopAfterTurn);
   }
@@ -607,15 +617,22 @@ async function prepare(entry: InputEntry, suffix = ''): Promise<InputEntry> {
   // Generated openings and plans cannot replace the user's complete request.
   // Keep the authored text intact; freeze the complete objective in the same
   // delivery claim so retries cannot reconstruct a different opening message.
-  const text = entry.stages !== undefined && entry.mode !== 'finish'
-    ? `Original user request:\n${entry.objective || entry.text}\n\nComplete workflow:\n${[entry.text, ...entry.stages].map((stage, index) => ((index + 1) + ". " + stage)).join('\n\n')}\n\nBegin the complete implementation now. Later queued messages are verification checkpoints; do not wait for them to learn or implement requirements. Carry out and verify each received checkpoint before asking for the next one with session_finish; never call it repeatedly just to collect the queue.`
-    : entry.objective && (entry.opening || !entry.sessionId)
-      ? `Original user request:\n${entry.objective}\n\nOpening instruction:\n${entry.text}\n\nFollow the complete original request, including all constraints, throughout this task.`
-      : entry.text;
+  let text: string;
+  if (entry.stages !== undefined && entry.mode !== 'finish') {
+    text = `Original user request:\n${entry.objective || entry.text}\n\nComplete workflow:\n${[entry.text, ...entry.stages].map((stage, index) => ((index + 1) + ". " + stage)).join('\n\n')}\n\nBegin the complete implementation now. Later queued messages are verification checkpoints; do not wait for them to learn or implement requirements. Carry out and verify each received checkpoint before asking for the next one with session_finish; never call it repeatedly just to collect the queue.`;
+  } else if (entry.objective && (entry.opening || !entry.sessionId)) {
+    text = `Original user request:\n${entry.objective}\n\nOpening instruction:\n${entry.text}\n\nFollow the complete original request, including all constraints, throughout this task.`;
+  } else {
+    text = entry.text;
+  }
   const mandatoryOverhead = `${TOOL_INPUT_HEADER}\n\n${finishInstruction(getConfig().ui.finishLeadMinutes)}`;
+  let authoredText: string;
+  if (entry.authoredSource === 'none') authoredText = '';
+  else if (entry.authoredSource === 'objective') authoredText = entry.objective ?? '';
+  else authoredText = entry.text;
   const deliveryText = entry.deliveryText ?? await deliveryHooks?.prepareText?.({ ...entry, text: text + suffix }, {
     maxChars: MAX_CHATGPT_MESSAGE_CHARS, maxBytes: TOOL_INPUT_TEXT_BYTES - Buffer.byteLength(mandatoryOverhead)
-  }, entry.authoredSource === 'none' ? '' : entry.authoredSource === 'objective' ? entry.objective ?? '' : entry.text) ?? text + suffix;
+  }, authoredText) ?? text + suffix;
   // A single input must fit the tool envelope by itself. Aggregate batching below
   // may defer a second input, but cannot silently defer an individually impossible one.
   const envelope = `${TOOL_INPUT_HEADER}${deliveryText}\n\n${finishInstruction(getConfig().ui.finishLeadMinutes)}`;
@@ -743,8 +760,14 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     }
     // Unattributed work can fence browser Send without making this chat a tool recipient.
     // Leave that input neutral until the existing serialized claim selects a safe transport.
-    const transportIntent = toolDelivery ? 'tool' as const : input.attachments?.length ? 'browser' as const : input.mode === 'auto' && !finishOwner
-      ? policy?.canInject ? 'tool' as const : !policy || policy.browserAllowed || policy.directTurn ? 'browser' as const : undefined : undefined;
+    let transportIntent: 'tool' | 'browser' | undefined;
+    if (toolDelivery) transportIntent = 'tool';
+    else if (input.attachments?.length) transportIntent = 'browser';
+    else if (input.mode === 'auto' && !finishOwner) {
+      if (policy?.canInject) transportIntent = 'tool';
+      else if (!policy || policy.browserAllowed || policy.directTurn) transportIntent = 'browser';
+      else transportIntent = undefined;
+    } else transportIntent = undefined;
     const directTurn = !toolDelivery && input.mode === 'auto' && !finishOwner && input.dueAt <= Date.now() ? policy?.directTurn : null;
     const entry: InputEntry = { ...input, ...(queuedTurn ? { queuedTurn } : {}), ...(toolImages ? { toolImages } : {}), ...(directTurn ? { directTurn } : {}),
       ...(injectionOwner ? { toolTurnId: injectionOwner.turnId } : {}), ...(transportIntent ? { transportIntent } : {}),
@@ -760,8 +783,10 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     const authoredOrdinary = (input.authoredSource ?? 'text') === 'text' && input.mode !== 'finish' &&
       !finishOwner && !input.stages?.length;
     if (getConfig().ui.autoSelectSkills === true && authoredOrdinary && invokedSkills(input.text).length === 0) {
-      const folder = input.sessionId ? await getSessionProject(input.sessionId)
-        : input.projectId ? await projectWorkspace(input.projectId) : null;
+      let folder: { virtual: string; real: string } | null;
+      if (input.sessionId) folder = await getSessionProject(input.sessionId);
+      else if (input.projectId) folder = await projectWorkspace(input.projectId);
+      else folder = null;
       entry.autoSkills = await autoSelectManagedSkills(input.text, { projectPath: folder?.real ?? null });
     }
     if (retryOpening) { entry.opening = true; entry.requestedSessionId = input.sessionId; }
@@ -916,8 +941,13 @@ async function publishHistory(): Promise<void> {
     catch { /* delivered, retained, and still visible until canonical recording succeeds */ }
   }
   if (recorded.size || current.some(row => anchored.has(row.id) && (!row.historyAnchored || row.historySeq !== anchored.get(row.id)))) {
-    try { await commit(current.map(row => recorded.has(row.id) || anchored.has(row.id)
-      ? { ...row, ...(recorded.has(row.id) ? { historyRecorded: true } : {}), ...(anchored.has(row.id) ? { historyAnchored: true, historySeq: anchored.get(row.id) } : {}) } : row)); }
+    try { await commit(current.map(row => {
+      if (!recorded.has(row.id) && !anchored.has(row.id)) return row;
+      let historyUpdate: { historyRecorded?: true; historyAnchored?: true; historySeq?: number } = {};
+      if (recorded.has(row.id)) historyUpdate = { ...historyUpdate, historyRecorded: true };
+      if (anchored.has(row.id)) historyUpdate = { ...historyUpdate, historyAnchored: true, historySeq: anchored.get(row.id) };
+      return { ...row, ...historyUpdate };
+    })); }
     catch { /* the durable delivery receipt remains; canonical retry is idempotent */ }
   }
 }
@@ -927,11 +957,16 @@ export function cancelInput(id: string): Promise<boolean> {
     const selected = current.find((entry) => entry.id === id);
     const found = selected && (companionOf(current, selected) ?? selected);
     if (!found || !['queued', 'browser', 'failed', 'cancelled'].includes(found.state)) return false;
-    await commit(current.map((entry) => sameDelivery(found, entry) ? { ...entry, state: 'cancelled', cancelledByUser: true,
-      error: found.state === 'browser' ? found.requiresAuthorization && found.sendAuthorizedAt === undefined
-        ? 'Not sent: this delivery was cancelled before Send was authorized.'
-        : 'Cancelled locally. Delivery to ChatGPT is unconfirmed; the message may already have been sent.'
-        : found.state === 'queued' ? undefined : entry.error } : entry));
+    await commit(current.map((entry) => {
+      if (!sameDelivery(found, entry)) return entry;
+      let error: string | undefined;
+      if (found.state === 'browser') {
+        if (found.requiresAuthorization && found.sendAuthorizedAt === undefined) error = 'Not sent: this delivery was cancelled before Send was authorized.';
+        else error = 'Cancelled locally. Delivery to ChatGPT is unconfirmed; the message may already have been sent.';
+      } else if (found.state === 'queued') error = undefined;
+      else error = entry.error;
+      return { ...entry, state: 'cancelled', cancelledByUser: true, error };
+    }));
     decisionWaiters.get(id)?.reject(new Error('goal_browser_cancelled'));
     decisionWaiters.delete(id);
     await removeWithdrawnOpening(entries!.find(row => row.id === found.id)!, entries!);
@@ -984,8 +1019,12 @@ export function reorderQueuedInputs(sessionId: string, ids: string[]): Promise<b
         queue.some(row => !ids.includes(row.id))) return false;
     const positions = new Map(ids.map((id, index) => [id, index]));
     const ticket = queue.find(row => row.silenceBoundary)?.silenceBoundary;
-    await commit(current.map(row => positions.has(row.id) ? { ...row, queueOrder: positions.get(row.id)!,
-      ...(ticket ? { silenceBoundary: row.id === ids[0] ? ticket : undefined } : {}) } : row));
+    await commit(current.map(row => {
+      if (!positions.has(row.id)) return row;
+      if (!ticket) return { ...row, queueOrder: positions.get(row.id)! };
+      return { ...row, queueOrder: positions.get(row.id)!,
+        silenceBoundary: row.id === ids[0] ? ticket : undefined };
+    }));
     return true;
   });
 }
@@ -1241,8 +1280,11 @@ async function recoveryInvalidReason(row: InputEntry): Promise<string | null> {
   const boundary = row.silenceBoundary;
   if (!row.recovery || !row.sessionId || !boundary) return 'the recovery source is missing';
   if (Date.now() - row.createdAt >= 12 * 60 * 60_000) return 'the twelve-hour recovery window expired';
-  const unavailable = () => isChatBlocked(boundary.conversationId) ? 'this chat is blocked' :
-    deliveryHooks?.recoveryAllowed?.(row.sessionId!, boundary.conversationId) === true ? null : 'automatic continuation is off or paused';
+  const unavailable = (): string | null => {
+    if (isChatBlocked(boundary.conversationId)) return 'this chat is blocked';
+    if (deliveryHooks?.recoveryAllowed?.(row.sessionId!, boundary.conversationId) === true) return null;
+    return 'automatic continuation is off or paused';
+  };
   const reason = unavailable();
   if (reason) return reason;
   const session = await getSession(row.sessionId);
@@ -1372,9 +1414,12 @@ export function fileSilenceInput(sessionId: string, conversationId: string, turn
     const listening = Math.max(listenUntil ?? 0, previous?.listenUntil ?? 0);
     if (row.silenceBoundary?.turnId === turnId && row.silenceBoundary.workSeq === workSequence(work) &&
         (row.silenceBoundary.listenUntil ?? 0) === listening) return true;
-    await commit(current.map(entry => entry === row ? { ...entry,
-      silenceBoundary: { turnId, conversationId, workSeq: workSequence(work), acceptedAt: previous ? previous.acceptedAt : Date.now(), ...(listening ? { listenUntil: listening } : {}), ...(previous?.nativeBusy ? { nativeBusy: true } : {}) } }
-      : entry.sessionId === sessionId && entry.state === 'queued' && entry.silenceBoundary?.turnId === turnId ? { ...entry, silenceBoundary: undefined } : entry));
+    await commit(current.map(entry => {
+      if (entry === row) return { ...entry,
+        silenceBoundary: { turnId, conversationId, workSeq: workSequence(work), acceptedAt: previous ? previous.acceptedAt : Date.now(), ...(listening ? { listenUntil: listening } : {}), ...(previous?.nativeBusy ? { nativeBusy: true } : {}) } };
+      if (entry.sessionId === sessionId && entry.state === 'queued' && entry.silenceBoundary?.turnId === turnId) return { ...entry, silenceBoundary: undefined };
+      return entry;
+    }));
     return true;
   });
 }
@@ -1475,8 +1520,11 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
     if (entry.recovery && entry.state === 'browser' && entry.owner !== owner) return null;
     if (entry.recovery?.reloadOwner === owner) return null;
     if (companionOf(current, entry)) return null;
-    const completedTurnId = entry.state === 'browser' ? entry.completedTurnId : queuedFollowup(entry)
-      ? await completedStageBoundary(entry, current) : manualInput(entry) ? await eligibleStageEnd(entry) : undefined;
+    let completedTurnId: string | null | undefined;
+    if (entry.state === 'browser') completedTurnId = entry.completedTurnId;
+    else if (queuedFollowup(entry)) completedTurnId = await completedStageBoundary(entry, current);
+    else if (manualInput(entry)) completedTurnId = await eligibleStageEnd(entry);
+    else completedTurnId = undefined;
     if (queuedFollowup(entry) && !completedTurnId) return null;
     if (await target(entry) !== conversationId) return null;
     if (!(await browserInputAllowed(entry))) return null;
@@ -1497,8 +1545,10 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
     const queueHead = session && manualInput(entry) && entry.silenceBoundary && (entry.silenceBoundary.listenUntil ?? 0) <= Date.now() && entry.state === 'queued' &&
       await turnHasMcpCall(session.id, entry.silenceBoundary.conversationId, entry.silenceBoundary.turnId)
       ? ordered(current).find(row => row.sessionId === entry.sessionId && queuedFollowup(row) && row.state === 'queued') : undefined;
-    let companion = entry.companionInputId ? current.find(row => row.id === entry.companionInputId)
-      : queueHead && session && queuedAfterTurn(queueHead, session) && !queueHead.finishOwner && queueHead.purpose !== 'decision' && queueHead.attachmentDelivery !== 'tool' ? queueHead : undefined;
+    let companion: InputEntry | undefined;
+    if (entry.companionInputId) companion = current.find(row => row.id === entry.companionInputId);
+    else if (queueHead && session && queuedAfterTurn(queueHead, session) && !queueHead.finishOwner && queueHead.purpose !== 'decision' && queueHead.attachmentDelivery !== 'tool') companion = queueHead;
+    else companion = undefined;
     if (entry.companionInputId && (!companion || companion.state !== 'browser' || companion.owner !== entry.owner || companion.sessionId !== entry.sessionId)) return null;
     // An optional checkpoint cannot make an otherwise deliverable correction too
     // large. Leave that exact head queued; never skip it to collect a later one.
@@ -1532,8 +1582,12 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
         ? { ...entry, state: 'failed', error: (error as Error).message.slice(0, 200) } : row));
       throw error;
     }
-    await transition(current, current.map((row) => row === entry ? claimed : row === companion ? { ...row,
-      state: 'browser', owner, conversationId, offeredAt: claimed.offeredAt, requiresAuthorization, completedTurnId: claimed.completedTurnId } : row),
+    await transition(current, current.map((row) => {
+      if (row === entry) return claimed;
+      if (row === companion) return { ...row,
+        state: 'browser', owner, conversationId, offeredAt: claimed.offeredAt, requiresAuthorization, completedTurnId: claimed.completedTurnId };
+      return row;
+    }),
       entry.state === 'queued' && entry.automation && conversationId && entry.purpose !== 'decision' ? [claimed] : [], 'before-send');
     if (!requiresAuthorization && completedTurnId && entry.sessionId && conversationId)
       await consumeGoalReplyForInputNow(conversationId, entry.sessionId, completedTurnId);
@@ -1636,16 +1690,26 @@ export function acknowledgeBrowserInput(id: string, owner: string, conversationI
     if (!entry.sessionId && entry.purpose !== 'decision' && deliveredConversation) {
       await noteChatOrigin(deliveredConversation, { kind: 'desktop', fromSessionId: null, agentId: null, task: '' });
     }
-    const delivered = entry.sessionId ? await getSession(entry.sessionId) : deliveredConversation
-      ? await findSessionByConversation(deliveredConversation, { requireUnique: true }) : null;
+    let delivered: SessionSummary | null;
+    if (entry.sessionId) delivered = await getSession(entry.sessionId);
+    else if (deliveredConversation) delivered = await findSessionByConversation(deliveredConversation, { requireUnique: true });
+    else delivered = null;
     if (entry.purpose === 'decision' && entry.lifetime !== 'temporary-planner' && deliveredConversation) await deliveryHooks?.bindHelper?.(deliveredConversation, entry.decisionSourceSessionId ?? null);
+    let acknowledgedState: 'cancelled' | 'decision' | 'sent';
+    if (entry.state === 'cancelled') acknowledgedState = 'cancelled';
+    else if (entry.purpose === 'decision') acknowledgedState = 'decision';
+    else acknowledgedState = 'sent';
     const acknowledged: InputEntry = { ...entry, conversationId: deliveredConversation,
-      deliveredSessionId: delivered?.id ?? null, state: entry.state === 'cancelled' ? 'cancelled' : entry.purpose === 'decision' ? 'decision' : 'sent',
+      deliveredSessionId: delivered?.id ?? null, state: acknowledgedState,
       ...(entry.state === 'cancelled' ? { error: 'Cancelled locally; delivery was later confirmed in ChatGPT.' } : {}),
       ...(messageId ? { messageId } : {}), deliveredAt: Date.now() };
-    await transition(current, current.map((row) => row === entry ? acknowledged : row.id === entry.companionInputId ? { ...row,
-      state: acknowledged.state, error: acknowledged.error, deliveredSessionId: acknowledged.deliveredSessionId,
-      messageId: acknowledged.messageId, deliveredAt: acknowledged.deliveredAt } : row),
+    await transition(current, current.map((row) => {
+      if (row === entry) return acknowledged;
+      if (row.id === entry.companionInputId) return { ...row,
+        state: acknowledged.state, error: acknowledged.error, deliveredSessionId: acknowledged.deliveredSessionId,
+        messageId: acknowledged.messageId, deliveredAt: acknowledged.deliveredAt };
+      return row;
+    }),
       entry.state !== 'cancelled' && (entry.opening || !entry.sessionId) && entry.automation && deliveredConversation && entry.purpose !== 'decision' ? [acknowledged] : [], 'after-send');
     if (entry.completedTurnId && entry.sessionId && deliveredConversation)
       await consumeGoalReplyForInputNow(deliveredConversation, entry.sessionId, entry.completedTurnId);
@@ -1854,9 +1918,11 @@ export function failBrowserInput(id: string, owner: string, error: string, detai
     // Losing a document before Send does not lose a still-valid refresh ticket.
     // Real work revokes its source proof independently and must earn a new window.
     const preserveBoundary = pickupCancelled && await eligibleStageEnd(entry) === entry.completedTurnId;
-    await commit(current.map((row) => sameDelivery(entry, row) ? pickupCancelled
-      ? withoutSilenceClaim(row, row === entry && preserveBoundary)
-      : { ...row, state: entry.companionInputId ? 'cancelled' : 'failed', error: error.slice(0, 200) } : row));
+    await commit(current.map((row) => {
+      if (!sameDelivery(entry, row)) return row;
+      if (pickupCancelled) return withoutSilenceClaim(row, row === entry && preserveBoundary);
+      return { ...row, state: entry.companionInputId ? 'cancelled' : 'failed', error: error.slice(0, 200) };
+    }));
     decisionWaiters.get(id)?.reject(new Error('goal_browser_send_failed: ' + error.slice(0, 200)));
     decisionWaiters.delete(id);
     return true;

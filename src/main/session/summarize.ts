@@ -200,7 +200,11 @@ export function summarizeRunningCall(tool: string, args: unknown, evidence: Call
   }
   const space = summary.title.indexOf(' ');
   const verb = ONGOING[space === -1 ? summary.title : summary.title.slice(0, space)];
-  return { title: verb ? `${verb}${space === -1 ? '' : summary.title.slice(space)}` : `Running ${tool}`, kind: summary.kind };
+  let title: string;
+  if (!verb) title = `Running ${tool}`;
+  else if (space === -1) title = verb;
+  else title = `${verb}${summary.title.slice(space)}`;
+  return { title, kind: summary.kind };
 }
 
 /**
@@ -224,13 +228,16 @@ export function summarizeToolCall(input: SummaryInput): ActivitySummary {
   // syntax and execution failures keep their own meaning (and any partial-change evidence).
   const patchMismatch = refused && input.tool === 'apply_patch' && changes.length === 0 &&
     /^apply_patch verification failed: Failed to find (?:expected lines in |context(?: in | '))/.test(head);
+  let failedTitle: string;
+  if (patchMismatch) failedTitle = 'Patch didn’t match';
+  else if (input.outcome === 'tool_execution_error') failedTitle = `Tool ${input.tool} failed`;
+  else failedTitle = undoTitle(summary.title, refused);
   const failed: ActivitySummary = {
     ...summary,
     tone: input.outcome === 'tool_internal_error' ? 'bad' : 'warn',
     // The verb carries the outcome, not just the colour. Tone and metric are easy to
     // miss and are gone entirely once a line is quoted or read back as text.
-    title: patchMismatch ? 'Patch didn’t match' :
-      input.outcome === 'tool_execution_error' ? `Tool ${input.tool} failed` : undoTitle(summary.title, refused)
+    title: failedTitle
   };
   if (patchMismatch) {
     failed.metric = 'not applied';
@@ -260,36 +267,46 @@ function build(
       const start = num(args['start_line']);
       const end = num(args['end_line']);
       // The range only ever applies to a single path, so it is only offered there.
-      const range =
-        paths.length === 1
-          ? (evidence.detail ?? (start && end ? `lines ${start}–${end}` : start ? `from line ${start}` : null))
-          : null;
+      let range: string | null = null;
+      if (paths.length === 1) {
+        range = evidence.detail ?? null;
+        if (range === null) {
+          if (start && end) range = `lines ${start}–${end}`;
+          else if (start) range = `from line ${start}`;
+        }
+      }
       const metric = lineRangeMetric(range);
-      const multiDetail =
-        paths.length > 1
-          ? paths.length <= 3
-            ? paths.map(shortPath).join(', ')
-            : `${paths.slice(0, 2).map(shortPath).join(', ')} +${paths.length - 2} more`
-          : null;
+      let multiDetail: string | null = null;
+      if (paths.length > 1) {
+        if (paths.length <= 3) multiDetail = paths.map(shortPath).join(', ');
+        else multiDetail = `${paths.slice(0, 2).map(shortPath).join(', ')} +${paths.length - 2} more`;
+      }
+      let readDetail: string | undefined;
+      if (range) readDetail = range;
+      else if (multiDetail) readDetail = multiDetail;
       return {
         kind: 'read',
         tone: 'neutral',
         title: paths.length === 1 && first ? `Read ${shortPath(first)}` : `Read ${plural(paths.length, 'path')}`,
-        ...(range ? { detail: range } : multiDetail ? { detail: multiDetail } : {}),
+        ...(readDetail ? { detail: readDetail } : {}),
         ...(metric ? { metric } : {})
       };
     }
     case 'find': {
       const query = str(args['query']) ?? '';
       const mode = str(args['mode']) ?? 'name';
+      let detail: string;
+      if (evidence.count === null) {
+        if (mode === 'content') detail = 'in file contents';
+        else detail = 'by name';
+      } else {
+        detail = `${plural(evidence.count, 'match', 'matches')}${mode === 'content' ? ' in file contents' : ''}`;
+      }
       return {
         kind: 'search',
         tone: 'neutral',
         title: `Searched ${JSON.stringify(query.slice(0, 60))}`,
-        detail:
-          evidence.count === null ? mode === 'content'
-              ? 'in file contents'
-              : 'by name' : `${plural(evidence.count, 'match', 'matches')}${mode === 'content' ? ' in file contents' : ''}`
+        detail
       };
     }
 
@@ -307,16 +324,16 @@ function build(
       const deletes = /^\*\*\* Delete File:/m.test(patch);
       const updates = /^\*\*\* Update File:/m.test(patch);
       const moves = /^\*\*\* Move to:/m.test(patch);
-      const only =
-        adds && !deletes && !updates
-          ? 'create'
-          : deletes && !adds && !updates
-            ? 'delete'
-            : moves && !adds && !deletes
-              ? 'move'
-              : 'edit';
-      const verb =
-        only === 'create' ? 'Created' : only === 'delete' ? 'Deleted' : only === 'move' ? 'Moved' : 'Edited';
+      let only: 'create' | 'delete' | 'move' | 'edit';
+      if (adds && !deletes && !updates) only = 'create';
+      else if (deletes && !adds && !updates) only = 'delete';
+      else if (moves && !adds && !deletes) only = 'move';
+      else only = 'edit';
+      let verb: string;
+      if (only === 'create') verb = 'Created';
+      else if (only === 'delete') verb = 'Deleted';
+      else if (only === 'move') verb = 'Moved';
+      else verb = 'Edited';
       return {
         kind: only,
         tone: only === 'delete' ? 'warn' : 'good',
@@ -338,32 +355,36 @@ function build(
         evidence.running === true ||
         (evidence.running === null && !evidence.timedOut && evidence.exitCode === null && evidence.durationMs !== null);
       const took = evidence.durationMs ?? input.durationMs;
+      let commandTitle: string;
+      if (failed) commandTitle = `Command failed ${command}`;
+      else if (running) commandTitle = `Started ${command}`;
+      else commandTitle = `Ran ${command}`;
+      let commandMetric: string;
+      if (running) commandMetric = 'started';
+      else if (evidence.timedOut) commandMetric = '✕ timed out';
+      else if (failed) commandMetric = `✕ exit ${evidence.exitCode}`;
+      else commandMetric = `✓ ${formatDuration(took)}`;
       return {
         kind: 'run',
         tone: failed ? 'bad' : running ? 'neutral' : 'good',
-        title: failed ? `Command failed ${command}` : running ? `Started ${command}` : `Ran ${command}`,
-        metric: running
-          ? 'started'
-          : evidence.timedOut
-          ? '✕ timed out'
-          : failed
-            ? `✕ exit ${evidence.exitCode}`
-            : `✓ ${formatDuration(took)}`
+        title: commandTitle,
+        metric: commandMetric
       };
     }
     case 'write_stdin': {
       const id = typeof args['session_id'] === 'number' ? String(args['session_id']) : str(args['session_id']) ?? '';
       const signal = str(args['signal']);
-      const title =
-        signal === 'kill'
-          ? `Stopped session ${id}`.trim()
-          : signal === 'int'
-            ? `Interrupted session ${id}`.trim()
-            : str(args['chars'])
-              ? `Wrote to session ${id}`.trim()
-              : `Waited on session ${id}`.trim();
+      let title: string;
+      if (signal === 'kill') title = `Stopped session ${id}`.trim();
+      else if (signal === 'int') title = `Interrupted session ${id}`.trim();
+      else if (str(args['chars'])) title = `Wrote to session ${id}`.trim();
+      else title = `Waited on session ${id}`.trim();
       const failed = !evidence.benignExit && evidence.exitCode !== null && evidence.exitCode !== 0;
-      return { kind: 'process', tone: signal === 'kill' ? 'warn' : failed ? 'bad' : 'neutral', title,
+      let tone: ActivitySummary['tone'];
+      if (signal === 'kill') tone = 'warn';
+      else if (failed) tone = 'bad';
+      else tone = 'neutral';
+      return { kind: 'process', tone, title,
         ...(evidence.exitCode === null ? {} : { metric: failed ? `✕ exit ${evidence.exitCode}` : '✓ finished' }) };
     }
 
@@ -479,14 +500,14 @@ function build(
       }
       const toolCall = str(args['tool_call']);
       const cursor = str(args['cursor']);
+      let title: string;
+      if (toolCall) title = 'Opened one recorded tool call';
+      else if (cursor) title = 'Continued reading a recorded session';
+      else title = 'Read a recorded session';
       return {
         kind: 'session',
         tone: 'neutral',
-        title: toolCall
-          ? 'Opened one recorded tool call'
-          : cursor
-            ? 'Continued reading a recorded session'
-            : 'Read a recorded session',
+        title,
         ...(evidence.count === null ? {} : { detail: plural(evidence.count, 'entry', 'entries') })
       };
     }

@@ -52,11 +52,17 @@ async function stageBatch(sources: AttachmentSource[], retained: Set<string>): P
 }
 async function stageOne(source: AttachmentSource, used: number): Promise<InputAttachment> {
   const stat = typeof source === 'string' ? await fs.stat(source) : null;
-  const size = typeof source === 'string' ? stat!.size : 'text' in source ? Buffer.byteLength(source.text) : source.bytes.byteLength;
+  let size: number;
+  if (typeof source === 'string') size = stat!.size;
+  else if ('text' in source) size = Buffer.byteLength(source.text);
+  else size = source.bytes.byteLength;
   if (stat && !stat.isFile()) throw new Error('Attach files individually; folders cannot be uploaded');
   if (size > MAX_ATTACHMENT_BYTES) throw new Error('Each attachment must be 512 MB or smaller');
   if (used + size > 2 * 1024 * 1024 * 1024) throw new Error('Attachment storage is full; finish or remove pending messages first');
-  const name = typeof source === 'string' ? path.basename(source) : 'text' in source ? 'Attached text.txt' : path.basename(source.name);
+  let name: string;
+  if (typeof source === 'string') name = path.basename(source);
+  else if ('text' in source) name = 'Attached text.txt';
+  else name = path.basename(source.name);
   const types: Record<string, string> = { '.md': 'text/markdown', '.txt': 'text/plain', '.csv': 'text/csv', '.json': 'application/json', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg' };
   const attachment = attachmentSchema.parse({ id: randomUUID(), name, size, mimeType: types[path.extname(name).toLowerCase()] ?? 'application/octet-stream' });
   const destination = fileFor(attachment.id);

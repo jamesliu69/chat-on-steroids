@@ -27,6 +27,7 @@ import { isProModel } from '../../shared/chat-models.js';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import path from 'node:path';
 import type {
+  ActivitySummary,
   AssetRef,
   Handoff,
   ImageStorageClearMode,
@@ -1072,8 +1073,10 @@ function applyToSummary(summary: SessionSummary, event: SessionEvent): void {
     // IDs cover already-shipped event rows; new rows additionally carry typed control.
     if (event.progressId === `finish:${event.turnId}` || event.finishControl?.state === 'notified') finish.notified = true;
     const prefix = `finish-goal:${event.turnId}:`;
-    const revision = event.finishControl?.state === 'decision' ? event.finishControl.revision
-      : event.progressId?.startsWith(prefix) ? event.progressId.slice(prefix.length) : null;
+    let revision: string | null | undefined;
+    if (event.finishControl?.state === 'decision') revision = event.finishControl.revision;
+    else if (event.progressId?.startsWith(prefix)) revision = event.progressId.slice(prefix.length);
+    else revision = null;
     if (revision && /^[a-f0-9]{64}$/.test(revision) && finish.decisionRevision !== revision) {
       finish.decisionRevision = revision;
       finish.decisionAt = event.time;
@@ -1298,9 +1301,9 @@ export function upsertMessageEvent(
       const sameMessage =
         previous?.kind === event.kind && storedTextEqual(previous.message, event.message);
 
-      const nextEvent: NewMessageEvent =
-        previous?.kind === 'assistant_message' && event.kind === 'assistant_message'
-          ? {
+      let nextEvent: NewMessageEvent;
+      if (previous?.kind === 'assistant_message' && event.kind === 'assistant_message') {
+        nextEvent = {
               ...event,
               // The producer already supplied the stable website identity. Keep that exact
               // identity through every revision; a different id is a different logical row.
@@ -1323,9 +1326,9 @@ export function upsertMessageEvent(
               ...(event.renderedHtml === undefined && sameMessage
                 ? { renderedHtml: previous.renderedHtml }
                 : {})
-            }
-          : previous?.kind === 'user_message' && event.kind === 'user_message'
-            ? { ...event, inputId: event.inputId ?? previous.inputId,
+            };
+      } else if (previous?.kind === 'user_message' && event.kind === 'user_message') {
+        nextEvent = { ...event, inputId: event.inputId ?? previous.inputId,
                 authoredAt: previous.authoredAt ?? event.authoredAt,
                 authoredText: event.authoredText ?? previous.authoredText,
                 wireTokenEstimate: event.wireTokenEstimate ?? previous.wireTokenEstimate,
@@ -1339,15 +1342,17 @@ export function upsertMessageEvent(
                 retiredImageAssetIds: mergedRetiredAssetIds(previous.retiredImageAssetIds,
                   deniedAssetIds(sessionId, event.assets ?? previous.assets)),
                 assets: admittedAssets(sessionId,
-                  retainedAssets(event.assets ?? previous.assets, previous.retiredImageAssetIds)) }
-            : event.kind === 'user_message'
-              ? {
+                  retainedAssets(event.assets ?? previous.assets, previous.retiredImageAssetIds)) };
+      } else if (event.kind === 'user_message') {
+        nextEvent = {
                   ...event,
                   retiredImageAssetIds: mergedRetiredAssetIds(event.retiredImageAssetIds,
                     deniedAssetIds(sessionId, event.assets)),
                   assets: admittedAssets(sessionId, event.assets)
-                }
-              : event;
+                };
+      } else {
+        nextEvent = event;
+      }
       // A canonical assistant message belongs to exactly one generation permanently. Ownership
       // may still be *promoted* from "not known yet" to a durable generation id when the
       // recorder learns it late, but a settled assistant answer may never move to another turn.
@@ -1391,29 +1396,39 @@ export function upsertMessageEvent(
       ) {
         return { event: previous, changed: false, contentChanged: false };
       }
+      let contentSeq: number;
+      if (options.work === false &&
+        ((nextEvent.kind === 'user_message' && !!previous) || (nextEvent.kind === 'assistant_message' && !nextEvent.final))) {
+        if (previous) contentSeq = workSequence(previous);
+        else contentSeq = 0;
+      } else if (sameMessage && previous && (nextEvent.kind !== 'assistant_message' ||
+        (previous.kind === 'assistant_message' && (previous.final === true || previous.state === 'final') === nextEvent.final))) {
+        contentSeq = workSequence(previous);
+      } else {
+        contentSeq = entry.nextSeq;
+      }
+      let finalControl: { finalContentSeq: number; finalObservedAt?: number } | null = null;
+      if (nextEvent.kind === 'assistant_message' && nextEvent.final) {
+        // Old records do not distinguish a content revision from an HTML update.
+        // Keep their first anchor until genuinely new final content is observed.
+        if (sameMessage && previous?.kind === 'assistant_message' &&
+          (previous.final === true || previous.state === 'final')) {
+          finalControl = {
+            finalContentSeq: previous.finalContentSeq ?? previous.origin ?? previous.seq,
+            finalObservedAt: previous.finalObservedAt
+          };
+        } else {
+          finalControl = { finalContentSeq: entry.nextSeq, finalObservedAt: Date.now() };
+        }
+      }
       const full = {
         ...nextEvent,
         // Cursor revisions publish richer markup/identity without manufacturing work.
         // A reload may reserialize an existing user bubble. Its updated text belongs
         // in history, but only a just-authored observation may revoke its recovery.
         // A new question identity and the first final still advance this work stamp.
-        contentSeq: options.work === false &&
-          ((nextEvent.kind === 'user_message' && !!previous) || (nextEvent.kind === 'assistant_message' && !nextEvent.final))
-          ? previous ? workSequence(previous) : 0
-          : sameMessage && previous && (nextEvent.kind !== 'assistant_message' ||
-          (previous.kind === 'assistant_message' && (previous.final === true || previous.state === 'final') === nextEvent.final))
-          ? workSequence(previous) : entry.nextSeq,
-        ...(nextEvent.kind === 'assistant_message' && nextEvent.final
-          ? { finalContentSeq: sameMessage && previous?.kind === 'assistant_message' &&
-                (previous.final === true || previous.state === 'final')
-              // Old records do not distinguish a content revision from an HTML update.
-              // Keep their first anchor until genuinely new final content is observed.
-              ? previous.finalContentSeq ?? previous.origin ?? previous.seq
-              : entry.nextSeq,
-              finalObservedAt: sameMessage && previous?.kind === 'assistant_message' &&
-                (previous.final === true || previous.state === 'final')
-                ? previous.finalObservedAt : Date.now() }
-          : {}),
+        contentSeq,
+        ...(finalControl ?? {}),
         // First appearance is chronology; current seq is delivery cursor/revision.
         // A page-model authored timestamp is stronger than a DOM first-sight timestamp. The
         // recorder opts into that correction explicitly; ordinary revisions still keep the
@@ -1497,20 +1512,21 @@ export function upsertNativeImageEvent(
       const incomingAsset = event.asset ? admittedAssets(sessionId, [event.asset])?.[0] : undefined;
       const staleAsset = Boolean(event.asset && !incomingAsset);
       const asset = previous?.asset ?? incomingAsset;
-      const previewError = previous?.previewError === 'quota' && !asset
-        ? 'quota'
-        : staleAsset
-          ? 'removed'
-          : event.previewError ?? previous?.previewError;
-      const previewStatus = asset
-        ? 'available'
-        : previewError
-          ? 'unavailable'
-          : event.previewStatus;
+      let previewError: NewNativeImageEvent['previewError'];
+      if (previous?.previewError === 'quota' && !asset) previewError = 'quota';
+      else if (staleAsset) previewError = 'removed';
+      else previewError = event.previewError ?? previous?.previewError;
+      let previewStatus: NewNativeImageEvent['previewStatus'];
+      if (asset) previewStatus = 'available';
+      else if (previewError) previewStatus = 'unavailable';
+      else previewStatus = event.previewStatus;
+      let imageTurnId: string | undefined;
+      if (previous?.turnId) imageTurnId = previous.turnId;
+      else if (event.turnId) imageTurnId = event.turnId;
       const next: NewNativeImageEvent = {
         ...event,
         time: previous?.time ?? event.time,
-        ...(previous?.turnId ? { turnId: previous.turnId } : event.turnId ? { turnId: event.turnId } : {}),
+        ...(imageTurnId ? { turnId: imageTurnId } : {}),
         ...(previous?.agent && !event.agent ? { agent: previous.agent } : {}),
         providerChannel: previous?.providerChannel ?? event.providerChannel,
         providerStatus: previous?.providerStatus === 'finished_successfully'
@@ -1605,13 +1621,21 @@ export async function completeProcessCall(sessionId: string, callId: string, com
     if (previous?.kind !== 'tool_call' || !previous.call.process || previous.call.process.completedAt !== undefined) return;
     const { exitCode } = completion;
     const failed = exitCode !== null && exitCode !== 0 && completion.benignExit !== true;
+    let processMetric: string;
+    if (exitCode === null) processMetric = 'finished (exit unknown)';
+    else if (failed) processMetric = `✕ exit ${exitCode}`;
+    else processMetric = '✓ finished';
+    let processTone: ActivitySummary['tone'];
+    if (exitCode === null) processTone = 'warn';
+    else if (failed) processTone = 'bad';
+    else processTone = 'good';
     const full: Extract<SessionEvent, { kind: 'tool_call' }> = {
       ...previous, seq: entry.nextSeq,
       call: { ...previous.call, process: { ...previous.call.process, ...completion }, summary: {
         ...previous.call.summary,
         title: previous.call.summary.title.replace(/^Started /, failed ? 'Command failed ' : 'Completed '),
-        metric: exitCode === null ? 'finished (exit unknown)' : failed ? `✕ exit ${exitCode}` : '✓ finished',
-        tone: exitCode === null ? 'warn' : failed ? 'bad' : 'good'
+        metric: processMetric,
+        tone: processTone
       } }
     };
     await writeCanonicalMessage(sessionId, key, full);
@@ -1899,9 +1923,10 @@ export async function readHandoffResponse(sessionId: string, conversationId: str
   if (finals.length > 1) return ambiguous;
   const final = finals[0];
   if (!final) return pending;
-  const text = final.message.truncated
-    ? final.message.assetId ? await readOverflowText(sessionId, final.message.assetId) : null
-    : final.message.text;
+  let text: string | null;
+  if (!final.message.truncated) text = final.message.text;
+  else if (final.message.assetId) text = await readOverflowText(sessionId, final.message.assetId);
+  else text = null;
   return text?.trim() ? { status: 'complete', text, messageId: final.messageId! } : pending;
 }
 
@@ -2412,6 +2437,10 @@ function normalizeSummary(id: string, raw: string): MetaCheckpoint | null {
       typeof publicSummary.toolRejected !== 'number' ||
       typeof publicSummary.toolInternalErrors !== 'number';
     const activityBoundaryMissing = !Object.prototype.hasOwnProperty.call(publicSummary, 'lastAssistantFinalAt');
+    let chatIds: string[];
+    if (Array.isArray(publicSummary.chatIds)) chatIds = publicSummary.chatIds;
+    else if (publicSummary.conversationId) chatIds = [publicSummary.conversationId];
+    else chatIds = [];
     return {
       historySeq,
       canonicalProjectionCurrent: canonicalProjection === 1,
@@ -2445,11 +2474,7 @@ function normalizeSummary(id: string, raw: string): MetaCheckpoint | null {
             : null,
         agents: Array.isArray(publicSummary.agents) ? publicSummary.agents : [],
         origin: publicSummary.origin ?? null,
-        chatIds: Array.isArray(publicSummary.chatIds)
-          ? publicSummary.chatIds
-          : publicSummary.conversationId
-            ? [publicSummary.conversationId]
-            : [],
+        chatIds,
         contextTokens:
           typeof publicSummary.contextTokens === 'number' ? publicSummary.contextTokens : publicSummary.estimatedTokens,
         // Older summaries predate successful-resume provenance. Missing means unknown, never
@@ -2519,9 +2544,10 @@ async function readMetaCheckpoint(id: string, historySeq = 0): Promise<MetaCheck
     return backup.checkpoint;
   }
 
-  const failure = primary.checkpoint === null && primary.state === 'unreadable' ? primary.error
-    : backup.checkpoint === null && backup.state === 'unreadable' ? backup.error
-      : null;
+  let failure: NodeJS.ErrnoException | null;
+  if (primary.checkpoint === null && primary.state === 'unreadable') failure = primary.error;
+  else if (backup.checkpoint === null && backup.state === 'unreadable') failure = backup.error;
+  else failure = null;
   if (failure) {
     throw new Error(`Session ${id} metadata could not be read (${failure.code ?? failure.message})`);
   }
@@ -3390,14 +3416,11 @@ export async function writeAsset(
   assertSessionId(sessionId);
   if (data.length === 0 || data.length > MAX_ASSET_BYTES) throw new Error('Session asset exceeds the per-asset limit');
   const hash = createHash('sha256').update(data).digest('hex').slice(0, 32);
-  const extension =
-    mimeType === 'image/png'
-      ? '.png'
-      : mimeType === 'image/jpeg'
-        ? '.jpg'
-        : mimeType === 'text/plain'
-          ? '.txt'
-          : '.bin';
+  let extension: string;
+  if (mimeType === 'image/png') extension = '.png';
+  else if (mimeType === 'image/jpeg') extension = '.jpg';
+  else if (mimeType === 'text/plain') extension = '.txt';
+  else extension = '.bin';
   const id = `${hash}${extension}`;
   // Invocation time, rather than queue execution time, decides which side of an explicit
   // cleanup this write belongs to. A write already admitted when cleanup starts may finish,

@@ -485,12 +485,11 @@ const handoffAsked = (entry: Continuation): boolean =>
  * The waiting deadline for a manual ticket. The extended budget exists only while its brief
  * is being written: later phases are app-paced and keep the ordinary clock.
  */
-const manualWaitingTtlMs = (state: ContinuationState, requested: RequestedModel | null): number =>
-  state === 'awaiting-summary'
-    ? requested !== null && isProModel(requested.model, requested.reasoningEffort ?? undefined)
-      ? CONTINUATION_PRO_WRITING_TTL_MS
-      : CONTINUATION_WRITING_TTL_MS
-    : CONTINUATION_TTL_MS;
+const manualWaitingTtlMs = (state: ContinuationState, requested: RequestedModel | null): number => {
+  if (state !== 'awaiting-summary') return CONTINUATION_TTL_MS;
+  if (requested !== null && isProModel(requested.model, requested.reasoningEffort ?? undefined)) return CONTINUATION_PRO_WRITING_TTL_MS;
+  return CONTINUATION_WRITING_TTL_MS;
+};
 
 /**
  * Whether a nonterminal continuation has outlived its wait. A manual one gets
