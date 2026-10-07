@@ -36,8 +36,8 @@ type SkillRecord = SkillDocument & { identity: FileIdentity; revision: string };
 const MAX_LIBRARY_ENTRIES = 256;
 const SKILL_FILENAME = 'SKILL.md';
 const RESERVED_IDS = new Set(['prompt']);
-const WINDOWS_RESERVED_ID = /^(?:con|prn|aux|nul|conin\$|conout\$|com[0-9]|lpt[0-9])(?:\.|$)/i;
-const SIMPLE_SCALAR_UNSAFE = /^(?:[\[\]{}|>&*!%@`]|[-?:]\s)|(?::\s)/;
+const WINDOWS_RESERVED_ID = /^(?:con|prn|aux|nul|conin\$|conout\$|com\d|lpt\d)(?:\.|$)/i;
+const SIMPLE_SCALAR_UNSAFE = /^(?:[[\]{}|>&*!%@`]|[-?:]\s)|(?::\s)/;
 
 let root: string | null = null;
 let catalog: SkillSummary[] = [];

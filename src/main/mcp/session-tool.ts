@@ -1063,7 +1063,7 @@ const CURSOR_REPAIR_HINT =
 function decodeCursor(raw: string, scope: string): { cursor: SessionCursor } | { error: string } {
   const text = raw
     .trim()
-    .replaceAll(/^[`'"“”‘’(\[]+|[`'"“”‘’)\].,;:!]+$/g, '')
+    .replaceAll(/^[`'"“”‘’([]+|[`'"“”‘’)\].,;:!]+$/g, '')
     .replace(/^[a-z_]*cursor\s*[:=]\s*[`'"“”‘’]*/i, '')
     .trim();
   const split = /^(.+)_([0-9a-vA-V]{4})$/s.exec(text);

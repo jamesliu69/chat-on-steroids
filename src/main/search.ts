@@ -175,7 +175,7 @@ function ripgrepIncludeGlob(pattern: string): string {
 function ripgrepExcludeGlob(raw: string): string {
   const prefix = raw.endsWith('*');
   const literal = prefix ? raw.slice(0, -1) : raw;
-  const escaped = literal.replaceAll(/[\\*?\[\]{}]/g, String.raw`\$&`);
+  const escaped = literal.replaceAll(/[\\*?[\]{}]/g, String.raw`\$&`);
   return `!**/${escaped}${prefix ? '*' : ''}/**`;
 }
 

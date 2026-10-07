@@ -78,7 +78,7 @@ function validateEnvironment(overrides: CommandEnvironment | undefined): void {
   const entries = Object.entries(overrides);
   if (entries.length > MAX_ENV_VARS) throw new ExecError(`Too many environment variables (limit ${MAX_ENV_VARS})`);
   for (const [key, value] of entries) {
-    if (key.length === 0 || key.length > MAX_ENV_KEY_CHARS || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    if (key.length === 0 || key.length > MAX_ENV_KEY_CHARS || !/^[A-Za-z_]\w*$/.test(key)) {
       throw new ExecError(`Invalid environment variable name: ${key.slice(0, MAX_ENV_KEY_CHARS) || '(empty)'}`);
     }
     if (key.toUpperCase().startsWith('CLF_')) {

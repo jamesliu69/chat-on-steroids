@@ -123,7 +123,7 @@ function parseInvocation(source: string, shell: ParseShell, mode: ParseMode): Pa
   }
 
   if (args.length === 0) unsupported('The command is empty.');
-  if (mode === 'command' && (shell === 'bash' || shell === 'sh' || shell === 'zsh') && /^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0]!)) {
+  if (mode === 'command' && (shell === 'bash' || shell === 'sh' || shell === 'zsh') && /^[A-Za-z_]\w*=/.test(args[0]!)) {
     unsupported('Leading environment assignments are not supported.');
   }
   return { args, wildcard };

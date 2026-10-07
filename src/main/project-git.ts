@@ -240,7 +240,7 @@ function parseCommittedChanges(buffer: Buffer, prefix: string): ProjectGitChange
   const changes: ProjectGitChange[] = [];
   for (let index = 0; index < parts.length && changes.length < MAX_CHANGES;) {
     const status = parts[index++]!;
-    if (!/^[ACDMRTUXB][0-9]*$/.test(status)) throw new Error('Git returned an invalid change status');
+    if (!/^[ACDMRTUXB]\d*$/.test(status)) throw new Error('Git returned an invalid change status');
     const renamed = status[0] === 'R' || status[0] === 'C';
     const oldPath = parts[index++];
     const newPath = renamed ? parts[index++] : oldPath;

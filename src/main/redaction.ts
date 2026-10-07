@@ -9,7 +9,7 @@ export function redactCredentialText(text: string): string {
 
 const SECRET_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[redacted private key]'],
-  [/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/g, '[redacted]'],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{40,})\b/g, '[redacted]'],
   [/\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g, '[redacted]'],
   [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[redacted]'],
   [/\bAIza[0-9A-Za-z_-]{35}\b/g, '[redacted]'],

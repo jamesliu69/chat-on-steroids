@@ -808,7 +808,7 @@
     }
     return text;
   };
-  const unescapeMarkdown = (value) => String(value || '').replaceAll(/\\\r?\n/g, '\n').replaceAll(/\\([!-\/:-@\[-`{-~])/g, '$1')
+  const unescapeMarkdown = (value) => String(value || '').replaceAll(/\\\r?\n/g, '\n').replaceAll(/\\([!-/:-@[-`{-~])/g, '$1')
     .replaceAll(/(^|\n)&#x20;/g, '$1 ');
   /** The leading continuation marker, as typed or as the composer escaped it. */
   const markedAs = (value) => {

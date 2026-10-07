@@ -1132,7 +1132,7 @@ function globLocation(pattern: string): GlobLocation | null {
   const segments = rawDirectory.split(/[\\/]/);
   if (
     segments.length === 0 ||
-    segments.some((segment) => segment === '' || segment === '..' || /[*?\[\]{}$:'"`]/.test(segment))
+    segments.some((segment) => segment === '' || segment === '..' || /[*?[\]{}$:'"`]/.test(segment))
   ) {
     return null;
   }

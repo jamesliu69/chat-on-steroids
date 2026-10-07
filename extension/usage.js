@@ -37,7 +37,7 @@
   const CONVERSATION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   // @ehkogh/#318: the alternate shell also uses bare UUID workflow ids.
   const REQUEST = /^(?:wfr_[a-zA-Z0-9_-]{1,96}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i;
-  const CONVERSATION_FIELD = /(?:^|[,{\s])\"conversation_id\"\s*:\s*\"([0-9a-f-]{36})\"/gi;
+  const CONVERSATION_FIELD = /(?:^|[,{\s])"conversation_id"\s*:\s*"([0-9a-f-]{36})"/gi;
   // Passive evidence only: no polling, and no full response survives a scan. Retain a
   // small replay window for document_start -> content-script readiness and deduplicate
   // repeated provider observations across responses as well as inside one stream.

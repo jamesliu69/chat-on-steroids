@@ -2309,7 +2309,7 @@ function normalizeGoalDecision(raw: string, legacy: boolean): GoalDecision {
   // Current streaming requests carry the same JSON decision as non-streaming
   // responses. Only genuinely plain legacy text uses the sentinel compatibility
   // path; JSON-shaped output must never be typed as an ordinary user message.
-  if (legacy && !/^(?:[\[{]|```(?:json)?\s*[\[{])/i.test(trimmed)) {
+  if (legacy && !/^(?:[[{]|```(?:json)?\s*[[{])/i.test(trimmed)) {
     if (NO_REPLY_TOKEN.test(trimmed) || NO_REPLY.test(trimmed)) return { action: 'stop' };
     const cleaned = cleanGoalReply(trimmed);
     if (!cleaned.text) return { action: 'invalid', error: cleaned.hadControl ? 'control_tokens_only' : 'empty_reply' };
@@ -2760,7 +2760,7 @@ function undash(text: string): string {
     const after = whole[at + match.length] ?? '';
     if (!before || before === '\n') return '';
     if (!after || after === '\n') return '';
-    if (/[0-9]/.test(before) && /[0-9]/.test(after)) return '-';
+    if (/\d/.test(before) && /\d/.test(after)) return '-';
     if (/[,;:]/.test(before) || /[,;:.!?]/.test(after)) return ' ';
     return ', ';
   });
