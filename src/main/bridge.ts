@@ -820,6 +820,10 @@ function diagnosticTab(value: unknown): CompanionTabDiagnostics | null {
   const tab = diagnosticObject(value);
   if (!tab) return null;
   const delivery = diagnosticObject(tab.delivery);
+  let deliveryOk: boolean | null;
+  if (delivery?.ok === true) deliveryOk = true;
+  else if (delivery?.ok === false) deliveryOk = false;
+  else deliveryOk = null;
   return {
     tab: diagnosticNullableNumber(tab.tab),
     isChat: tab.isChat === true,
@@ -836,7 +840,7 @@ function diagnosticTab(value: unknown): CompanionTabDiagnostics | null {
     pendingCommandAcks: diagnosticNumber(tab.pendingCommandAcks, 1_000_000),
     delivery: {
       at: diagnosticNumber(delivery?.at),
-      ok: delivery?.ok === true ? true : delivery?.ok === false ? false : null,
+      ok: deliveryOk,
       events: diagnosticNumber(delivery?.events, 1_000_000),
       total: diagnosticNumber(delivery?.total, 100_000_000),
       status: diagnosticNumber(delivery?.status, 999),
@@ -859,6 +863,10 @@ function sanitiseCompanionDiagnostics(value: unknown): CompanionDiagnostics | nu
   const preferences = diagnosticObject(root?.preferences);
   if (!root || !status || !preferences) return null;
   const pairError = diagnosticObject(status.pairError);
+  let compatible: boolean | null;
+  if (status.compatible === true) compatible = true;
+  else if (status.compatible === false) compatible = false;
+  else compatible = null;
   return {
     capturedAt: diagnosticNumber(root.capturedAt),
     status: {
@@ -868,7 +876,7 @@ function sanitiseCompanionDiagnostics(value: unknown): CompanionDiagnostics | nu
       disconnected: status.disconnected === true,
       pending: diagnosticNumber(status.pending, 1_000_000),
       pendingCommandAcks: diagnosticNumber(status.pendingCommandAcks, 1_000_000),
-      compatible: status.compatible === true ? true : status.compatible === false ? false : null,
+      compatible,
       appVersion: diagnosticString(status.appVersion, 32),
       appProtocol: diagnosticNullableNumber(status.appProtocol),
       extensionVersion: diagnosticString(status.extensionVersion, 32),
@@ -1834,14 +1842,26 @@ export async function sessionControlsFor(sessionId: string): Promise<SessionCont
   const live = liveConversations().find(entry => entry.conversationId === id && entry.sessionId === sessionId);
   const activityExpiry = sessionActivityExpiresAt(session);
   const stopping = commands.some(c => c.spec.type === 'stop' && c.spec.sessionId === sessionId && c.spec.turnId === session.activeTurnId);
-  const activeTurnId = session.browserRecoveryDismissedAt === undefined && session.activeTurnId &&
-    (stopping || runningToolCalls(id) > 0 || (activityExpiry === undefined ? live?.activeTurnId === session.activeTurnId : activityExpiry !== null && activityExpiry > Date.now())) ? session.activeTurnId : null;
+  let activeTurnId: string | null = null;
+  if (session.browserRecoveryDismissedAt === undefined && session.activeTurnId) {
+    let activityCurrent: boolean;
+    if (stopping) activityCurrent = true;
+    else if (runningToolCalls(id) > 0) activityCurrent = true;
+    else if (activityExpiry === undefined) activityCurrent = live?.activeTurnId === session.activeTurnId;
+    else activityCurrent = activityExpiry !== null && activityExpiry > Date.now();
+    if (activityCurrent) activeTurnId = session.activeTurnId;
+  }
   const finishHeld = !blocked && await sessionFinishHeld(sessionId, activeTurnId, id);
   const draft = goalViewFor(id) ?? goalOutcomeFor(id);
   const inputPolicy = await sessionInputPolicy(sessionId, sessionInputActivity(session));
   const plan = await readSessionPlan(sessionId);
   const finishWaiting = await sessionFinishWaiting(sessionId, activeTurnId, id);
   const recovery = await sessionRecoveryCountdowns(sessionId, id);
+  let automation: 'goal' | 'loop' | 'off';
+  if (goalArmedFor(id) && !blocked) {
+    if (control.enabled) automation = control.mode;
+    else automation = 'goal';
+  } else automation = 'off';
   return { sessionId, plan, conversationId: id, activeTurnId, finishHeld,
     recovery,
     queueAtFinish: !blocked && inputPolicy.queueAtFinish, canInject: !blocked && inputPolicy.canInject,
@@ -1856,7 +1876,7 @@ export async function sessionControlsFor(sessionId: string): Promise<SessionCont
     loopAfterTurn: control.afterTurn,
     proLoopDelivery: control.enabled && getConfig().ui.finishTool === true && session.selectedModel?.conversationId === id &&
       supportsFinishAutomation(control.mode, session.selectedModel.model, session.selectedModel.reasoningEffort),
-    automation: goalArmedFor(id) && !blocked ? control.enabled ? control.mode : 'goal' : 'off',
+    automation,
     blocked, job: resumeJobFor(sessionId) };
 }
 /** One absolute budget includes opening an absent tab and native hydration. */
@@ -1961,7 +1981,10 @@ async function saveConversationObjective(id: string, text: string, named: 'goal'
   if (named) {
     const held = goalSwitchFor(id);
     const on = text.trim().length > 0;
-    const which = on ? named : held.enabled ? held.mode : named;
+    let which: 'goal' | 'loop' | null;
+    if (on) which = named;
+    else if (held.enabled) which = held.mode;
+    else which = named;
     await assertCurrent();
     try { chatSwitch = await setGoalSwitchNow(id, which, on); }
     catch { throw new Error('goal_switch_not_durable'); }
@@ -2319,7 +2342,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const tunnelId = typeof body.tunnelId === 'string' && /^tunnel_[a-zA-Z0-9]{8,80}$/.test(body.tunnelId) ? body.tunnelId : undefined;
     const ownsTunnel = (surface: PluginSurface, id: string) => {
       const tunnel = getConfig().tunnel;
-      return (surface === 'core' ? tunnel.tunnelId : surface === 'desktop' ? tunnel.desktopTunnelId : tunnel.pluginsTunnelId) === id;
+      let expected: string | undefined;
+      if (surface === 'core') expected = tunnel.tunnelId;
+      else if (surface === 'desktop') expected = tunnel.desktopTunnelId;
+      else expected = tunnel.pluginsTunnelId;
+      return expected === id;
     };
     if (body.action === 'fail' && typeof body.error === 'string') ok = await failPluginRefresh({ id: body.id, error: body.error.slice(0, 200) });
     else if (typeof body.appId === 'string' && /^asdk_app_[a-zA-Z0-9_-]{1,160}$/.test(body.appId)) {
@@ -2863,8 +2890,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const fields = body as Record<string, unknown>;
     if (Object.keys(fields).some(key => !['conversationId', 'text'].includes(key))) return json(res, 400, { error: 'bad_request' }, origin);
     const id = conversationId(fields.conversationId);
-    const text = fields.text === null ? null
-      : typeof fields.text === 'string' && fields.text.length > 0 && fields.text.length <= MAX_LIVE_PREVIEW_CHARS ? fields.text : undefined;
+    let text: string | null | undefined;
+    if (fields.text === null) text = null;
+    else if (typeof fields.text === 'string' && fields.text.length > 0 && fields.text.length <= MAX_LIVE_PREVIEW_CHARS) text = fields.text;
+    else text = undefined;
     if (!id || text === undefined) return json(res, 400, { error: 'bad_request' }, origin);
     setLivePreview(id, text);
     return json(res, 200, { ok: true }, origin);
@@ -4091,7 +4120,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         origin
       );
     }
-    const which = goal === null ? loop === null ? null : 'loop' : 'goal';
+    let which: 'goal' | 'loop' | null;
+    if (goal === null) {
+      if (loop === null) which = null;
+      else which = 'loop';
+    } else which = 'goal';
     // Which switch this request is actually turning. A composer always knows its own chat, so
     // a switch it sends is that chat's: the sheet is drawn beside one conversation and the
     // person flipping it is answering about that conversation, not about every chat they have
@@ -4116,7 +4149,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         goal: scoped ? config.goal : applyGoalSwitch(config.goal, which, goal ?? loop)
       };
     });
-    const chatSwitch = scoped
+    const chatSwitch = scoped && which !== null
       ? await setGoalSwitchNow(settingsConversation, which, (goal ?? loop) as boolean)
       : null;
     if (auto === false) {
@@ -4156,11 +4189,26 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
     // The app's own settings screen is showing these two switches as well.
     changed();
+    let autoText = '';
+    if (auto !== null) {
+      if (auto) autoText = 'automatic compaction on';
+      else autoText = 'automatic compaction off';
+    }
+    let goalText = '';
+    if (goal !== null) {
+      if (goal) goalText = 'Goal on';
+      else goalText = 'Goal off';
+    }
+    let loopText = '';
+    if (loop !== null) {
+      if (loop) loopText = 'Loop on';
+      else loopText = 'Loop off';
+    }
     logInfo(
       `bridge: browser set ${[
-        auto === null ? '' : ("automatic compaction " + (auto ? 'on' : 'off')),
-        goal === null ? '' : ("Goal " + (goal ? 'on' : 'off')),
-        loop === null ? '' : ("Loop " + (loop ? 'on' : 'off'))
+        autoText,
+        goalText,
+        loopText
       ]
         .filter(Boolean)
         .join(' and ')}${scoped ? (" for chat " + settingsConversation) : ''}`
@@ -4520,11 +4568,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
             completedAt: Date.now()
           };
         } else {
-          const why = wrongChat
-            ? 'the page that was opened for it was showing a different conversation'
-            : staleRun
-              ? 'the worker run that owns this chat has ended'
-              : 'it was no longer waiting to be woken by the time the browser answered';
+          let why: string;
+          if (wrongChat) why = 'the page that was opened for it was showing a different conversation';
+          else if (staleRun) why = 'the worker run that owns this chat has ended';
+          else why = 'it was no longer waiting to be woken by the time the browser answered';
           // Only the first two are this revival's to undo. A worker that stopped waking on its
           // own has already been put somewhere by whatever did that, and failWorkerRevival()
           // ignores anything that is not still `waking`, so this cannot invent a failure.
@@ -5883,16 +5930,12 @@ export function resumeJobFor(sessionId: string): ResumeJobView | null {
   const entry = (token ? continuationByToken(token) : null) ?? continuationForSession(sessionId);
   if (!entry) return null;
   const command = commands.find((cmd) => cmd.spec.type === 'resume' && cmd.spec.sessionId === sessionId);
-  const stage: ResumeStage =
-    entry.state === 'committed'
-      ? 'done'
-      : entry.state === 'aborted'
-        ? 'failed'
-        : entry.state === 'awaiting-summary'
-          ? 'handoff-pending'
-          : command && !isLeased(command) && !openInBrowser
-            ? 'waiting-for-browser'
-            : 'opening';
+  let stage: ResumeStage;
+  if (entry.state === 'committed') stage = 'done';
+  else if (entry.state === 'aborted') stage = 'failed';
+  else if (entry.state === 'awaiting-summary') stage = 'handoff-pending';
+  else if (command && !isLeased(command) && !openInBrowser) stage = 'waiting-for-browser';
+  else stage = 'opening';
   return {
     sessionId,
     token: entry.token,
@@ -6539,8 +6582,12 @@ function grantActivity(conversationId: string, sessionId: string, at = Date.now(
   // Carried the same way as `mcpBacked`: a renewal on the same turn must not lose the fact that
   // this is a thinking turn, or the window would snap back to two minutes mid-thought.
   const deliberate = ownership.deliberate || (previous?.sessionId === sessionId && previous.turnId === ownership.turnId && previous.deliberate);
+  let silenceWindow: number;
+  if (ownership.model === 'pro') silenceWindow = PRO_SILENCE_MS;
+  else if (deliberate) silenceWindow = DELIBERATE_SILENCE_MS;
+  else silenceWindow = window;
   activeUntil.set(conversationId, { sessionId, evidenceAt,
-    until: evidenceAt + (ownership.model === 'pro' ? PRO_SILENCE_MS : deliberate ? DELIBERATE_SILENCE_MS : window),
+    until: evidenceAt + silenceWindow,
     turnId: ownership.turnId, model: ownership.model,
     ...(mcpBacked ? { mcpBacked: true } : {}), ...(deliberate ? { deliberate: true as const } : {}) });
   awaitingReturn.delete(conversationId);
@@ -6692,8 +6739,10 @@ async function silenceContinuationAllowed(conversationId: string, sessionId?: st
   // outbox. Only a deliberate activation can still collect a retained Off source.
   if (pending && !pending.explicitActivation) return false;
   if (pending?.silencePro && !loopAfterTurnFor(conversationId)) return false;
-  const sourceTurnId = pending ? pending.silenceSourceTurnId :
-    grant?.sessionId === session.id && (grant.model !== 'pro' || loopAfterTurnFor(conversationId)) ? grant.turnId : null;
+  let sourceTurnId: string | null | undefined;
+  if (pending) sourceTurnId = pending.silenceSourceTurnId;
+  else if (grant?.sessionId === session.id && (grant.model !== 'pro' || loopAfterTurnFor(conversationId))) sourceTurnId = grant.turnId;
+  else sourceTurnId = null;
   if (!sourceTurnId) return false;
   const starts = await readRecentEvents(session.id, 1, { kinds: ['turn_start'] });
   const start = starts[0];
@@ -6958,9 +7007,14 @@ async function restoreReturnedPageActivity(conversationId: string, sessionId: st
   if (session?.conversationId !== conversationId || session.browserRecoveryDismissedAt !== undefined ||
       !session.activeTurnId || session.lastToolCallAt === null || activeUntil.has(conversationId)) return;
   const selected = session.selectedModel;
+  let model: 'pro' | 'other' | 'unknown';
+  if (selected?.conversationId === conversationId) {
+    if (isProModel(selected.model, selected.reasoningEffort)) model = 'pro';
+    else model = 'other';
+  } else model = 'unknown';
   const grant: ActivityGrant = { sessionId, turnId: session.activeTurnId,
     evidenceAt: session.lastToolCallAt, until: session.lastToolCallAt,
-    model: selected?.conversationId === conversationId ? isProModel(selected.model, selected.reasoningEffort) ? 'pro' : 'other' : 'unknown',
+    model,
     ...(selected?.conversationId === conversationId && isDeliberateEffort(selected.reasoningEffort) ? { deliberate: true as const } : {}),
     mcpBacked: true };
   if (!await silenceSourceCurrent(conversationId, grant) || activeUntil.has(conversationId)) return;
@@ -7067,11 +7121,16 @@ export function unattributedRepairEta(now = Date.now(), requestId?: string | nul
       incident.lastUnknownStartedAt > incident.firstAttemptAt));
   // A request-specific budget cannot borrow another incident's ETA or become fresh again.
   if (known && !eligible(known)) return null;
-  const pending = known ? [known] : requestId ? [] : [...unattributedIncidents.values()].filter(eligible);
+  let pending: UnattributedIncident[];
+  if (known) pending = [known];
+  else if (requestId) pending = [];
+  else pending = [...unattributedIncidents.values()].filter(eligible);
   if (pending.length) return Math.max(0, Math.ceil((Math.min(...pending.map(incident =>
     incident.pass === 0 ? incident.firstDueAt : incident.startedAt + UNATTRIBUTED_FINAL_WINDOW_MS)) - now) / 1000));
   const count = pendingSuspects(null).length;
-  return count ? (count === 1 ? UNATTRIBUTED_SINGLE_WINDOW_MS : UNATTRIBUTED_FIRST_WINDOW_MS) / 1000 : null;
+  if (!count) return null;
+  if (count === 1) return UNATTRIBUTED_SINGLE_WINDOW_MS / 1000;
+  return UNATTRIBUTED_FIRST_WINDOW_MS / 1000;
 }
 
 /** Project the actual owners; reading controls cannot file, extend or spend recovery. */
@@ -7106,10 +7165,14 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
       attempts: recovery.pickupRecovery?.attempts ?? BROWSER_PICKUP_MAX_ATTEMPTS, next: 'continue' }];
     const wait = recovery.silenceBoundary.listenUntil ?? 0;
     const pickup = pickupWatch.get(conversationId);
-    result.push(wait > Date.now() || !pickup ? {
-      kind: recovery.silenceBoundary.nativeBusy ? 'native-busy' : 'post-reload',
-      deadline: wait || Date.now(), next: 'continue'
-    } : { kind: 'pickup', deadline: pickup.dueAt, visibleAt: pickup.dueAt - 30_000, next: 'continue' });
+    if (wait > Date.now() || !pickup) {
+      let kind: 'native-busy' | 'post-reload';
+      if (recovery.silenceBoundary.nativeBusy) kind = 'native-busy';
+      else kind = 'post-reload';
+      result.push({ kind, deadline: wait || Date.now(), next: 'continue' });
+    } else {
+      result.push({ kind: 'pickup', deadline: pickup.dueAt, visibleAt: pickup.dueAt - 30_000, next: 'continue' });
+    }
     return result;
   }
   if (stoppedQueued) {
@@ -7184,11 +7247,19 @@ async function sessionRecoveryCountdowns(sessionId: string, conversationId: stri
     repairsInFlight.get(conversationId)?.state === 'done' ? grant.until : undefined;
   const deadline = queued?.silenceBoundary?.listenUntil ?? goalDeadline ?? failedDeadline ?? postReloadDeadline;
   const thinkingFailed = boundary?.kind === 'turn_end' && boundary.reason === 'thinking_failed';
-  const next = queuedAfterTurn ? 'queue' : goalDeadline ? goalModeFor(conversationId) : undefined;
-  if (deadline) result.push({ kind: !queued?.silenceBoundary?.nativeBusy && deadline === reloadDeadline ? 'post-reload' :
-    queued?.silenceBoundary?.nativeBusy || !thinkingFailed ? 'native-busy' : 'thinking-failed', deadline,
+  let next: 'queue' | 'goal' | 'loop' | undefined;
+  if (queuedAfterTurn) next = 'queue';
+  else if (goalDeadline) next = goalModeFor(conversationId);
+  else next = undefined;
+  if (deadline) {
+    let kind: 'post-reload' | 'native-busy' | 'thinking-failed';
+    if (!queued?.silenceBoundary?.nativeBusy && deadline === reloadDeadline) kind = 'post-reload';
+    else if (queued?.silenceBoundary?.nativeBusy || !thinkingFailed) kind = 'native-busy';
+    else kind = 'thinking-failed';
+    result.push({ kind, deadline,
     ...(postReloadDeadline && !queued?.silenceBoundary?.nativeBusy && deadline === reloadDeadline &&
       session.activeTurnId === source ? { generating: true as const } : {}), ...(next ? { next } : {}) });
+  }
   return result;
 }
 
@@ -7685,9 +7756,11 @@ async function noteRecoveryObservations(
     repaired?.reason === 'silence' && repaired.sessionId === sessionId &&
     (repaired.silenceGrant?.turnId ?? repaired.progress?.turnId) === ended.turnId ? repaired : null;
   const selected = recorded?.selectedModel;
-  const provenModel = selected?.conversationId === conversationId
-    ? isProModel(selected.model, selected.reasoningEffort) ? 'pro' as const : 'other' as const
-    : 'unknown' as const;
+  let provenModel: 'pro' | 'other' | 'unknown';
+  if (selected?.conversationId === conversationId) {
+    if (isProModel(selected.model, selected.reasoningEffort)) provenModel = 'pro';
+    else provenModel = 'other';
+  } else provenModel = 'unknown';
   const provenDeliberate: { deliberate?: true } =
     selected?.conversationId === conversationId && isDeliberateEffort(selected.reasoningEffort) ? { deliberate: true } : {};
   const unresolved = activeUntil.get(conversationId);
@@ -7730,11 +7803,17 @@ async function noteRecoveryObservations(
       for (const item of observations) {
         if (item.kind === 'model_selection') selection = item;
         if (item.kind === 'turn_start' && item.turnId === liveTurn && previous?.turnId !== item.turnId) {
-          turn = { turnId: item.turnId ?? null, model: selection?.kind === 'model_selection' && selection.model ?
-            isProModel(selection.model, selection.reasoningEffort) ? 'pro' : 'other' : provenModel,
-            ...(selection?.kind === 'model_selection' && selection.model
-              ? isDeliberateEffort(selection.reasoningEffort) ? { deliberate: true as const } : {}
-              : provenDeliberate) };
+          let turnModel: 'pro' | 'other' | 'unknown';
+          if (selection?.kind === 'model_selection' && selection.model) {
+            if (isProModel(selection.model, selection.reasoningEffort)) turnModel = 'pro';
+            else turnModel = 'other';
+          } else turnModel = provenModel;
+          let turnExtra: { deliberate: true } | { deliberate?: true };
+          if (selection?.kind === 'model_selection' && selection.model) {
+            if (isDeliberateEffort(selection.reasoningEffort)) turnExtra = { deliberate: true as const };
+            else turnExtra = {};
+          } else turnExtra = provenDeliberate;
+          turn = { turnId: item.turnId ?? null, model: turnModel, ...turnExtra };
         }
         // A batch-local selection applies to its next start. Later starts reuse
         // the retained session selection, just as separate transport batches do.
@@ -7927,7 +8006,11 @@ async function noteRecoveryObservations(
  * lists cross the wire into status replies and incident keys, so they must not depend
  * on the process locale the way `localeCompare` does.
  */
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+const byCodeUnit = (a: string, b: string): number => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
 
 /** A waking worker owns pending browser delivery. Ordinary broker active is not page activity. */
 function nonDiscardableAgentConversations(): string[] {
@@ -7969,9 +8052,10 @@ function noteFiberHealth(conversationId: string, raw: string | null, now = Date.
     if (now - seen.since < FIBER_HEALTH_GRACE_MS || seen.announced === raw) return;
     seen.announced = raw;
   }
-  const detail = raw === 'absent' ? 'no answer after the helper repair attempt'
-    : raw === 'empty' ? 'the helper answered without readable turns; the page may still be loading'
-    : 'the helper answered with readable turns';
+  let detail: string;
+  if (raw === 'absent') detail = 'no answer after the helper repair attempt';
+  else if (raw === 'empty') detail = 'the helper answered without readable turns; the page may still be loading';
+  else detail = 'the helper answered with readable turns';
   const message = `bridge: ${conversationId} reports its page-model helper as ${raw}: ${detail}`;
   if (raw === 'absent') logWarn(message);
   else logInfo(message);
@@ -8481,8 +8565,10 @@ async function owedPickups(now: number): Promise<Map<string, OwedPickup>> {
     const sameGoalSource = goalPending && goalSource === input.sourceTurnId ? goalPending : null;
     const priorAttempts = Math.max(prior?.pickupAttempts ?? 0, sameGoalSource?.pickupAttempts ?? 0);
     const attempts = Math.max(input.pickupAttempts, priorAttempts);
-    const newestBudget = input.pickupAttempts >= priorAttempts ? input
-      : sameGoalSource?.pickupAttempts === priorAttempts ? sameGoalSource : prior;
+    let newestBudget: { pickupNextAt?: number } | null | undefined;
+    if (input.pickupAttempts >= priorAttempts) newestBudget = input;
+    else if (sameGoalSource?.pickupAttempts === priorAttempts) newestBudget = sameGoalSource;
+    else newestBudget = prior;
     owed.set(input.conversationId, { ...input, replyId: input.sourceTurnId, inputId: input.inputId, queued: true,
       acceptedAt: Math.min(input.acceptedAt, prior?.acceptedAt ?? sameGoalSource?.acceptedAt ?? input.acceptedAt),
       pickupAttempts: attempts, pickupNextAt: newestBudget?.pickupNextAt,
@@ -8554,11 +8640,10 @@ async function inspectOwedPickups(now: number): Promise<boolean> {
     const nextAttempts = watch.attempts + 1;
     const nextAt = nextAttempts < BROWSER_PICKUP_MAX_ATTEMPTS
       ? now + PICKUP_BACKOFF_MS[nextAttempts]! : undefined;
-    const reserved = reply.queued && reply.inputId
-      ? await recordQueuedPickupAttemptNow(reply.inputId, reply.replyId, now, nextAt, sharedState)
-      : !reply.queued && reply.goalReplyId
-        ? await recordGoalPickupAttemptNow(reply.conversationId, reply.goalReplyId, now, nextAt)
-        : null;
+    let reserved: { attempts: number; nextAt?: number; stoppedAt?: number } | null;
+    if (reply.queued && reply.inputId) reserved = await recordQueuedPickupAttemptNow(reply.inputId, reply.replyId, now, nextAt, sharedState);
+    else if (!reply.queued && reply.goalReplyId) reserved = await recordGoalPickupAttemptNow(reply.conversationId, reply.goalReplyId, now, nextAt);
+    else reserved = null;
     if (!reserved) continue;
     watch.attempts = reserved.attempts;
     watch.dueAt = reserved.nextAt ?? reserved.stoppedAt ?? now;
@@ -8605,7 +8690,11 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
       // The clock starts when the phase did, not when this sweep noticed: the ticket's opening
       // for asking, the durable dispatch stamp for writing. The brief's landing has no stamp
       // of its own, and at a quarter-hour cadence the sweep's half-minute lag does not matter.
-      const since = Math.max(compactionWatchFloor, phase === 'asking' ? entry.openedAt : phase === 'writing' ? (entry.askedAt ?? now) : now);
+      let phaseStart: number;
+      if (phase === 'asking') phaseStart = entry.openedAt;
+      else if (phase === 'writing') phaseStart = entry.askedAt ?? now;
+      else phaseStart = now;
+      const since = Math.max(compactionWatchFloor, phaseStart);
       watch = { token: entry.token, phase, attempts: 0, nextAt: since + COMPACTION_PICKUPS[phase].every };
       compactionWatch.set(entry.from, watch);
     }
@@ -8930,7 +9019,11 @@ function noteCallAttribution(
     // when Chrome, the tab or a reload destroyed the page's local turn projection.
     const sourceTurnId = filedSession?.activeTurnId ?? previous?.turnId ??
       goalPendingReplyFor(conversationId)?.silenceSourceTurnId ?? filedSession?.finishTurn?.turnId ?? null;
-    grantActivity(conversationId, sessionId, continuingMcp ? Date.now() : pro ? Math.min(Date.now(), startedAt) : Date.now(), CHAT_SILENCE_MS,
+    let grantAt: number;
+    if (continuingMcp) grantAt = Date.now();
+    else if (pro) grantAt = Math.min(Date.now(), startedAt);
+    else grantAt = Date.now();
+    grantActivity(conversationId, sessionId, grantAt, CHAT_SILENCE_MS,
       { turnId: sourceTurnId, model: pro ? 'pro' : previous?.model ?? 'unknown', mcpBacked: true });
     // Exact calls are visible work even without a page. They cannot turn that
     // display into a worker wake, browser repair or continuation after departure.
@@ -9326,10 +9419,14 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'r
         if (repair.assistantSource) turnRepairSpent.set(conversationId,
           { sessionId: repair.sessionId, turnKey: repair.assistantSource.key, token: repair.token, at: Date.now() });
       }
+      let actionWord: string;
+      if (action === 'reopened') actionWord = 'Reopened';
+      else if (action === 'resumed') actionWord = 'Resumed';
+      else actionWord = 'Reloaded';
       await updateRepairProgress(
         conversationId,
         repair,
-        `${action === 'reopened' ? 'Reopened' : action === 'resumed' ? 'Resumed' : 'Reloaded'} chat to ${repairPurpose(repair).to}.`
+        `${actionWord} chat to ${repairPurpose(repair).to}.`
       );
       return;
     }
@@ -9431,16 +9528,32 @@ async function failRepairAttempt(
         logInfo(`bridge: ChatGPT is answering again in ${conversationId}; the ${repair.reason} repair waits until it finishes`);
     } else {
       const exact = why === 'changed' ? repairChangeDetail(changeDetail) : null;
-      const detail = why && Object.hasOwn(REPAIR_FAIL_REASONS, why) ? `: ${REPAIR_FAIL_REASONS[why]}${exact ? (" — " + exact) : ''}` : '';
+      let detail: string;
+      if (why && Object.hasOwn(REPAIR_FAIL_REASONS, why)) {
+        if (exact) detail = `: ${REPAIR_FAIL_REASONS[why]} — ${exact}`;
+        else detail = `: ${REPAIR_FAIL_REASONS[why]}`;
+      } else detail = '';
       logWarn(`bridge: the browser reported failed ${repair.reason} recovery for ${conversationId} (${action ?? 'action unspecified'}${detail})`);
     }
     repair.awaitingStream = streaming;
+    let progressText: string;
+    if (streaming) {
+      if (repair.attribution) progressText = 'Not reloaded: ChatGPT is answering.';
+      else progressText = 'ChatGPT is answering again; recovery waits until it finishes.';
+    } else {
+      let actionWord: string;
+      if (action === 'reopened') actionWord = 'Reopen';
+      else if (action === 'resumed') actionWord = 'Resume';
+      else actionWord = 'Reload';
+      let retrySuffix: string;
+      if (repair.attribution) retrySuffix = '.';
+      else retrySuffix = '; will retry.';
+      progressText = `${actionWord} failed while ${repairPurpose(repair).during}${retrySuffix}`;
+    }
     await updateRepairProgress(
       conversationId,
       repair,
-      streaming
-        ? repair.attribution ? 'Not reloaded: ChatGPT is answering.' : 'ChatGPT is answering again; recovery waits until it finishes.'
-        : `${action === 'reopened' ? 'Reopen' : action === 'resumed' ? 'Resume' : 'Reload'} failed while ${repairPurpose(repair).during}${repair.attribution ? '.' : '; will retry.'}`
+      progressText
     );
     if (repairsInFlight.get(conversationId) !== repair) return;
     if (repair.reason === 'assistant-error' && turnRepairSpent.get(conversationId)?.token === token)
@@ -9967,11 +10080,11 @@ function describe(command: Command, client: string | null, claimedSummary?: stri
   if (spec.type === 'stop') return { id: command.id, expiresAt, kind: 'stop-turn', type: 'stop', text: '', agent: null, model: null, reasoningEffort: null, conversationId: spec.conversationId, turnId: spec.turnId, ...(spec.userMessageId ? { userMessageId: spec.userMessageId } : {}) };
   // A resume's claim is persisted by /commands/redeem before this renderer is called. A
   // command shown to app/UI code without a browser document still carries no brief at all.
-  const text = spec.type === 'resume'
-    ? client && claimedSummary !== undefined
-      ? bootstrapText(spec, claimedSummary)
-      : ''
-    : bootstrapText(spec, '');
+  let text: string;
+  if (spec.type === 'resume') {
+    if (client && claimedSummary !== undefined) text = bootstrapText(spec, claimedSummary);
+    else text = '';
+  } else text = bootstrapText(spec, '');
   return {
     id: command.id,
     expiresAt,
