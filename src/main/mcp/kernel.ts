@@ -380,7 +380,7 @@ export async function guard(name: string, fn: () => Promise<ToolResult>): Promis
       // A rejected edit, disabled permission, stale cursor, etc. is a normal tool
       // outcome, not evidence that the connector itself is unhealthy.
       noteOutcomeSafely('tool_rejected');
-      logInfo(`tool ${name} rejected in ${elapsed} ms${summary ? `: ${summary}` : ''}`);
+      logInfo(`tool ${name} rejected in ${elapsed} ms${summary ? (": " + summary) : ''}`);
     } else {
       noteOutcomeSafely('ok');
       logInfo(`tool ${name} ok in ${elapsed} ms`);
@@ -599,7 +599,7 @@ function withInbox(
   const lines = messages
     .map((message) => {
       const route = message.fromRunId
-        ? ` [source_run_id=${message.fromRunId}]${message.runId ? ` [received_on_run_id=${message.runId}]` : ''}`
+        ? ` [source_run_id=${message.fromRunId}]${message.runId ? (" [received_on_run_id=" + message.runId + "]") : ''}`
         : message.runId
           ? ` [run_id=${message.runId}]`
           : '';

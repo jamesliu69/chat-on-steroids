@@ -1725,7 +1725,7 @@ function usableDefaults(
   } else if (resolved && resolved.id !== model && !resolved.aliases?.includes(model!)) model = resolved.id;
   const offered = model ? (resolved ? [resolved] : models.filter(choice => choice.id === model || choice.aliases?.includes(model))) : models;
   if (defaultEffort && effort && !offered.some(choice => choice.efforts.includes(effort!))) {
-    notes.add(`The default worker reasoning "${effort}" saved in Settings is not offered${model ? ` for model "${model}"` : ''} by this ChatGPT account, so workers use ChatGPT's current reasoning. Choose an available level in Settings → Agents & automation.`);
+    notes.add(`The default worker reasoning "${effort}" saved in Settings is not offered${model ? (" for model \"" + model + "\"") : ''} by this ChatGPT account, so workers use ChatGPT's current reasoning. Choose an available level in Settings → Agents & automation.`);
     effort = null;
   }
   if (notes.size) refreshForUnoffered(`default worker ${[...notes].join(',')}`);
@@ -1742,7 +1742,7 @@ function validateWorkerModel(index: number, model: string | null, effort: Reason
     throw new AgentError(`Worker ${index + 1}'s model "${model}" is ${choices.length ? 'ambiguous' : 'not observed'} in the ChatGPT account. Observed model ids and reasoning: ${available}`);
   }
   if (effort && !choices.some(choice => choice.efforts.includes(effort))) {
-    throw new AgentError(`Worker ${index + 1}'s reasoning_effort "${effort}" is not observed${model ? ` for model "${model}"` : ' in the ChatGPT account'}. Observed model ids and reasoning: ${available}`);
+    throw new AgentError(`Worker ${index + 1}'s reasoning_effort "${effort}" is not observed${model ? (" for model \"" + model + "\"") : ' in the ChatGPT account'}. Observed model ids and reasoning: ${available}`);
   }
   // Keep provider aliases exact: reducing a lane-specific slug to its family without an
   // explicit effort can change the requested lane. The native picker still proves the pair.
@@ -3290,7 +3290,7 @@ function planRevivalText(agent: Agent): { text: string; messageIds: string[] } {
     (body || 'The prime agent has more work for you; check your inbox on the next tool result.') +
     `\n\n(Chat On Steroids: you are still ${agent.info.id} in the same run, and this is the prime agent talking to ` +
     'you again in the chat you already know. Pick up from what you did here before rather than starting over. ' +
-    `Report with ${ownCoreHint() ? `the agents tool${ownCoreHint()}: ` : 'agents '}action=message to="prime" as you go and action=finish when this piece is done.)`;
+    `Report with ${ownCoreHint() ? ("the agents tool" + ownCoreHint() + ": ") : 'agents '}action=message to="prime" as you go and action=finish when this piece is done.)`;
   return { text, messageIds: waiting.map((message) => message.id) };
 }
 
@@ -3506,7 +3506,7 @@ function finishStoppedWorkerAtCeiling(agent: Agent, reason: string, sleptAt = Da
       ? ` ${neverOffered.length} queued message${neverOffered.length === 1 ? '' : 's'} could not be delivered before that limit` +
         ` (${neverOffered
           .slice(0, 3)
-          .map((message) => `“${message.text.slice(0, 180)}”`)
+          .map((message) => ("“" + message.text.slice(0, 180) + "”"))
           .join(', ')}${neverOffered.length > 3 ? ', …' : ''}). Those instructions are no longer queued.`
       : '';
   const report = newMessage(
@@ -3956,7 +3956,7 @@ export function endedWorkerNotice(conversationId: string | null | undefined): st
   if (!agent || agent.info.role !== 'worker' || !isOver(agent.info.state) || agent.info.revivable) return null;
   return (
     `WORKER_ENDED: ${agent.info.id} has already ${agent.info.state === 'finished' ? 'finished' : 'ended'} in this run` +
-    `${agent.info.result ? ` (${agent.info.result.slice(0, 200)})` : ''}. Nothing was run. Stop working and stop ` +
+    `${agent.info.result ? (" (" + agent.info.result.slice(0, 200) + ")") : ''}. Nothing was run. Stop working and stop ` +
     'calling tools: the prime agent is not waiting for anything else from this chat, and anything you do here now is ' +
     'work nobody asked for.'
   );
@@ -5026,7 +5026,7 @@ export function restoreSwarm(snapshot: SwarmSnapshot | null): void {
   const activeAgents = [...runs.values()].flatMap(r => [...r.agents.values()]);
   const pending = activeAgents.reduce((sum, agent) => sum + agent.info.pending, 0);
   logInfo(
-    `multi-agent: restored ${restoredActiveIds.length ? `active runs ${restoredActiveIds.join(', ')}` : 'no active run'} with ${dormantRuns.size} dormant owner histor${dormantRuns.size === 1 ? 'y' : 'ies'} and ${pending} active undelivered message(s)`
+    `multi-agent: restored ${restoredActiveIds.length ? ("active runs " + restoredActiveIds.join(', ')) : 'no active run'} with ${dormantRuns.size} dormant owner histor${dormantRuns.size === 1 ? 'y' : 'ies'} and ${pending} active undelivered message(s)`
   );
 }
 

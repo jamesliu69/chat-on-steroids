@@ -1091,7 +1091,7 @@ export function createFilePanel(options: FilePanelOptions) {
         names.append(el('span', 'file-change-path', change.path));
         const stats = changeStats(change);
         row.append(statusMark, names, stats);
-        row.title = `${gitStatusLabel(change.status)} · ${change.previousPath ? `${change.previousPath} → ` : ''}${change.path} · ${stats.textContent ?? ''}`;
+        row.title = `${gitStatusLabel(change.status)} · ${change.previousPath ? (change.previousPath + " → ") : ''}${change.path} · ${stats.textContent ?? ''}`;
         row.setAttribute('aria-label', row.title);
         row.addEventListener('click', () => void openGitDiff(change));
         section.append(row);

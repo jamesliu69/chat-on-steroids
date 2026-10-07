@@ -47,7 +47,7 @@ export function extractUvFromTar(tar: Buffer): Map<string, Buffer> {
     const header = tar.subarray(offset, offset + 512);
     if (header.every(byte => byte === 0)) break;
     const field = (start: number, length: number) => header.subarray(start, start + length).toString('utf8').replace(/\0.*$/s, '');
-    const name = `${field(345, 155) ? `${field(345, 155)}/` : ''}${field(0, 100)}`;
+    const name = `${field(345, 155) ? (field(345, 155) + "/") : ''}${field(0, 100)}`;
     const size = parseInt(field(124, 12).trim() || '0', 8);
     if (!Number.isSafeInteger(size) || size < 0 || offset + 512 + size > tar.length) throw new Error('The uv archive is malformed');
     const type = String.fromCharCode(header[156] || 48);

@@ -8,7 +8,7 @@ const result = spawnSync('git', ['config', 'core.hooksPath', '.githooks'], {
 
 if (result.status !== 0) {
   const detail = String(result.stderr ?? '').trim();
-  throw new Error(`Could not configure the repository hooks${detail ? `: ${detail}` : ''}`);
+  throw new Error(`Could not configure the repository hooks${detail ? (": " + detail) : ''}`);
 }
 
 console.log('Installed repository Git hooks from .githooks/.');

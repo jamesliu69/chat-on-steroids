@@ -25,7 +25,7 @@ function runGit(args, { allowFailure = false, encoding = 'utf8' } = {}) {
   });
   if (!allowFailure && result.status !== 0) {
     const detail = String(result.stderr ?? '').trim();
-    throw new Error(`git ${args[0] ?? ''} failed${detail ? `: ${detail}` : ''}`);
+    throw new Error(`git ${args[0] ?? ''} failed${detail ? (": " + detail) : ''}`);
   }
   return result;
 }

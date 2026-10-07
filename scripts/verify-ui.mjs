@@ -38,7 +38,7 @@ const noise = /sandbox_extension|task_policy|js2c|XPC error|com\.apple\.|Connect
 const resultLine = /^\s*[{[]/;
 // Windows reports a crash as an NTSTATUS such as 3221225477; in hex (0xC0000005) it can be looked up.
 const exitStatus = code => code === 'timeout' ? 'timed out'
-  : typeof code === 'number' ? `exited with ${code}${code > 0xffff ? ` (0x${(code >>> 0).toString(16).toUpperCase()})` : ''}` : String(code);
+  : typeof code === 'number' ? `exited with ${code}${code > 0xffff ? (" (0x" + (code >>> 0).toString(16).toUpperCase() + ")") : ''}` : String(code);
 const reasonFor = outcome => {
   const lines = outcome.output.split('\n').filter(line => line.trim() && !noise.test(line));
   const reason = lines.filter(line => !resultLine.test(line) && /Error|assert|Timeout|timed out|expected|actual/i.test(line)).slice(0, 6);
@@ -79,5 +79,5 @@ for (const name of scripts) {
   if (!ok || flaky.includes(name)) console.log(reasonFor(ok ? first : outcome));
 }
 const failed = results.filter(result => !result.ok);
-console.log(`\n${results.length - failed.length} of ${results.length} UI checks passed${skip.size ? `, ${[...skip].filter(name => scripts.includes(name)).length} skipped` : ''}.`);
+console.log(`\n${results.length - failed.length} of ${results.length} UI checks passed${skip.size ? (", " + [...skip].filter(name => scripts.includes(name)).length + " skipped") : ''}.`);
 process.exit(failed.length ? 1 : 0);

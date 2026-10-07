@@ -99,7 +99,7 @@ export function icon(name: string, className = 'ico'): HTMLElement {
  */
 export function disclosureChevron(className = ''): SVGSVGElement {
   const node = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  node.setAttribute('class', `disclosure-chevron${className ? ` ${className}` : ''}`);
+  node.setAttribute('class', `disclosure-chevron${className ? (" " + className) : ''}`);
   node.setAttribute('viewBox', '0 0 16 16');
   node.setAttribute('aria-hidden', 'true');
   node.setAttribute('focusable', 'false');

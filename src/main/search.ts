@@ -305,7 +305,7 @@ async function searchWithRipgrep(
     });
     child.once('error', (error) => {
       const code = (error as NodeJS.ErrnoException).code;
-      finish(new Error(`ripgrep could not start${code ? ` (${code})` : ''}`));
+      finish(new Error(`ripgrep could not start${code ? (" (" + code + ")") : ''}`));
     });
     child.once('close', (code) => {
       if (stdout.trim()) consider(stdout.trim());
@@ -313,7 +313,7 @@ async function searchWithRipgrep(
       if (stoppedBecause !== null || code === 0 || code === 1) finish();
       // Never surface rg's raw stderr here. For an exact file it can echo the hidden native
       // approved-root path after a rename/ACL race; the model only needs the backend verdict.
-      else finish(new Error(`ripgrep search failed${code === null ? '' : ` (exit ${code})`}`));
+      else finish(new Error(`ripgrep search failed${code === null ? '' : (" (exit " + code + ")")}`));
     });
     const timer = setTimeout(() => {
       if (stoppedBecause === null) stoppedBecause = 'time';

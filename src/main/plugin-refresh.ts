@@ -59,7 +59,7 @@ async function rows(): Promise<Row[]> {
 }
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => (JSON.stringify(k) + ":" + canonical(v))).join(',')}}`;
   return JSON.stringify(value);
 }
 const hash = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
@@ -176,7 +176,7 @@ export function pendingPluginRefreshes(): Promise<PluginRefreshRequest[]> {
     }
     if (changed) {
       await writeDurableNow('plugin-refresh', current);
-      logInfo(`plugin refresh pending observed ${current.filter(row => !row.manual && row.completedSchemaId !== row.schemaId).map(row => `surface=${row.surface} schema=${row.schemaId.slice(0, 12)} dueInMs=${Math.max(0, (settling.get(row.surface)?.readyAt ?? 0) - Date.now())}`).join(' ')}`);
+      logInfo(`plugin refresh pending observed ${current.filter(row => !row.manual && row.completedSchemaId !== row.schemaId).map(row => ("surface=" + row.surface + " schema=" + row.schemaId.slice(0, 12) + " dueInMs=" + Math.max(0, (settling.get(row.surface)?.readyAt ?? 0) - Date.now()))).join(' ')}`);
     }
     return current.flatMap(row => {
       const publication = publications.get(row.surface);

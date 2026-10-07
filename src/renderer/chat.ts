@@ -4133,7 +4133,7 @@ function paintTurnNow(): void {
   const seconds = now?.since === undefined ? 0 : Math.max(0, Math.floor((Date.now() - now.since) / 1000));
   // Short steps keep no clock; the one worth watching is the one that lasts.
   turnNowTime.textContent = seconds >= 3
-    ? `${seconds >= 60 ? `${t('{0}m', [Math.floor(seconds / 60)])} ` : ''}${seconds % 60}s` : '';
+    ? `${seconds >= 60 ? (t('{0}m', [Math.floor(seconds / 60)]) + " ") : ''}${seconds % 60}s` : '';
   turnNow.hidden = !text;
 }
 
@@ -4251,7 +4251,7 @@ function paintStateLine(): void {
   const note = $('chatState');
   const { tone, working, ticking } = stateLine();
   ui(note, 'textContent', () => stateLine().text);
-  note.className = `subhead-note${tone ? ` ${tone}` : ''}`;
+  note.className = `subhead-note${tone ? (" " + tone) : ''}`;
   // Running state and timer ownership cannot depend on a translated label.
   note.classList.toggle('is-working', working === true);
   // When the turn's own line is on screen it carries this, and the header does not repeat it. A turn

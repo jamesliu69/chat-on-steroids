@@ -28,7 +28,7 @@ export async function assertCurrentTunnelRelease({
   if (!response.ok) {
     const body = (await response.text()).trim().replaceAll(/\s+/g, ' ').slice(0, 500);
     throw new Error(
-      `OpenAI tunnel-client release lookup failed with HTTP ${response.status}${body ? `: ${body}` : ''}; refusing to publish without proving the pin is current.`
+      `OpenAI tunnel-client release lookup failed with HTTP ${response.status}${body ? (": " + body) : ''}; refusing to publish without proving the pin is current.`
     );
   }
 

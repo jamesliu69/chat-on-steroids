@@ -225,7 +225,7 @@ async function checkLocalServer(url: string): Promise<Check> {
       name: 'Local server',
       status: 'fail',
       ok: false,
-      detail: `tools/list failed: ${listObj?.error?.message ?? `HTTP ${list?.status ?? 0}`}`
+      detail: `tools/list failed: ${listObj?.error?.message ?? ("HTTP " + (list?.status ?? 0))}`
     };
   }
   const names = tools.map((t) => t.name).filter(Boolean);

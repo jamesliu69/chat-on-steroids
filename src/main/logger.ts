@@ -61,7 +61,7 @@ function boundedText(text: string): string {
 }
 
 function formatEntry(entry: LogEntry): string {
-  return `${new Date(entry.time).toISOString()}  ${entry.level.padEnd(5)}  ${entry.agent ? `[${entry.agent}] ` : ''}${entry.message}\n`;
+  return `${new Date(entry.time).toISOString()}  ${entry.level.padEnd(5)}  ${entry.agent ? ("[" + entry.agent + "] ") : ''}${entry.message}\n`;
 }
 
 function startWriter(state: FileMirror): void {

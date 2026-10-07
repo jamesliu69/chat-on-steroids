@@ -84,7 +84,7 @@ export function initSkills(options: Options) {
       remove.addEventListener('click', () => {
         if (owner !== options.owner()) return;
         const retained = split(displayedPrefix).ids.filter(value => value !== id);
-        project(`${retained.map(value => `/${value}\n`).join('')}${input.value}`);
+        project(`${retained.map(value => ("/" + value + "\n")).join('')}${input.value}`);
         input.focus();
       });
       chip.append(icon(command ? 'i-copy' : 'i-skill', 'ico composer-selected-skill-icon'), el('span', 'composer-selected-skill-title', name), remove);
@@ -235,7 +235,7 @@ export function initSkills(options: Options) {
   const removeCommand = (name: string): void => {
     if (prefixOwner !== options.owner()) return;
     const retained = split(displayedPrefix).ids.filter(value => value !== name);
-    project(`${retained.map(value => `/${value}\n`).join('')}${input.value}`);
+    project(`${retained.map(value => ("/" + value + "\n")).join('')}${input.value}`);
   };
   return { close, restore, authoredText, hasCommand, removeCommand, keydown: (event: KeyboardEvent): boolean => {
     if (host.hidden || !current() || composing || event.isComposing) return false;

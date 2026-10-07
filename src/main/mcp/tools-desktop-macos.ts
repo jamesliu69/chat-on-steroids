@@ -589,7 +589,7 @@ export function registerMacOSDesktopTools(reg: SurfaceRegistrar): void {
           const verified = result.verification
             ? `\nVerified ${result.verification.until} in ${result.verification.elapsedMs} ms: ${result.verification.detail}.`
             : '';
-          const done = `Done ${result.completedCount}/${parsed.length} via ${routeSummary}: ${parsed.map((a) => a.type).join(', ')}. ${pointer}${clipboard ? `\n${clipboard}` : ''}${verified}`;
+          const done = `Done ${result.completedCount}/${parsed.length} via ${routeSummary}: ${parsed.map((a) => a.type).join(', ')}. ${pointer}${clipboard ? ("\n" + clipboard) : ''}${verified}`;
           const shot = result.screenshot;
           if (shot) {
             return desktopImageResult(

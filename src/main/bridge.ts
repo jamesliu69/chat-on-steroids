@@ -1192,7 +1192,7 @@ function noteExtensionVersion(req: http.IncomingMessage): void {
     announcedExtensions.delete(key);
     announcedExtensions.set(key, Date.now());
     if (announcedExtensions.size > 16) announcedExtensions.delete(announcedExtensions.keys().next().value!);
-    logInfo(`bridge: browser extension ${extensionVersion} connected${stamp ? ` (build ${stamp})` : ''}`);
+    logInfo(`bridge: browser extension ${extensionVersion} connected${stamp ? (" (build " + stamp + ")") : ''}`);
     // Chrome answers "which manifest did I load" with the version and keeps running whatever
     // service worker it already had, so an extension folder replaced under a live browser
     // reports the new version and runs the old code — and every symptom after that points
@@ -4158,12 +4158,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     changed();
     logInfo(
       `bridge: browser set ${[
-        auto === null ? '' : `automatic compaction ${auto ? 'on' : 'off'}`,
-        goal === null ? '' : `Goal ${goal ? 'on' : 'off'}`,
-        loop === null ? '' : `Loop ${loop ? 'on' : 'off'}`
+        auto === null ? '' : ("automatic compaction " + (auto ? 'on' : 'off')),
+        goal === null ? '' : ("Goal " + (goal ? 'on' : 'off')),
+        loop === null ? '' : ("Loop " + (loop ? 'on' : 'off'))
       ]
         .filter(Boolean)
-        .join(' and ')}${scoped ? ` for chat ${settingsConversation}` : ''}`
+        .join(' and ')}${scoped ? (" for chat " + settingsConversation) : ''}`
     );
     return json(
       res,
@@ -8960,7 +8960,7 @@ function noteCallAttribution(
   if (requestId && requestCorrelation(requestId)) return;
   retireSpentRepairs();
   const opening = repairCandidates().filter(unattributedCandidateCurrent);
-  const key = requestId ?? `headerless:${opening.map(entry => `${entry.sessionId}:${entry.turnId}`).sort(byCodeUnit).join(',')}`;
+  const key = requestId ?? `headerless:${opening.map(entry => (entry.sessionId + ":" + entry.turnId)).sort(byCodeUnit).join(',')}`;
   const heldIncident = unattributedIncidents.get(key);
   if (heldIncident) {
     heldIncident.lastUnknownStartedAt = Math.max(heldIncident.lastUnknownStartedAt, startedAt);
@@ -9412,7 +9412,7 @@ function repairChangeDetail(detail: string | null): string | null {
   const progress = /^changed-progress(?::(.+))?$/.exec(detail);
   if (!progress) return null;
   const source = progress[1] && Object.hasOwn(REPAIR_PROGRESS_SOURCES, progress[1]) ? REPAIR_PROGRESS_SOURCES[progress[1]] : null;
-  return `the answer made progress${source ? ` (${source})` : ''}`;
+  return `the answer made progress${source ? (" (" + source + ")") : ''}`;
 }
 
 async function failRepairAttempt(
@@ -9431,7 +9431,7 @@ async function failRepairAttempt(
         logInfo(`bridge: ChatGPT is answering again in ${conversationId}; the ${repair.reason} repair waits until it finishes`);
     } else {
       const exact = why === 'changed' ? repairChangeDetail(changeDetail) : null;
-      const detail = why && Object.hasOwn(REPAIR_FAIL_REASONS, why) ? `: ${REPAIR_FAIL_REASONS[why]}${exact ? ` — ${exact}` : ''}` : '';
+      const detail = why && Object.hasOwn(REPAIR_FAIL_REASONS, why) ? `: ${REPAIR_FAIL_REASONS[why]}${exact ? (" — " + exact) : ''}` : '';
       logWarn(`bridge: the browser reported failed ${repair.reason} recovery for ${conversationId} (${action ?? 'action unspecified'}${detail})`);
     }
     repair.awaitingStream = streaming;

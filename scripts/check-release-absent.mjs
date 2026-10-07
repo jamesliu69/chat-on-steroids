@@ -32,7 +32,7 @@ export async function assertReleaseAbsent({
 
   const body = (await response.text()).trim().replaceAll(/\s+/g, ' ').slice(0, 500);
   throw new Error(
-    `GitHub release lookup failed with HTTP ${response.status}${body ? `: ${body}` : ''}; refusing to assume the release is absent.`
+    `GitHub release lookup failed with HTTP ${response.status}${body ? (": " + body) : ''}; refusing to assume the release is absent.`
   );
 }
 

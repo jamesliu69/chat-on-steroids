@@ -53,7 +53,7 @@ const createControl=()=>createBrowserControl(chrome,transport,id=>protectedTabs.
 globalThis.control=createControl();
 globalThis.restartControl=async()=>{globalThis.control=createControl();await control.ready();await control.pump();};
 chrome.debugger.onEvent.addListener((...args)=>void control.event(...args).catch(console.error));chrome.debugger.onDetach.addListener((...args)=>void control.detached(...args).catch(console.error));
-const ws=new WebSocket(${JSON.stringify(`ws://127.0.0.1:${port}`)});ws.onopen=()=>void control.pump();ws.onmessage=()=>void control.pump().catch(console.error);`);
+const ws=new WebSocket(${JSON.stringify(("ws://127.0.0.1:" + port))});ws.onopen=()=>void control.pump();ws.onmessage=()=>void control.pump().catch(console.error);`);
 const executable = process.env.COS_TEST_CHROMIUM || path.join(process.env.LOCALAPPDATA || '', 'ms-playwright','chromium-1243','chrome-win64','chrome.exe');
 await fs.access(executable);
 const profile=path.join(run,'profile');

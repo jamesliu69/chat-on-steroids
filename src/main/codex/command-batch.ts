@@ -27,7 +27,7 @@ function shellSingleQuote(value: string): string {
 function powershellBatch(commands: readonly string[], marker: string): string {
   const encoded = commands.map((command) => Buffer.from(command, 'utf8').toString('base64'));
   return [
-    `$__cos_batch_commands = @(${encoded.map((item) => `'${item}'`).join(', ')})`,
+    `$__cos_batch_commands = @(${encoded.map((item) => ("'" + item + "'")).join(', ')})`,
     '$__cos_batch_exit = 0',
     'for ($__cos_batch_index = 0; $__cos_batch_index -lt $__cos_batch_commands.Count; $__cos_batch_index++) {',
     `  [Console]::Out.WriteLine(("--- command {0}/{1} --- [clf-batch:${marker}]" -f ($__cos_batch_index + 1), $__cos_batch_commands.Count))`,

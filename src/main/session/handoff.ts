@@ -60,7 +60,7 @@ export function handoffMatchesContinuation(
 function handoffPlanNotice(plan: AgentPlan | null): string {
   if (!plan?.plan.length) return '';
   const steps = plan.plan.map((step, index) =>
-    `${index + 1}. [${step.status}] ${step.step}${step.details ? `\n${step.details}` : ''}`).join('\n');
+    `${index + 1}. [${step.status}] ${step.step}${step.details ? ("\n" + step.details) : ''}`).join('\n');
   return '\n\nSaved task plan at handoff (reported progress, not verification evidence):\n' +
     (plan.explanation ? `${plan.explanation}\n` : '') + steps +
     '\nContinue the unfinished work using this plan and the brief. Report progress with update_plan.';

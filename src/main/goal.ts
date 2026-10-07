@@ -2165,7 +2165,7 @@ async function httpFailure(response: Response): Promise<string> {
   if (response.status === 402) return `out_of_credit: ${detail || 'the OpenRouter account is out of credit'}`;
   if (response.status === 404) return `unknown_model: ${detail || 'OpenRouter does not know that model id'}`;
   if (response.status === 429) return `rate_limited: ${detail || 'OpenRouter is rate-limiting this key'}`;
-  return `http_${response.status}${detail ? `: ${detail}` : ''}`;
+  return `http_${response.status}${detail ? (": " + detail) : ''}`;
 }
 
 /**
@@ -2395,7 +2395,7 @@ async function readStream(
         // OpenRouter can surface an upstream failure *inside* an already-200 SSE response,
         // including after some deltas were emitted. Ignoring that event turns a truncated
         // completion into a ready Goal message and types a sentence the model never finished.
-        throw new Error(`provider_stream_error${detail ? `: ${detail}` : ''}`);
+        throw new Error(`provider_stream_error${detail ? (": " + detail) : ''}`);
       }
     }
     const delta = deltaOf(parsed);

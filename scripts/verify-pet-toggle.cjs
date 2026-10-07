@@ -74,26 +74,7 @@ public static class PetMouse {
 [DllImport("user32.dll")] public static extern void keybd_event(byte k,byte s,uint f,UIntPtr e);
 }
 '@
-${(dx || dy) && externalKeyboard ? `Add-Type -AssemblyName System.Windows.Forms
-$typingForm = New-Object System.Windows.Forms.Form
-$typingForm.Text = 'Pets external keyboard test'
-$typingForm.SetBounds(80,80,500,200)
-$typingBox = New-Object System.Windows.Forms.TextBox
-$typingBox.Dock = 'Fill'
-$typingForm.Controls.Add($typingBox)
-$typingForm.Show()
-# The hidden PowerShell startup flag overrides the first native ShowWindow call.
-# Explicitly show our owned fixture, never a user's existing window.
-[PetMouse]::ShowWindow($typingForm.Handle,5) | Out-Null
-$typingForm.Activate()
-$typingBox.Focus() | Out-Null
-[System.Windows.Forms.Application]::DoEvents()
-if (-not [PetMouse]::IsWindowVisible($typingForm.Handle)) { throw 'External typing target is hidden' }
-if ([PetMouse]::GetForegroundWindow() -ne $typingForm.Handle) { throw 'External typing target did not reach foreground' }` : dx || dy ? `[PetMouse]::SetCursorPos(${typingPoint.x},${typingPoint.y}) | Out-Null
-[PetMouse]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
-[PetMouse]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
-Start-Sleep -Milliseconds 100
-if ([PetMouse]::GetForegroundWindow().ToInt64() -ne ${owner.getNativeWindowHandle().readBigUInt64LE(0)}) { throw 'Typing owner did not reach native foreground' }` : ''}
+${(dx || dy) && externalKeyboard ? "Add-Type -AssemblyName System.Windows.Forms\n$typingForm = New-Object System.Windows.Forms.Form\n$typingForm.Text = 'Pets external keyboard test'\n$typingForm.SetBounds(80,80,500,200)\n$typingBox = New-Object System.Windows.Forms.TextBox\n$typingBox.Dock = 'Fill'\n$typingForm.Controls.Add($typingBox)\n$typingForm.Show()\n# The hidden PowerShell startup flag overrides the first native ShowWindow call.\n# Explicitly show our owned fixture, never a user's existing window.\n[PetMouse]::ShowWindow($typingForm.Handle,5) | Out-Null\n$typingForm.Activate()\n$typingBox.Focus() | Out-Null\n[System.Windows.Forms.Application]::DoEvents()\nif (-not [PetMouse]::IsWindowVisible($typingForm.Handle)) { throw 'External typing target is hidden' }\nif ([PetMouse]::GetForegroundWindow() -ne $typingForm.Handle) { throw 'External typing target did not reach foreground' }" : dx || dy ? ("[PetMouse]::SetCursorPos(" + typingPoint.x + "," + typingPoint.y + ") | Out-Null\n[PetMouse]::mouse_event(2,0,0,0,[UIntPtr]::Zero)\n[PetMouse]::mouse_event(4,0,0,0,[UIntPtr]::Zero)\nStart-Sleep -Milliseconds 100\nif ([PetMouse]::GetForegroundWindow().ToInt64() -ne " + owner.getNativeWindowHandle().readBigUInt64LE(0) + ") { throw 'Typing owner did not reach native foreground' }") : ''}
 $foregroundBefore = [PetMouse]::GetForegroundWindow()
 [PetMouse]::SetCursorPos(${start.x},${start.y}) | Out-Null
 Start-Sleep -Milliseconds 450
@@ -109,14 +90,7 @@ Start-Sleep -Milliseconds 30
 } finally { [PetMouse]::mouse_event(${right ? 16 : 4},0,0,0,[UIntPtr]::Zero) }
 Start-Sleep -Milliseconds 300
 if ($typingForm) { [System.Windows.Forms.Application]::DoEvents() }
-${checkFocus && (dx || dy) ? `if ([PetMouse]::GetForegroundWindow() -ne $foregroundBefore) { throw 'Focus did not return to the typing target' }
-[PetMouse]::keybd_event(0x58,0,0,[UIntPtr]::Zero)
-[PetMouse]::keybd_event(0x58,0,2,[UIntPtr]::Zero)
-Start-Sleep -Milliseconds 100
-if ($typingForm) {
-  [System.Windows.Forms.Application]::DoEvents()
-  if ($typingBox.Text -ne 'x') { throw 'External text field did not receive native typing' }
-}` : ''}
+${checkFocus && (dx || dy) ? "if ([PetMouse]::GetForegroundWindow() -ne $foregroundBefore) { throw 'Focus did not return to the typing target' }\n[PetMouse]::keybd_event(0x58,0,0,[UIntPtr]::Zero)\n[PetMouse]::keybd_event(0x58,0,2,[UIntPtr]::Zero)\nStart-Sleep -Milliseconds 100\nif ($typingForm) {\n  [System.Windows.Forms.Application]::DoEvents()\n  if ($typingBox.Text -ne 'x') { throw 'External text field did not receive native typing' }\n}" : ''}
 @{ before = $foregroundBefore.ToInt64(); after = [PetMouse]::GetForegroundWindow().ToInt64() } | ConvertTo-Json -Compress
 if ($typingForm) { $typingForm.Dispose() }
 `], { windowsHide: true, timeout: 5000 });

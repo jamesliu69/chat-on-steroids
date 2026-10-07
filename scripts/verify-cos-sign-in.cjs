@@ -48,7 +48,7 @@ async function waitFor(what, check, timeout = 15_000) {
 function certificate() {
   const key = path.join(fixture, 'site.key'), cert = path.join(fixture, 'site.crt');
   const made = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=cos-sign-in-fixture',
-    '-addext', `subjectAltName=${SITES.map(site => `DNS:${site}`).join(',')}`, '-keyout', key, '-out', cert], { encoding: 'utf8' });
+    '-addext', `subjectAltName=${SITES.map(site => ("DNS:" + site)).join(',')}`, '-keyout', key, '-out', cert], { encoding: 'utf8' });
   if (made.status !== 0) throw new Error(`openssl could not make the fixture certificate: ${made.stderr}`);
   return { key: fs.readFileSync(key), cert: fs.readFileSync(cert) };
 }

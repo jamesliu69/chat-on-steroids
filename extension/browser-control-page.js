@@ -125,7 +125,7 @@ export function browserPage(operation, args) {
             const flags = [option.selected ? 'selected' : '', node.disabled || option.disabled || option.parentElement?.disabled ? 'disabled' : ''].filter(Boolean);
             // Values are opaque input identifiers: whitespace must survive exactly.
             if (option.value.length > 1000) { flags.push('value truncated'); truncated = true; }
-            options.push(`option ${JSON.stringify(compact(option.label))} value=${JSON.stringify(option.value.slice(0, 1000))}${flags.length ? ` (${flags.join(', ')})` : ''}`);
+            options.push(`option ${JSON.stringify(compact(option.label))} value=${JSON.stringify(option.value.slice(0, 1000))}${flags.length ? (" (" + flags.join(', ') + ")") : ''}`);
           }
           if (node.options.length > options.length) truncated = true;
         }
@@ -135,7 +135,7 @@ export function browserPage(operation, args) {
           const flags = [node.matches(':disabled,[aria-disabled="true"]') ? 'disabled' : '', node.checked ? 'checked' : '', node.getAttribute('aria-expanded') ? `expanded=${node.getAttribute('aria-expanded')}` : '', document.activeElement === node ? 'focused' : ''].filter(Boolean);
           const value = ['INPUT','TEXTAREA','SELECT'].includes(node.tagName) && node.type !== 'password' ? compact(node.value, 200) : '';
           const href = node.tagName === 'A' ? compact(node.getAttribute('href'), 300) : '';
-          const line = `${'  '.repeat(Math.min(depth, 16))}${id ? `[${id}] ` : ''}${detail ? detail+' ' : ''}${role ? `${role} ${JSON.stringify(name)}` : ''}${value ? ` value=${JSON.stringify(value)}` : ''}${href && !dom ? ` href=${JSON.stringify(href)}` : ''}${flags.length ? ` (${flags.join(', ')})` : ''}`;
+          const line = `${'  '.repeat(Math.min(depth, 16))}${id ? ("[" + id + "] ") : ''}${detail ? detail+' ' : ''}${role ? (role + " " + JSON.stringify(name)) : ''}${value ? (" value=" + JSON.stringify(value)) : ''}${href && !dom ? (" href=" + JSON.stringify(href)) : ''}${flags.length ? (" (" + flags.join(', ') + ")") : ''}`;
           if (!append(line)) break;
           elements++;
           if (id) state.refs.set(id, node);
@@ -187,7 +187,7 @@ export function browserPage(operation, args) {
         if (!blocker && hit) blocker = `${hit.tagName.toLowerCase()} ${JSON.stringify(label(hit))}`;
       }
     }
-    fail(`BROWSER_ELEMENT_OBSTRUCTED: target ${JSON.stringify(label(element))} is covered${blocker ? ` by ${blocker}` : ''}. No click was dispatched. Inspect a fresh snapshot or screenshot.`);
+    fail(`BROWSER_ELEMENT_OBSTRUCTED: target ${JSON.stringify(label(element))} is covered${blocker ? (" by " + blocker) : ''}. No click was dispatched. Inspect a fresh snapshot or screenshot.`);
   }
   if (operation === 'focus') {
     if (!args.keyTarget && !(element.matches('input,textarea') || element.isContentEditable)) fail('BROWSER_NOT_EDITABLE');

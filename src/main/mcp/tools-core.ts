@@ -786,7 +786,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             const virtualCommandPath = strayVirtualPath(rawCommand, ctx.roots);
             if (virtualCommandPath) {
               return fail(
-                `INVALID_COMMAND_PATH${isBatch ? ` in command ${index + 1}` : ''}: ${virtualCommandPath} is an app virtual path, but shell commands do not understand virtual paths. ` +
+                `INVALID_COMMAND_PATH${isBatch ? (" in command " + (index + 1)) : ''}: ${virtualCommandPath} is an app virtual path, but shell commands do not understand virtual paths. ` +
                   `Use workdir plus a relative path, or use the approved folder's native filesystem path. No command was run.`
               );
             }
@@ -862,7 +862,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             );
             if (changed !== -1) {
               return fail(
-                `COMMAND_NOT_ALLOWED${isBatch ? ` in command ${changed + 1}` : ''}: command normalization changed the authorized argument list. ` +
+                `COMMAND_NOT_ALLOWED${isBatch ? (" in command " + (changed + 1)) : ''}: command normalization changed the authorized argument list. ` +
                 'No command was run. Change the command policy in Settings if this launch should be permitted.'
               );
             }
@@ -987,7 +987,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               benignExit: benign
             });
             noteDetail(commandDetail.replaceAll(/\s+/g, ' ').slice(0, 120));
-            logInfo(`tool exec_command ${shell.shellType} -> ${output.processId ?? `exit ${output.exitCode ?? 'unknown'}`}`);
+            logInfo(`tool exec_command ${shell.shellType} -> ${output.processId ?? ("exit " + (output.exitCode ?? 'unknown'))}`);
             // `benign` was previously spent only on the error count, leaving the model to read
             // `Process exited with code 1` under an empty body and re-run a search that had
             // already answered. It is the same classification, now also said out loud.
@@ -1001,8 +1001,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               nonZeroSections.length > 0 &&
               nonZeroSections.length < batchSections.length
                 ? [
-                    `Batch: ${nonZeroSections.map((section) => `command ${section.index} exited ${section.exitCode}`).join(', ')}; ` +
-                      `the other ${batchSections.length - nonZeroSections.length === 1 ? 'command' : `${batchSections.length - nonZeroSections.length} commands`} exited 0. ` +
+                    `Batch: ${nonZeroSections.map((section) => ("command " + section.index + " exited " + section.exitCode)).join(', ')}; ` +
+                      `the other ${batchSections.length - nonZeroSections.length === 1 ? 'command' : ((batchSections.length - nonZeroSections.length) + " commands")} exited 0. ` +
                       'The top-line exit code is the first non-zero one.'
                   ]
                 : [];
@@ -1445,7 +1445,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
                 type: 'text' as const,
                 text:
                   (becamePrime ? `This ${currentCaller().conversationId ? 'conversation' : 'request'} is now the prime agent of run ${runId}. ` : '') +
-                  `${created.length} worker(s) matched: ${created.map((info) => `${info.id} (${info.label}, ${info.state}${info.model ? `, model ${info.model}` : ''}${info.reasoningEffort ? `, reasoning ${info.reasoningEffort}` : ''})`).join(', ')}. ` +
+                  `${created.length} worker(s) matched: ${created.map((info) => (info.id + " (" + info.label + ", " + info.state + (info.model ? (", model " + info.model) : '') + (info.reasoningEffort ? (", reasoning " + info.reasoningEffort) : '') + ")")).join(', ')}. ` +
                   (invited.length > 0 ? 'New worker chats are opening with their briefs already in them. ' : '') +
                   (defaultNotes?.length ? `${defaultNotes.join(' ')} ` : '') +
                   (sleeping.length > 0
@@ -1593,7 +1593,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
         const state = status.state;
         const families = agentFamiliesForCaller(caller);
         const familyNotice = families.length > 1
-          ? `\n\nYour worker families: ${families.map(family => `${family.run_id} (${family.running ? 'active' : 'retained'})`).join(', ')}. Use run_id to select a family; worker names are local to that family.`
+          ? `\n\nYour worker families: ${families.map(family => (family.run_id + " (" + (family.running ? 'active' : 'retained') + ")")).join(', ')}. Use run_id to select a family; worker names are local to that family.`
           : '';
         if (!me) return {
           content: [{ type: 'text' as const, text: families.length
@@ -1980,7 +1980,7 @@ async function runParsedPatch(
     rollbackNote = rollback.note;
   }
   const stdout = safePatchOutput(execution.stdout, resolution);
-  const stderr = safePatchOutput(`${execution.stderr}${rollbackNote ? `${execution.stderr.endsWith('\n') || execution.stderr === '' ? '' : '\n'}${rollbackNote}\n` : ''}`, resolution);
+  const stderr = safePatchOutput(`${execution.stderr}${rollbackNote ? ((execution.stderr.endsWith('\n') || execution.stderr === '' ? '' : '\n') + rollbackNote + "\n") : ''}`, resolution);
   const aggregatedOutput = `${stdout}${stderr}`;
   const content = formatExecOutputForModel(
     {
@@ -2331,7 +2331,7 @@ async function nearestFolderListing(roots: Root[], requested: string, err: unkno
       const names = entries.map((entry) => `${entry.type === 'directory' ? 'd' : 'f'} ${entry.name}`);
       const more = truncated ? `, …` : '';
       return `\nThe nearest existing folder is ${resolved.virtual}${
-        entries.length === 0 ? ', and it is empty.' : `; it contains: ${names.join(', ')}${more}`
+        entries.length === 0 ? ', and it is empty.' : ("; it contains: " + names.join(', ') + more)
       }`;
     } catch {
       return '';
@@ -2360,7 +2360,7 @@ async function readOne(
     }
     const text = options.roots.length === 0
       ? '--- / — no folders are shared yet ---'
-      : `--- / — ${options.roots.length} entr${options.roots.length === 1 ? 'y' : 'ies'}, one level ---\n${options.roots.map(root => `d ${root.name}`).join('\n')}`;
+      : `--- / — ${options.roots.length} entr${options.roots.length === 1 ? 'y' : 'ies'}, one level ---\n${options.roots.map(root => ("d " + root.name)).join('\n')}`;
     return { text, bytes: Buffer.byteLength(text, 'utf8') };
   }
   const resolved = await resolveIn(options.roots, requested, { access: 'read' });
@@ -2488,7 +2488,7 @@ async function readOne(
       ? `\n(more lines follow — continue from line ${visibleLastLine + 1})`
       : '';
   const header = `--- ${resolved.virtual} — ${range}, ${formatBytes(info.bytes)}, modified ${info.modified} ---`;
-  const text = `${header}${numbered.text === '' && visibleLastLine < result.firstLine ? '' : `\n${numbered.text}`}${note}`;
+  const text = `${header}${numbered.text === '' && visibleLastLine < result.firstLine ? '' : ("\n" + numbered.text)}${note}`;
   return {
     text,
     // Charge the aggregate call budget for what is actually serialized, including headers and

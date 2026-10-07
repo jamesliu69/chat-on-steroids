@@ -597,7 +597,7 @@ export function skillLibraryInstructions(library: SkillLibrary): string {
   const row = (skill: LibrarySkill): string => {
     const name = skill.displayName ?? skill.name;
     const about = (skill.shortDescription ?? skill.description).replaceAll(/\s+/g, ' ').trim();
-    return `  - ${split(skill).entry}: /${skill.id}${name !== skill.id && !skill.id.startsWith(`${name}--`) ? ` (${name})` : ''} — ${about.length > 110 ? `${about.slice(0, 109)}…` : about}`;
+    return `  - ${split(skill).entry}: /${skill.id}${name !== skill.id && !skill.id.startsWith((name + "--")) ? (" (" + name + ")") : ''} — ${about.length > 110 ? (about.slice(0, 109) + "…") : about}`;
   };
   const chosen: LibrarySkill[] = [];
   const opened = new Set<string>();

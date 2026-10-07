@@ -1322,8 +1322,8 @@ function normalizeRipgrepSegment(
       out.push(...expanded.hits.map(quoteArgument));
       notes.push(
         `PowerShell does not expand globs for native programs, so \`${token.value}\` was expanded here to ` +
-          `${expanded.hits.length === 1 ? 'the one entry' : `the ${expanded.hits.length} entries`} of the ` +
-          `${expanded.directory === '.' ? 'working directory' : `relative directory ${expanded.directory}`} ` +
+          `${expanded.hits.length === 1 ? 'the one entry' : ("the " + expanded.hits.length + " entries")} of the ` +
+          `${expanded.directory === '.' ? 'working directory' : ("relative directory " + expanded.directory)} ` +
           `matching it: ${listExpandedNames(expanded.hits)}. Sub-directories were not searched, exactly as ` +
           `the glob asked; use \`-g '${token.value}'\` if a recursive match was what you meant.`
       );
@@ -1608,5 +1608,5 @@ export function execRecoveryHints(
 /** Appends advisory notes to an exec result without disturbing the parity-formatted body. */
 export function withExecNotes(responseText: string, notes: readonly string[]): string {
   if (notes.length === 0) return responseText;
-  return `${responseText}\n\n${notes.map((note) => `Note: ${note}`).join('\n')}`;
+  return `${responseText}\n\n${notes.map((note) => ("Note: " + note)).join('\n')}`;
 }

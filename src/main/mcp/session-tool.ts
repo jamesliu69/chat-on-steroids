@@ -299,7 +299,7 @@ function formatSessionRow(summary: SessionSummary): string {
   return (
     `${summary.id}  ${formatDate(summary.updatedAt)}  ${summary.endedAt === null ? 'active' : 'ended'}\n` +
     `  ${flat(summary.title, 180)}\n` +
-    `  ${summary.userMessages} user · ${summary.toolCalls} tools · ${summary.events} events${failures ? ` · ${failures}` : ''}`
+    `  ${summary.userMessages} user · ${summary.toolCalls} tools · ${summary.events} events${failures ? (" · " + failures) : ''}`
   );
 }
 
@@ -616,7 +616,7 @@ async function timelineItem(
       if (!include.has('errors') || event.outcome === 'completed') return null;
       return item(
         event,
-        `${when}${agent} TURN ${event.outcome.toUpperCase()}${event.detail ? `\n${event.detail}` : ''}`,
+        `${when}${agent} TURN ${event.outcome.toUpperCase()}${event.detail ? ("\n" + event.detail) : ''}`,
         'turn error'
       );
     case 'agent_message': {
@@ -710,7 +710,7 @@ async function readToolDetail(
     ? `\n\nChanges:\n${event.call.changes
         .map(
           (change) =>
-            `- ${change.path}: +${change.added} -${change.removed}${change.approximate ? ' (approximate)' : ''}`
+            ("- " + change.path + ": +" + change.added + " -" + change.removed + (change.approximate ? ' (approximate)' : ''))
         )
         .join('\n')}`
     : '';
@@ -733,7 +733,7 @@ async function readToolDetail(
       ? `\n\ncaught_up: false\ncontinuation_cursor: ${encodeCursor({ kind: 'detail', seq, offset: nextOffset, hash }, sessionId)}`
       : '\n\ncaught_up: true';
   noteDetail(`${toolRef(seq)}${nextOffset < whole.length ? ' continues' : ''}`);
-  return ok(boundResult(`${offset > 0 ? `[continuation of ${toolRef(seq)} ${event.call.tool}]\n` : ''}${chunk}${footer}`, READ_RESULT_CHARS));
+  return ok(boundResult(`${offset > 0 ? ("[continuation of " + toolRef(seq) + " " + event.call.tool + "]\n") : ''}${chunk}${footer}`, READ_RESULT_CHARS));
 }
 
 function choosePageStart(items: TimelineItem[], stopIndex: number): number {
@@ -810,7 +810,7 @@ function sessionHeader(summary: SessionSummary): string {
     `Session: ${summary.id}\nTitle: ${summary.title}\n` +
     `Started: ${formatDate(summary.startedAt)}\nUpdated: ${formatDate(summary.updatedAt)}\n` +
     `State: ${summary.endedAt === null ? 'active' : 'ended'}\n` +
-    `Recorded: ${summary.userMessages} user · ${summary.toolCalls} tools · ${summary.events} events${failures ? ` · ${failures}` : ''}`
+    `Recorded: ${summary.userMessages} user · ${summary.toolCalls} tools · ${summary.events} events${failures ? (" · " + failures) : ''}`
   );
 }
 

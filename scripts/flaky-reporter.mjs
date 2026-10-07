@@ -23,7 +23,7 @@ export default class FlakyReporter {
     if (!this.flaky.length) return;
     for (const name of this.flaky) this.output(`::warning title=Flaky test::${name} failed once and passed on retry`);
     if (this.summary) {
-      appendFileSync(this.summary, `### Flaky tests\n\nThese failed once and passed on retry:\n\n${this.flaky.map(name => `- ${name}`).join('\n')}\n`);
+      appendFileSync(this.summary, `### Flaky tests\n\nThese failed once and passed on retry:\n\n${this.flaky.map(name => ("- " + name)).join('\n')}\n`);
     }
   }
 }

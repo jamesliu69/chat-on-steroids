@@ -584,7 +584,7 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
             rejectAuthentication();
             return;
           }
-          run.lastError = `${level} ${message}${errText ? `: ${errText}` : ''}`.slice(0, 400);
+          run.lastError = `${level} ${message}${errText ? (": " + errText) : ''}`.slice(0, 400);
           if (isUnreachableError(`${message}: ${errText}`)) {
             // Retry chatter. noteUnreachable logs one plain line per run rather than a
             // socket dump per attempt, and the state it leads to is decided in `watch`.

@@ -299,7 +299,7 @@ export class CosBrowser {
     const late = TRACE ? setTimeout(() => logWarn(`cos browser trace: ${label} still pending after 10 s`), 10_000) : null;
     try {
       const reply = await callChromeApi(this.control, name, args);
-      if (TRACE) logInfo(`cos browser trace: ${label} ${reply.ok ? 'ok' : `failed: ${reply.message}`}`);
+      if (TRACE) logInfo(`cos browser trace: ${label} ${reply.ok ? 'ok' : ("failed: " + reply.message)}`);
       return reply;
     } finally {
       if (late) clearTimeout(late);

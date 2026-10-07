@@ -108,7 +108,7 @@ export function parseClientStatus(raw: unknown): ClientStatus {
   const mode = asString(route['route_mode']);
   const proxy = asString(route['proxy_source']);
   const routeText = target
-    ? `${target} · ${proxy && proxy !== 'none' ? `via ${proxy}` : (mode ?? 'direct')}`
+    ? `${target} · ${proxy && proxy !== 'none' ? ("via " + proxy) : (mode ?? 'direct')}`
     : null;
 
   return {

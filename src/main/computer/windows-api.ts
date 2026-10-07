@@ -150,7 +150,7 @@ export function createWindowsComputerApi(backend: WindowsComputerBackend = { act
         if (shot === result.screenshot) state.primary = id;
         screenshots.push({ id, url: `data:image/png;base64,${shot.data}`, width: shot.width, height: shot.height, originX: shot.region.x, originY: shot.region.y, zIndex: screenshots.length });
       }
-      const lines = result.elements.map((e, i) => `${'\t'.repeat(Math.min(30, e.depth ?? 0))}${i}: ${e.role} ${JSON.stringify(e.name)}${e.actions?.length ? ` [${e.actions.map(a => labels[a]).join(', ')}]` : ''}${e.offscreen ? ' [offscreen]' : ''}${e.enabled === false ? ' [disabled]' : ''}${e.bounds.width <= 0 || e.bounds.height <= 0 ? ' [no pixel bounds]' : ''}`);
+      const lines = result.elements.map((e, i) => `${'\t'.repeat(Math.min(30, e.depth ?? 0))}${i}: ${e.role} ${JSON.stringify(e.name)}${e.actions?.length ? (" [" + e.actions.map(a => labels[a]).join(', ') + "]") : ''}${e.offscreen ? ' [offscreen]' : ''}${e.enabled === false ? ' [disabled]' : ''}${e.bounds.width <= 0 || e.bounds.height <= 0 ? ' [no pixel bounds]' : ''}`);
       const focusedIndex = result.elements.findIndex(e => e.ref === result.accessibility?.focusedElement || e.focused);
       const selected = lines.filter((_line, i) => result.elements[i]?.selected);
       const accessibility = !includeUi || result.uiUnavailable ? null : {

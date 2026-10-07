@@ -132,7 +132,7 @@ export async function discoverUserSkillPath(file: string, allowMissing = false):
     }
     const place = placeOf(areas, real, 'discoverable');
     if (!place) throw new SandboxError('A linked Skill path leaves the Skill folders');
-    return { real, virtual: `/${USER_SKILLS_ROOT}/${place.area.name}${place.segments.length ? `/${place.segments.join('/')}` : ''}` };
+    return { real, virtual: `/${USER_SKILLS_ROOT}/${place.area.name}${place.segments.length ? ("/" + place.segments.join('/')) : ''}` };
   }
   return null;
 }

@@ -1324,7 +1324,7 @@ function apply(next: AppState): void {
   const wasBusy = sidebarConnection.classList.contains('is-busy');
   // Closing to the dot is CSS's (the words leave first, then the width): a morph under way ends first.
   if (morph || !labelled) endCapsuleMorph();
-  sidebarConnection.className = `sidebar-connection${disconnecting ? ' is-busy' : ''}${capsuleTone ? ` ${capsuleTone}` : ''}${labelled ? ' has-label' : ''}${capsuleMorph.length ? ' is-morphing' : ''}`;
+  sidebarConnection.className = `sidebar-connection${disconnecting ? ' is-busy' : ''}${capsuleTone ? (" " + capsuleTone) : ''}${labelled ? ' has-label' : ''}${capsuleMorph.length ? ' is-morphing' : ''}`;
   if (labelled) ui(label, 'textContent', capsuleWords);
   if (morph) {
     sidebarConnection.classList.add('is-morphing');
@@ -1379,7 +1379,7 @@ function apply(next: AppState): void {
   }
   previousConnectionState = status.state;
   const connectionPopover = $('connectionPopover');
-  connectionPopover.className = `connection-popover scroll${capsuleTone ? ` ${capsuleTone}` : ''}`;
+  connectionPopover.className = `connection-popover scroll${capsuleTone ? (" " + capsuleTone) : ''}`;
   ui($('connectionPopoverTitle'), 'textContent', () => t(STATUS_TEXT[status.state]));
 
   const id = config.tunnel.tunnelId;

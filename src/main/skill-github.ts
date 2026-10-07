@@ -85,7 +85,7 @@ async function inspectGitHubSkill(requested: GitHubSkillLocation, signal: AbortS
     const current = queue.shift()!;
     if (++directoryCount > MAX_DIRECTORIES || current.depth > 10) throw new Error('GitHub skill has too many nested folders');
     const encoded = current.directory.split('/').filter(Boolean).map(encodeURIComponent).join('/');
-    const listing = await githubJson(`${base}/contents${encoded ? `/${encoded}` : ''}?ref=${encodeURIComponent(commit)}`, signal);
+    const listing = await githubJson(`${base}/contents${encoded ? ("/" + encoded) : ''}?ref=${encodeURIComponent(commit)}`, signal);
     if (!Array.isArray(listing)) throw new Error('GitHub link must point to a skill folder');
     for (const value of listing) {
       const entry = value as Partial<Entry>;

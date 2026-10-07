@@ -76,7 +76,7 @@ export function suggestApprovedSpelling(roots: readonly Root[], segments: readon
   for (const [index, segment] of segments.entries()) {
     const slug = normaliseRootName(segment);
     const root = roots.find((candidate) => candidate.name === slug);
-    if (root) return `/${root.name}${segments.slice(index + 1).map((part) => `/${part}`).join('')}`;
+    if (root) return `/${root.name}${segments.slice(index + 1).map((part) => ("/" + part)).join('')}`;
   }
   return null;
 }

@@ -85,7 +85,7 @@ export function createWorkspaceTerminal(onToggleBottom: () => void, initialMount
       if (options.dockedTabs || tabsHost.childElementCount === tabs.size) continue;
       const wrapper = el('div', `terminal-tab${tab.id === selected ? ' is-selected' : ''}`); wrapper.dataset.id = tab.id;
       const pick = el('button', 'btn') as HTMLButtonElement;
-      pick.append(icon('i-terminal'), el('span', 'tab-label', () => `${tab.title}${tab.exited ? ` · ${t('exited')}` : ''}`));
+      pick.append(icon('i-terminal'), el('span', 'tab-label', () => `${tab.title}${tab.exited ? (" · " + t('exited')) : ''}`));
       pick.type = 'button'; pick.title = tab.title;
       pick.setAttribute('aria-pressed', String(tab.id === selected));
       pick.addEventListener('click', () => { selected = tab.id; paint(); fit(); tab.term.focus(); });
