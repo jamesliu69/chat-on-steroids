@@ -159,11 +159,12 @@ export function observeChatModels(raw: unknown): boolean {
   if (models && (new Set(models.map(model => model.id)).size !== models.length ||
     models.some(model => new Set(model.efforts).size !== model.efforts.length))) return false;
   logInfo(`model discovery observed id=${request.nonce} models=${models?.length ?? 0} elapsed_ms=${Date.now() - (catalog.requestedAt ?? Date.now())} error=${parsed.data.error ?? 'none'}`);
-  const error = parsed.data.error === 'picker_unavailable'
-    ? 'ChatGPT\'s native model picker could not be read. Check the loaded ChatGPT page in the selected browser, close native dialogs, then retry.'
-    : parsed.data.error === 'restore_failed' ? 'The original ChatGPT model selection could not be restored. Check the native picker before retrying.'
-    : parsed.data.error === 'picker_close_failed' ? 'The native ChatGPT model picker did not close. Close it before retrying.'
-    : 'ChatGPT model choices could not be confirmed. Check the native picker in the selected browser, then retry.';
+  const discoveryError = parsed.data.error;
+  let error: string;
+  if (discoveryError === 'picker_unavailable') error = 'ChatGPT\'s native model picker could not be read. Check the loaded ChatGPT page in the selected browser, close native dialogs, then retry.';
+  else if (discoveryError === 'restore_failed') error = 'The original ChatGPT model selection could not be restored. Check the native picker before retrying.';
+  else if (discoveryError === 'picker_close_failed') error = 'The native ChatGPT model picker did not close. Close it before retrying.';
+  else error = 'ChatGPT model choices could not be confirmed. Check the native picker in the selected browser, then retry.';
   if (models) {
     catalog = { ...catalog, state: 'ready', models, observedAt: Date.now(), waiting: undefined, error: undefined };
     writeDurableSoon('chat-models', { observedAt: catalog.observedAt, models });

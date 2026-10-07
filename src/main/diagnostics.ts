@@ -161,17 +161,21 @@ export function describeMacOSDesktopAccess(
     name: string,
     state: MacOSDesktopAccessStatus['screen'],
     missing: string
-  ): Check => ({
-    name,
-    status: state === 'granted' ? 'pass' : state === 'missing' ? 'fail' : 'not-run',
-    ok: state === 'granted' ? true : state === 'missing' ? false : null,
-    detail:
-      state === 'granted'
-        ? 'Granted to the in-process Desktop backend.'
-        : state === 'missing'
-          ? `${missing} Fully quit and reopen the app after changing the macOS permission.`
-          : access.error ?? 'The in-process Desktop backend could not determine the live TCC decision.'
-  });
+  ): Check => {
+    let checkStatus: Check['status'];
+    if (state === 'granted') checkStatus = 'pass';
+    else if (state === 'missing') checkStatus = 'fail';
+    else checkStatus = 'not-run';
+    let checkOk: Check['ok'];
+    if (state === 'granted') checkOk = true;
+    else if (state === 'missing') checkOk = false;
+    else checkOk = null;
+    let checkDetail: string;
+    if (state === 'granted') checkDetail = 'Granted to the in-process Desktop backend.';
+    else if (state === 'missing') checkDetail = `${missing} Fully quit and reopen the app after changing the macOS permission.`;
+    else checkDetail = access.error ?? 'The in-process Desktop backend could not determine the live TCC decision.';
+    return { name, status: checkStatus, ok: checkOk, detail: checkDetail };
+  };
 
   if (caps.screen) {
     checks.push(check(
@@ -303,15 +307,23 @@ export async function runDiagnostics(): Promise<Diagnosis> {
   const enabled = Object.entries(caps)
     .filter(([, on]) => on)
     .map(([name]) => name);
+  let permissionsDetail: string;
+  if (enabled.length === 0) permissionsDetail = 'Nothing is switched on, so the connector would expose no tools.';
+  else {
+    let folderSuffix: string;
+    if (config.roots.length === 1) folderSuffix = '';
+    else folderSuffix = 's';
+    let readOnlySuffix: string;
+    if (config.readOnly) readOnlySuffix = ' (read-only)';
+    else readOnlySuffix = '';
+    permissionsDetail = `${config.roots.length} folder${folderSuffix} shared; on: ${enabled.join(', ')}${readOnlySuffix}`;
+  }
   checks.push({
     name: 'Permissions',
     status:
       enabled.length > 0 && (config.roots.length > 0 || surfaceIsUseful('desktop', caps)) ? 'pass' : 'fail',
     ok: enabled.length > 0 && (config.roots.length > 0 || surfaceIsUseful('desktop', caps)),
-    detail:
-      enabled.length === 0
-        ? 'Nothing is switched on, so the connector would expose no tools.'
-        : `${config.roots.length} folder${config.roots.length === 1 ? '' : 's'} shared; on: ${enabled.join(', ')}${config.readOnly ? ' (read-only)' : ''}`
+    detail: permissionsDetail
   });
 
   // Ask the in-process backend that performs protected operations. A settings row or the
@@ -344,16 +356,15 @@ export async function runDiagnostics(): Promise<Diagnosis> {
     });
   } else if (base) {
     const ready = await probeText(`${base}/readyz`);
+    let tunnelDetail: string;
+    if (ready === null) tunnelDetail = 'The tunnel program is not answering on its local health address.';
+    else if (ready.status === 200) tunnelDetail = 'Running and ready.';
+    else tunnelDetail = `Not ready: HTTP ${ready.status} ${ready.body}`;
     checks.push({
       name: 'Tunnel',
       status: ready?.status === 200 ? 'pass' : 'fail',
       ok: ready?.status === 200,
-      detail:
-        ready === null
-          ? 'The tunnel program is not answering on its local health address.'
-          : ready.status === 200
-            ? 'Running and ready.'
-            : `Not ready: HTTP ${ready.status} ${ready.body}`
+      detail: tunnelDetail
     });
 
     // 4. The link the outage actually breaks: client → OpenAI, and 5. what the tunnel
@@ -363,9 +374,13 @@ export async function runDiagnostics(): Promise<Diagnosis> {
     checks.push(describeRoute(health, client?.uptimeSeconds ?? null));
 
     if (client) {
+      let tunnelAppStatus: Check['status'];
+      if (client.probe === null) tunnelAppStatus = 'not-run';
+      else if (client.probe === 'ok') tunnelAppStatus = 'pass';
+      else tunnelAppStatus = 'fail';
       checks.push({
         name: 'Tunnel → this app',
-        status: client.probe === null ? 'not-run' : client.probe === 'ok' ? 'pass' : 'fail',
+        status: tunnelAppStatus,
         ok: client.probe === null ? null : client.probe === 'ok',
         detail:
           client.probe === null
@@ -408,12 +423,10 @@ export async function runDiagnostics(): Promise<Diagnosis> {
 
   const broken = checks.filter((c) => c.status === 'fail');
   const incomplete = checks.filter((c) => c.status === 'not-run');
-  const summary =
-    broken.length > 0
-      ? `${broken.length} problem${broken.length === 1 ? '' : 's'}: ${broken.map((c) => c.name).join(', ')}.`
-      : incomplete.length > 0
-        ? `No failed checks · ${incomplete.length} not verified yet.`
-        : 'Every required check passed.';
+  let summary: string;
+  if (broken.length > 0) summary = `${broken.length} problem${broken.length === 1 ? '' : 's'}: ${broken.map((c) => c.name).join(', ')}.`;
+  else if (incomplete.length > 0) summary = `No failed checks · ${incomplete.length} not verified yet.`;
+  else summary = 'Every required check passed.';
 
   logInfo(`self-test: ${summary}`);
   for (const check of checks) {

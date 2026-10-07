@@ -1490,11 +1490,10 @@ export function execRecoveryHints(
       outputText
     )
   ) {
-    const checkPath = powershell
-      ? '`Get-ChildItem -LiteralPath \'<path>\'`'
-      : cmd
-        ? '`dir "<path>"`'
-        : '`ls -ld -- \'<path>\'`';
+    let checkPath: string;
+    if (powershell) checkPath = '`Get-ChildItem -LiteralPath \'<path>\'`';
+    else if (cmd) checkPath = '`dir "<path>"`';
+    else checkPath = '`ls -ld -- \'<path>\'`';
     hints.push(
       'The search exited non-zero because a path it was given does not exist — the error line ' +
         'above names it. Retain the matches already returned, but the requested search is incomplete. ' +
@@ -1568,34 +1567,30 @@ export function execRecoveryHints(
       outputText
     );
   if (powershell && parserFailure && !invalidOperator && !bashQuoteFailure) {
-    const correction = /TerminatorExpectedAtEndOfString|missing the terminator/i.test(outputText)
-      ? 'Balance the quoted argument; for literal regexes and paths, prefer one single-quoted PowerShell argument.'
-      : /MissingArgument|missing an argument/i.test(outputText)
-        ? 'Supply the missing value after the named parameter or comma, quoting it as one argument when it contains shell punctuation.'
-        : /MissingFileSpecification|RedirectionNotSupported|redirection operator/i.test(outputText)
-          ? 'PowerShell does not support Bash heredocs such as `<<EOF`; use a PowerShell here-string piped to the program, or write the content with Set-Content.'
-          : 'Use the reported line and character to correct the unexpected or incomplete token; split unrelated checks into `exec_command.cmds`.';
+    let correction: string;
+    if (/TerminatorExpectedAtEndOfString|missing the terminator/i.test(outputText)) correction = 'Balance the quoted argument; for literal regexes and paths, prefer one single-quoted PowerShell argument.';
+    else if (/MissingArgument|missing an argument/i.test(outputText)) correction = 'Supply the missing value after the named parameter or comma, quoting it as one argument when it contains shell punctuation.';
+    else if (/MissingFileSpecification|RedirectionNotSupported|redirection operator/i.test(outputText)) correction = 'PowerShell does not support Bash heredocs such as `<<EOF`; use a PowerShell here-string piped to the program, or write the content with Set-Content.';
+    else correction = 'Use the reported line and character to correct the unexpected or incomplete token; split unrelated checks into `exec_command.cmds`.';
     hints.push(
       `PowerShell parsed none of the command, so no statement ran. ${correction} Correct the syntax and rerun the command.`
     );
   }
 
   if (/JAVA_HOME is not set/i.test(outputText)) {
-    const example = powershell
-      ? "`$env:JAVA_HOME='C:\\path\\to\\jdk'; $env:Path=\"$env:JAVA_HOME\\bin;$env:Path\"`"
-      : cmd
-        ? '`set "JAVA_HOME=C:\\path\\to\\jdk" && set "PATH=%JAVA_HOME%\\bin;%PATH%"`'
-        : '`export JAVA_HOME=/path/to/jdk; export PATH="$JAVA_HOME/bin:$PATH"`';
+    let example: string;
+    if (powershell) example = "`$env:JAVA_HOME='C:\\path\\to\\jdk'; $env:Path=\"$env:JAVA_HOME\\bin;$env:Path\"`";
+    else if (cmd) example = '`set "JAVA_HOME=C:\\path\\to\\jdk" && set "PATH=%JAVA_HOME%\\bin;%PATH%"`';
+    else example = '`export JAVA_HOME=/path/to/jdk; export PATH="$JAVA_HOME/bin:$PATH"`';
     hints.push(`No Java could be found automatically. Point JAVA_HOME at a JDK for this command, e.g. ${example}.`);
   }
 
   if (/cannot find GOROOT/i.test(outputText)) {
     const executable = powershell || cmd ? String.raw`bin\go.exe` : 'bin/go';
-    const example = powershell
-      ? "`$env:GOROOT='C:\\path\\to\\go'; $env:Path=\"$env:GOROOT\\bin;$env:Path\"`"
-      : cmd
-        ? '`set "GOROOT=C:\\path\\to\\go" && set "PATH=%GOROOT%\\bin;%PATH%"`'
-        : '`export GOROOT=/path/to/go; export PATH="$GOROOT/bin:$PATH"`';
+    let example: string;
+    if (powershell) example = "`$env:GOROOT='C:\\path\\to\\go'; $env:Path=\"$env:GOROOT\\bin;$env:Path\"`";
+    else if (cmd) example = '`set "GOROOT=C:\\path\\to\\go" && set "PATH=%GOROOT%\\bin;%PATH%"`';
+    else example = '`export GOROOT=/path/to/go; export PATH="$GOROOT/bin:$PATH"`';
     hints.push(
       `The go binary was found but GOROOT was not set and could not be inferred. Set GOROOT to the ` +
         `toolchain directory that contains ${executable} before invoking it, e.g. ${example}.`

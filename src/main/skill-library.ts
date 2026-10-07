@@ -524,10 +524,17 @@ export async function listSkillLibrary(scope: SkillLibraryScope = {}, runtime: S
               const skillPath = path.relative(resolved.real, current.directory).split(path.sep).join('/');
               const codexPlugin = candidate.codexPlugin ? { ...candidate.codexPlugin, skillPath } : undefined;
               const claudePlugin = candidate.claudePlugin ? { ...candidate.claudePlugin, skillPath } : undefined;
-              const hash = createHash('sha256').update(codexPlugin ? pluginSkillIdentity(candidate.codexPlugin!, skillPath)
-                : claudePlugin ? claudePluginSkillIdentity(candidate.claudePlugin!, skillPath) : identity(document.real)).digest('hex').slice(0, 12);
+              let hashInput: string;
+              if (codexPlugin) hashInput = pluginSkillIdentity(candidate.codexPlugin!, skillPath);
+              else if (claudePlugin) hashInput = claudePluginSkillIdentity(candidate.claudePlugin!, skillPath);
+              else hashInput = identity(document.real);
+              const hash = createHash('sha256').update(hashInput).digest('hex').slice(0, 12);
               const stem = path.basename(current.directory).normalize('NFKD').toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-+|-+$/g, '').slice(0, 35) || 'skill';
-              const id = `${stem}--${codexPlugin ? 'codex' : claudePlugin ? 'claude' : candidate.scope}-${hash}`;
+              let scopeName: string;
+              if (codexPlugin) scopeName = 'codex';
+              else if (claudePlugin) scopeName = 'claude';
+              else scopeName = candidate.scope;
+              const id = `${stem}--${scopeName}-${hash}`;
               library.skills.push({ id, ...metadata, path: document.virtual, ...await interfaceFor(current.directory, false, library.errors),
                 scope: candidate.scope, source: candidate.source, managed: false, ...(codexPlugin ? { codexPlugin } : {}), ...(claudePlugin ? { claudePlugin } : {}) });
               seen.add(identity(document.real));
@@ -559,10 +566,11 @@ export async function readLibrarySkill(id: string, scope: SkillLibraryScope = {}
   }
   const document = await readApproved(selected.path);
   // Commands are derived from canonical paths, not catalog ordering or mutable names.
-  const hash = createHash('sha256').update(selected.codexPlugin
-    ? pluginSkillIdentity(selected.codexPlugin, selected.codexPlugin.skillPath)
-    : selected.claudePlugin ? claudePluginSkillIdentity(selected.claudePlugin, selected.claudePlugin.skillPath)
-      : identity(document.real)).digest('hex').slice(0, 12);
+  let verifyInput: string;
+  if (selected.codexPlugin) verifyInput = pluginSkillIdentity(selected.codexPlugin, selected.codexPlugin.skillPath);
+  else if (selected.claudePlugin) verifyInput = claudePluginSkillIdentity(selected.claudePlugin, selected.claudePlugin.skillPath);
+  else verifyInput = identity(document.real);
+  const hash = createHash('sha256').update(verifyInput).digest('hex').slice(0, 12);
   if (!id.endsWith(`-${hash}`)) throw new Error('The selected Skill changed location');
   return { summary: selected, text: document.text };
 }

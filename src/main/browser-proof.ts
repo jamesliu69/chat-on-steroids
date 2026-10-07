@@ -77,7 +77,10 @@ export function noteExternalInstalled(browserId: string, version: string, at = D
  */
 export function noteExternalSignedIn(browserId: string, signedIn: boolean, at = Date.now()): boolean {
   if (!proof || proof.browserId !== browserId) return false;
-  const known = proof.signedInAt === null ? proof.signedOutAt === null ? null : false : true;
+  let known: boolean | null;
+  if (proof.signedInAt !== null) known = true;
+  else if (proof.signedOutAt !== null) known = false;
+  else known = null;
   if (signedIn) { proof.signedInAt = at; proof.signedOutAt = null; }
   else { proof.signedOutAt = at; proof.signedInAt = null; }
   // Refreshing the time of the same answer is not news; only a change is worth a write.
@@ -88,8 +91,12 @@ export function noteExternalSignedIn(browserId: string, signedIn: boolean, at = 
 
 /** The lasting evidence for the person's own browser, or null. `signedIn` null: never answered. */
 export function externalBrowserProof(): { browserId: string; version: string; signedIn: boolean | null } | null {
-  return proof && { browserId: proof.browserId, version: proof.version,
-    signedIn: proof.signedInAt === null ? proof.signedOutAt === null ? null : false : true };
+  if (!proof) return null;
+  let signedIn: boolean | null;
+  if (proof.signedInAt !== null) signedIn = true;
+  else if (proof.signedOutAt !== null) signedIn = false;
+  else signedIn = null;
+  return { browserId: proof.browserId, version: proof.version, signedIn };
 }
 
 /** For tests: wait for the file to settle. */

@@ -248,9 +248,14 @@ function parseCommittedChanges(buffer: Buffer, prefix: string): ProjectGitChange
     const before = projectRelative(oldPath, prefix);
     const after = projectRelative(newPath, prefix);
     if (!before && !after) continue;
-    const kind: ProjectGitStatus = renamed
-      ? before ? after ? 'R' : 'D' : 'A'
-      : status[0] === 'A' ? 'A' : status[0] === 'D' ? 'D' : 'M';
+    let kind: ProjectGitStatus;
+    if (renamed) {
+      if (!before) kind = 'A';
+      else if (after) kind = 'R';
+      else kind = 'D';
+    } else if (status[0] === 'A') kind = 'A';
+    else if (status[0] === 'D') kind = 'D';
+    else kind = 'M';
     changes.push({
       status: kind, path: kind === 'D' ? before! : after!,
       previousPath: kind === 'R' ? before! : undefined,
@@ -282,8 +287,12 @@ async function branchIdentity(context: RepositoryContext): Promise<{
     if (branches.length >= MAX_BRANCHES) { branchesTruncated = true; break; }
     branches.push({ ref, label });
   }
+  let currentBranch: string;
+  if (symbolic.code === 0) currentBranch = decode(symbolic.stdout).trim();
+  else if (headOid) currentBranch = headOid.slice(0, 8);
+  else currentBranch = 'HEAD';
   return {
-    currentBranch: symbolic.code === 0 ? decode(symbolic.stdout).trim() : headOid ? headOid.slice(0, 8) : 'HEAD',
+    currentBranch,
     headOid, branches, branchesTruncated
   };
 }
@@ -325,7 +334,13 @@ async function untrackedStats(context: RepositoryContext, relative: string): Pro
     if (binary) return { additions: null, deletions: null, binary: true };
     if (tooLarge) return { additions: null, deletions: null, binary: false };
     const text = decode(bytes);
-    const additions = text.length === 0 ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+    let additions: number;
+    if (text.length === 0) additions = 0;
+    else {
+      let trailingNewline = 0;
+      if (text.endsWith('\n')) trailingNewline = 1;
+      additions = text.split('\n').length - trailingNewline;
+    }
     return { additions, deletions: 0, binary: false };
   } catch {
     return { additions: null, deletions: null, binary: true };
@@ -438,19 +453,22 @@ export async function readProjectGitDiff(projectId: string, relativePath: string
   const base = change.status === 'A' || change.status === 'U'
     ? { text: '', tooLarge: false }
     : await readHeadFile(context, change.previousPath ?? change.path, snapshot.comparison?.baseOid);
-  const current = change.status === 'D'
-    ? { text: '', tooLarge: false }
-    : snapshot.comparison
-      ? await readHeadFile(context, change.path, snapshot.comparison.headOid)
-      : await readWorkingFile(projectId, change.path);
+  let current: { text: string | null; tooLarge: boolean };
+  if (change.status === 'D') current = { text: '', tooLarge: false };
+  else if (snapshot.comparison) current = await readHeadFile(context, change.path, snapshot.comparison.headOid);
+  else current = await readWorkingFile(projectId, change.path);
   const tooLarge = base.tooLarge || current.tooLarge;
   const binary = change.binary || (!tooLarge && (base.text === null || current.text === null));
+  let note: string | undefined;
+  if (tooLarge) note = 'This diff is too large to display.';
+  else if (binary) note = 'Binary diff · preview unavailable';
+  else note = undefined;
   return {
     projectId, status: change.status, path: change.path, previousPath: change.previousPath,
     additions: change.additions, deletions: change.deletions, binary, tooLarge,
     baseText: binary || tooLarge ? null : base.text,
     currentText: binary || tooLarge ? null : current.text,
-    note: tooLarge ? 'This diff is too large to display.' : binary ? 'Binary diff · preview unavailable' : undefined
+    note
   };
 }
 

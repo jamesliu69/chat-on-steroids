@@ -51,10 +51,12 @@ const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen'])
 const TRACE = process.env.COS_BROWSER_TRACE === '1';
 
 function traceIds(args: unknown[]): string {
-  return args.map(arg => typeof arg === 'number' ? String(arg)
-    : arg && typeof arg === 'object' && 'tabId' in arg ? `tab ${String((arg as { tabId: unknown }).tabId)}`
-      : arg && typeof arg === 'object' && 'id' in arg ? `#${String((arg as { id: unknown }).id)}`
-        : typeof arg).join(', ');
+  return args.map(arg => {
+    if (typeof arg === 'number') return String(arg);
+    if (arg && typeof arg === 'object' && 'tabId' in arg) return `tab ${String((arg as { tabId: unknown }).tabId)}`;
+    if (arg && typeof arg === 'object' && 'id' in arg) return `#${String((arg as { id: unknown }).id)}`;
+    return typeof arg;
+  }).join(', ');
 }
 
 interface Frame {
@@ -295,7 +297,10 @@ export class CosBrowser {
 
   /** One `chrome.*` call from the extension worker. */
   private async answer(name: string, args: unknown): Promise<unknown> {
-    const label = TRACE ? `${name}(${Array.isArray(args) ? traceIds(args) : ''})` : '';
+    let label: string;
+    if (!TRACE) label = '';
+    else if (Array.isArray(args)) label = `${name}(${traceIds(args)})`;
+    else label = `${name}()`;
     const late = TRACE ? setTimeout(() => logWarn(`cos browser trace: ${label} still pending after 10 s`), 10_000) : null;
     try {
       const reply = await callChromeApi(this.control, name, args);
@@ -460,9 +465,14 @@ export class CosBrowser {
   /** One of the app's own pages, from the dev server or beside the bundle. */
   private loadPage(contents: WebContents, file: string): void {
     const rendererUrl = this.assets.rendererUrl();
-    void (rendererUrl
-      ? contents.loadURL(new URL(file, rendererUrl.endsWith('/') ? rendererUrl : `${rendererUrl}/`).toString())
-      : contents.loadFile(path.join(this.assets.rendererDir, file))).catch(() => undefined);
+    let pending: Promise<void>;
+    if (rendererUrl) {
+      let base: string;
+      if (rendererUrl.endsWith('/')) base = rendererUrl;
+      else base = `${rendererUrl}/`;
+      pending = contents.loadURL(new URL(file, base).toString());
+    } else pending = contents.loadFile(path.join(this.assets.rendererDir, file));
+    void pending.catch(() => undefined);
   }
 
   private destroyFrame(id: number): void {
@@ -917,7 +927,11 @@ export class CosBrowser {
     model: this.model,
 
     createWindow: ({ url, focused, state, type }) => {
-      const id = this.model.createWindow({ type, state: focused ? (state === 'minimized' ? 'normal' : state) : 'minimized' });
+      let windowState: typeof state;
+      if (!focused) windowState = 'minimized';
+      else if (state === 'minimized') windowState = 'normal';
+      else windowState = state;
+      const id = this.model.createWindow({ type, state: windowState });
       this.createFrame(id);
       if (url !== undefined) this.control.createTab(id, url, { active: true });
       if (focused) this.showWindow(id, true);

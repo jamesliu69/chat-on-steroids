@@ -1818,11 +1818,10 @@ async function actLocked(
       const originalFailed = sendingIndices[failedBatchIndex] ?? sendingIndices[partial] ?? totalCompleted;
       const message = err instanceof Error ? err.message : String(err);
       const exactRoutes = hasExactPartialRoutes ? [...routes] : null;
-      const routeEvidence = exactRoutes
-        ? exactRoutes.length > 0
-          ? exactRoutes.join('+')
-          : 'none'
-        : 'unavailable';
+      let routeEvidence: string;
+      if (!exactRoutes) routeEvidence = 'unavailable';
+      else if (exactRoutes.length > 0) routeEvidence = exactRoutes.join('+');
+      else routeEvidence = 'none';
       throw new ComputerError(
         `PARTIAL_BATCH: completed_count=${totalCompleted} failed_index=${originalFailed} routes=${routeEvidence}. ${message}`,
         {
@@ -1985,7 +1984,9 @@ async function requestParentAccessibility(): Promise<void> {
 }
 
 function nativePermission(value: unknown): MacOSPermissionState {
-  return value === true ? 'granted' : value === false ? 'missing' : 'unknown';
+  if (value === true) return 'granted';
+  if (value === false) return 'missing';
+  return 'unknown';
 }
 
 export async function refreshMacOSDesktopAccess(

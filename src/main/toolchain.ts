@@ -131,10 +131,16 @@ function byVersionDescending(left: string, right: string): number {
     if (x === undefined) return 1;
     if (y === undefined) return -1;
     const numeric = /^\d/.test(x) && /^\d/.test(y);
-    const order = numeric ? Number(x) - Number(y) : x < y ? -1 : x > y ? 1 : 0;
+    let order: number;
+    if (numeric) order = Number(x) - Number(y);
+    else if (x < y) order = -1;
+    else if (x > y) order = 1;
+    else order = 0;
     if (order !== 0) return -order;
   }
-  return left < right ? 1 : left > right ? -1 : 0;
+  if (left < right) return 1;
+  if (left > right) return -1;
+  return 0;
 }
 
 interface Discovery {

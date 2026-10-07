@@ -90,7 +90,12 @@ export function trayRgba(
   const outerRadius = 6.2 * scaleFactor;
   const innerRadius = 3.25 * scaleFactor;
   const macTemplate = platform === 'darwin';
-  const [r, g, b] = macTemplate ? [0, 0, 0] : running ? [34, 160, 90] : [130, 130, 138];
+  let r: number;
+  let g: number;
+  let b: number;
+  if (macTemplate) { r = 0; g = 0; b = 0; }
+  else if (running) { r = 34; g = 160; b = 90; }
+  else { r = 130; g = 130; b = 138; }
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {

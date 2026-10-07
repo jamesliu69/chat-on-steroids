@@ -360,7 +360,10 @@ export async function statInfo(
   opts: { hash?: boolean } = {}
 ): Promise<FileInfo> {
   const stat = await fs.lstat(realPath);
-  const type = stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other';
+  let type: FileInfo['type'];
+  if (stat.isDirectory()) type = 'directory';
+  else if (stat.isFile()) type = 'file';
+  else type = 'other';
   const info: FileInfo = {
     virtualPath,
     type,
@@ -465,10 +468,14 @@ export async function listDirectory(
           bytes = null;
         }
       }
+      let entryType: 'directory' | 'file' | 'other';
+      if (isDir) entryType = 'directory';
+      else if (dirent.isFile()) entryType = 'file';
+      else entryType = 'other';
       entries.push({
         name: dirent.name,
         virtualPath: childVirtual,
-        type: isDir ? 'directory' : dirent.isFile() ? 'file' : 'other',
+        type: entryType,
         bytes
       });
       if (isDir && opts.recursive) {

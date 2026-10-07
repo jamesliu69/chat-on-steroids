@@ -387,7 +387,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, token
   // Charged only after authentication, so another local process cannot spend the budget.
   if (rateLimited()) return reply(res, 429, { error: 'rate_limited' });
   if (req.method !== 'GET') {
-    const allow = route === '/v1/inputs' ? 'GET, POST' : isActionPath(route) ? 'POST' : 'GET';
+    let allow: string;
+    if (route === '/v1/inputs') allow = 'GET, POST';
+    else if (isActionPath(route)) allow = 'POST';
+    else allow = 'GET';
     return reply(res, 405, { error: 'method_not_allowed' }, { allow });
   }
   if (Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined) {

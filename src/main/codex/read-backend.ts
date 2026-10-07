@@ -135,7 +135,10 @@ export async function statInfo(
   options: { scanContent?: boolean } = {}
 ): Promise<FileInfo> {
   const metadata = await getMetadata(realPath);
-  const type = metadata.isDirectory ? 'directory' : metadata.isFile ? 'file' : 'other';
+  let type: FileInfo['type'];
+  if (metadata.isDirectory) type = 'directory';
+  else if (metadata.isFile) type = 'file';
+  else type = 'other';
   const info: FileInfo = {
     virtualPath,
     type,
@@ -183,10 +186,14 @@ export async function listDirectoryLevel(
         bytes = null;
       }
     }
+    let entryType: FileInfo['type'];
+    if (entry.isDirectory) entryType = 'directory';
+    else if (entry.isFile) entryType = 'file';
+    else entryType = 'other';
     entries.push({
       name: entry.fileName,
       virtualPath: `${virtualDir}/${entry.fileName}`,
-      type: entry.isDirectory ? 'directory' : entry.isFile ? 'file' : 'other',
+      type: entryType,
       bytes
     });
   }

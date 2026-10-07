@@ -107,9 +107,14 @@ export function parseClientStatus(raw: unknown): ClientStatus {
   const target = asString(route['target']);
   const mode = asString(route['route_mode']);
   const proxy = asString(route['proxy_source']);
-  const routeText = target
-    ? `${target} · ${proxy && proxy !== 'none' ? ("via " + proxy) : (mode ?? 'direct')}`
-    : null;
+  let routeText: string | null;
+  if (!target) routeText = null;
+  else {
+    let via: string;
+    if (proxy && proxy !== 'none') via = "via " + proxy;
+    else via = mode ?? 'direct';
+    routeText = `${target} · ${via}`;
+  }
 
   return {
     version: asString(obj['version']),

@@ -532,14 +532,12 @@ function handle<T>(channel: string, fn: (payload: unknown) => Promise<T>): void 
     try {
       return { ok: true as const, data: await fn(payload) };
     } catch (err) {
-      const message =
-        err instanceof SandboxError || err instanceof z.ZodError
-          ? err instanceof z.ZodError
-            ? (err.issues[0]?.message ?? 'Invalid input')
-            : err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      let message: string;
+      if (err instanceof SandboxError || err instanceof z.ZodError) {
+        if (err instanceof z.ZodError) message = err.issues[0]?.message ?? 'Invalid input';
+        else message = err.message;
+      } else if (err instanceof Error) message = err.message;
+      else message = String(err);
       return { ok: false as const, error: message };
     }
   });
@@ -585,9 +583,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       z.object({ action: z.literal('select'), id: z.string().min(1).max(64) }),
       z.object({ action: z.literal('remove'), id: z.string().min(1).max(64) })
     ]).parse(payload);
-    await updateConfig(config => request.action === 'add'
-      ? addSetupProfile(config, request.name)
-      : request.action === 'remove' ? removeSetupProfile(config, request.id) : switchSetupProfile(config, request.id),
+    await updateConfig(config => {
+      if (request.action === 'add') return addSetupProfile(config, request.name);
+      if (request.action === 'remove') return removeSetupProfile(config, request.id);
+      return switchSetupProfile(config, request.id);
+    },
     async () => {
       // The committed profile owns the connection even if credential cleanup fails.
       try { if (request.action === 'remove') await setSecret(setupApiKeySlot(request.id), ''); }
@@ -842,8 +842,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
   });
   handle('skills:library', async payload => {
     const scope = z.object({ sessionId: z.string().min(1).max(80).nullable().optional(), projectId: z.string().uuid().nullable().optional() }).strict().parse(payload ?? {});
-    const folder = () => scope.sessionId ? getSessionProject(scope.sessionId)
-      : scope.projectId ? projectWorkspace(scope.projectId) : Promise.resolve(null);
+    const folder = () => {
+      if (scope.sessionId) return getSessionProject(scope.sessionId);
+      if (scope.projectId) return projectWorkspace(scope.projectId);
+      return Promise.resolve(null);
+    };
     const before = await folder();
     const library = await listSkillLibrary({ projectPath: before?.real ?? null, refreshCodexPlugins: true });
     if ((await folder())?.real !== before?.real) throw new Error('The project changed while Skills were loading');
@@ -1031,7 +1034,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
     await setSecret(key === 'openaiApiKey' ? setupApiKeySlot(owner) : key, value);
     const activeGoalKey = getConfig().goal.provider.kind === 'custom' ? 'customProviderApiKey' : 'openRouterApiKey';
     if (key === activeGoalKey) retireGoalDrafts();
-    const what = key === 'openRouterApiKey' ? 'openrouter key' : key === 'customProviderApiKey' ? 'custom provider key' : 'api key';
+    let what: string;
+    if (key === 'openRouterApiKey') what = 'openrouter key';
+    else if (key === 'customProviderApiKey') what = 'custom provider key';
+    else what = 'api key';
     logInfo(value.trim() === '' ? `${what} cleared` : `${what} stored`);
     return buildState();
   });
@@ -1184,7 +1190,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
   // Installation does not change the saved execution browser or load the CoS host.
   handle('browser:setupOpen', async (payload) => {
     const { browser, page } = z.object({ browser: z.enum(['chrome', 'edge', 'brave']), page: z.enum(['extensions', 'chatgpt']) }).strict().parse(payload);
-    const url = page === 'chatgpt' ? 'https://chatgpt.com/' : `${browser === 'edge' ? 'edge' : browser === 'brave' ? 'brave' : 'chrome'}://extensions/`;
+    let extensionsScheme: string;
+    if (browser === 'edge') extensionsScheme = 'edge';
+    else if (browser === 'brave') extensionsScheme = 'brave';
+    else extensionsScheme = 'chrome';
+    let url: string;
+    if (page === 'chatgpt') url = 'https://chatgpt.com/';
+    else url = `${extensionsScheme}://extensions/`;
     await openInPreferredBrowser(url, { browser, reveal: true });
     return true;
   });
@@ -1616,8 +1628,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       if (!await startBridge()) throw new Error('The browser bridge could not start');
       signal.throwIfAborted();
       const marker = `cos-input=${encodeURIComponent(entry.id)}`;
-      await wakeBrowserUrl(entry.conversationId ? `https://chatgpt.com/c/${encodeURIComponent(entry.conversationId)}`
-        : `https://chatgpt.com/?${entry.lifetime === 'temporary-planner' ? 'temporary-chat=true&' : ''}${marker}#${marker}`);
+      let wakeUrl: string;
+      if (entry.conversationId) wakeUrl = `https://chatgpt.com/c/${encodeURIComponent(entry.conversationId)}`;
+      else {
+        let plannerPrefix: string;
+        if (entry.lifetime === 'temporary-planner') plannerPrefix = 'temporary-chat=true&';
+        else plannerPrefix = '';
+        wakeUrl = `https://chatgpt.com/?${plannerPrefix}${marker}#${marker}`;
+      }
+      await wakeBrowserUrl(wakeUrl);
     },
     bindHelper: async (conversationId, fromSessionId) => {
       const source = fromSessionId ? await getSession(fromSessionId) : null;
@@ -1649,9 +1668,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
         ? entry.text + GOAL_MARKER_INSTRUCTION : entry.text;
       // Only the opening user input owns executor setup. Existing chats, queued
       // checkpoints and automatic continuations already have their instructions.
-      return (entry.opening || !entry.sessionId) && !entry.conversationId && !entry.finishOwner && entry.mode !== 'finish'
-        ? prepareSessionPrompt(text, entry, limits, authored)
-        : !entry.finishOwner && entry.purpose !== 'decision' ? prepareSkillFollowup(text, authored, limits, entry) : text;
+      if ((entry.opening || !entry.sessionId) && !entry.conversationId && !entry.finishOwner && entry.mode !== 'finish') {
+        return prepareSessionPrompt(text, entry, limits, authored);
+      }
+      if (!entry.finishOwner && entry.purpose !== 'decision') return prepareSkillFollowup(text, authored, limits, entry);
+      return text;
     },
     applyAutomation: async (conversationId, automation, phase, objective, loopAfterTurn) => {
       // This message supersedes the old final; never pick that old final up merely

@@ -117,12 +117,10 @@ function getShellPath(
 const ZSH_FALLBACK_PATHS = ['/bin/zsh'];
 const BASH_FALLBACK_PATHS = ['/bin/bash', '/usr/bin/bash'];
 const SH_FALLBACK_PATHS = ['/bin/sh'];
-const PWSH_FALLBACK_PATHS =
-  process.platform === 'win32'
-    ? [String.raw`C:\Program Files\PowerShell\7\pwsh.exe`]
-    : process.platform === 'darwin'
-      ? ['/opt/homebrew/bin/pwsh', '/usr/local/bin/pwsh']
-      : ['/usr/local/bin/pwsh'];
+let PWSH_FALLBACK_PATHS: string[];
+if (process.platform === 'win32') PWSH_FALLBACK_PATHS = [String.raw`C:\Program Files\PowerShell\7\pwsh.exe`];
+else if (process.platform === 'darwin') PWSH_FALLBACK_PATHS = ['/opt/homebrew/bin/pwsh', '/usr/local/bin/pwsh'];
+else PWSH_FALLBACK_PATHS = ['/usr/local/bin/pwsh'];
 const POWERSHELL_FALLBACK_PATHS =
   process.platform === 'win32' ? [String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`] : [];
 

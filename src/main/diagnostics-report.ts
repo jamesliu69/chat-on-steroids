@@ -44,11 +44,12 @@ export function reportableSettings(value: unknown, prefix = ''): string[] {
   if (value === null || value === undefined) return [];
   if (Array.isArray(value)) return [`${prefix}: ${value.length} item(s)`];
   if (typeof value === 'object') {
-    return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) =>
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => {
       // A number or an on/off value names nothing ("autoTokens: 400000"); text and whole groups under
       // a private-sounding key are left out.
-      PRIVATE_SETTING.test(key) && typeof child !== 'number' && typeof child !== 'boolean'
-        ? [] : reportableSettings(child, prefix ? `${prefix}.${key}` : key));
+      if (PRIVATE_SETTING.test(key) && typeof child !== 'number' && typeof child !== 'boolean') return [];
+      return reportableSettings(child, prefix ? `${prefix}.${key}` : key);
+    });
   }
   if (typeof value === 'boolean' || typeof value === 'number') return [`${prefix}: ${value}`];
   if (typeof value === 'string' && /^[A-Za-z0-9._:-]{1,40}$/.test(value)) return [`${prefix}: ${value}`];
@@ -76,10 +77,12 @@ export function renderDiagnosticsReport(sources: DiagnosticsReportSources): stri
   const scrub = (text: string) => scrubText(text, context);
   // Scrub each text value before it is serialized: in JSON a Windows path has doubled backslashes
   // ("C:\\Users\\Jane\\…"), which the path patterns do not see as a path.
-  const scrubValue = (value: unknown): unknown => typeof value === 'string' ? scrub(value)
-    : Array.isArray(value) ? value.map(scrubValue)
-      : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrubValue(item)]))
-        : value;
+  const scrubValue = (value: unknown): unknown => {
+    if (typeof value === 'string') return scrub(value);
+    if (Array.isArray(value)) return value.map(scrubValue);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrubValue(item)]));
+    return value;
+  };
   const ended = sources.sessions.filter(session => session.endedAt !== null).length;
   const header = [
     '# Chat On Steroids diagnostics report',

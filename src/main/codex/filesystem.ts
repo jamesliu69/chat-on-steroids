@@ -375,7 +375,11 @@ export async function walk(root: string, options: WalkOptions): Promise<WalkOutc
       if (!pushWalkError(outcome, state, directory, errorMessage(error))) return outcome;
       continue;
     }
-    entries.sort((left, right) => (left.fileName < right.fileName ? -1 : left.fileName > right.fileName ? 1 : 0));
+    entries.sort((left, right) => {
+      if (left.fileName < right.fileName) return -1;
+      if (left.fileName > right.fileName) return 1;
+      return 0;
+    });
 
     for (const entry of entries) {
       if (entryCount === options.maxEntries) {

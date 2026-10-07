@@ -42,7 +42,11 @@ export function connectorTunnelKey(config: Pick<Config, 'tunnel'>, surface: Surf
   const profile = tunnel.profileId ?? 'default';
   if (tunnel.kind === 'openai') {
     // Each connector has its own Secure Tunnel ID; Plugins never falls back to Core's (connection.ts).
-    const id = (surface === 'desktop' ? tunnel.desktopTunnelId : surface === 'plugins' ? tunnel.pluginsTunnelId : tunnel.tunnelId)?.trim() ?? '';
+    let rawId: string | undefined;
+    if (surface === 'desktop') rawId = tunnel.desktopTunnelId;
+    else if (surface === 'plugins') rawId = tunnel.pluginsTunnelId;
+    else rawId = tunnel.tunnelId;
+    const id = rawId?.trim() ?? '';
     return id ? `openai:${profile}:${id}` : null;
   }
   if (tunnel.kind === 'manual') return `manual:${profile}:${surface}`;

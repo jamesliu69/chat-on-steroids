@@ -208,7 +208,9 @@ async function resolveTarget(
 
 async function kindOf(real: string): Promise<ProjectFileKind> {
   const stat = await fs.lstat(real);
-  return stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other';
+  if (stat.isDirectory()) return 'directory';
+  if (stat.isFile()) return 'file';
+  return 'other';
 }
 
 export async function projectFileTarget(

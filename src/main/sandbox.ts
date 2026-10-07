@@ -354,12 +354,10 @@ export async function resolvePath(
   // may be reached. `..` is still refused segment by segment below, because nothing
   // normalises a traversal away first: shorthand cannot climb out of the workspace, and
   // certainly not out of the root.
-  const requested =
-    isAbsoluteVirtualPath(suppliedPath) || !options.base
-      ? suppliedPath
-      : IS_WINDOWS
-        ? `${options.base.replace(/[/\\]+$/, '')}/${String(suppliedPath).replace(/^[/\\]+/, '')}`
-        : `${options.base.replace(/\/+$/, '')}/${String(suppliedPath).replace(/^\/+/, '')}`;
+  let requested: string;
+  if (isAbsoluteVirtualPath(suppliedPath) || !options.base) requested = suppliedPath;
+  else if (IS_WINDOWS) requested = `${options.base.replace(/[/\\]+$/, '')}/${String(suppliedPath).replace(/^[/\\]+/, '')}`;
+  else requested = `${options.base.replace(/\/+$/, '')}/${String(suppliedPath).replace(/^\/+/, '')}`;
   if (typeof requested === 'string' && requested.trim() !== '' && !isAbsoluteVirtualPath(requested)) {
     // Not "Unknown root src": the caller was using shorthand, and being told their first
     // folder is not a root explains nothing about what to do instead.

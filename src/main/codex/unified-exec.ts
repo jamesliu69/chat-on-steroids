@@ -806,9 +806,11 @@ export class UnifiedExecProcessManager {
       });
     } catch (error) {
       this.releaseProcessId(request.processId);
-      throw error instanceof UnifiedExecError
-        ? error
-        : UnifiedExecError.createProcess(error instanceof Error ? error.message : String(error));
+      if (error instanceof UnifiedExecError) throw error;
+      let detail: string;
+      if (error instanceof Error) detail = error.message;
+      else detail = String(error);
+      throw UnifiedExecError.createProcess(detail);
     }
 
     const start = Date.now();

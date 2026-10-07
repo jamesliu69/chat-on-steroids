@@ -346,7 +346,10 @@ function refreshTray(): void {
   const offline = state === 'offline';
   // Offline keeps the running icon: the bridge is up, the internet is not.
   const running = connected || offline;
-  const label = mainText(connected ? 'Connected' : offline ? 'No internet' : 'Not connected');
+  let label: string;
+  if (connected) label = mainText('Connected');
+  else if (offline) label = mainText('No internet');
+  else label = mainText('Not connected');
   tray.setImage(trayIcon(running));
   // Not lowercased: that would break translated nouns ("Keine Internetverbindung").
   tray.setToolTip(`Chat On Steroids — ${label}`);

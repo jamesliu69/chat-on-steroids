@@ -246,6 +246,10 @@ function describeSurfaces(): SurfaceStatus[] {
   return SURFACE_LIST.map((surface) => {
     const available = surfaceIsUseful(surface.id, caps);
     const previous = status.surfaces.find((entry) => entry.id === surface.id);
+    let detail: string;
+    if (!available) detail = desktopUnavailableDetail(surface.id);
+    else if (running) detail = previous?.detail ?? '';
+    else detail = '';
     return {
       id: surface.id,
       connectorName: surfaceDefinition(surface.id).connectorName,
@@ -257,7 +261,7 @@ function describeSurfaces(): SurfaceStatus[] {
       publicUrl: running ? (previous?.publicUrl ?? null) : null,
       tools: toolsFor(surface.id),
       state: available && running ? (previous?.state ?? 'off') : 'off',
-      detail: available ? (running ? (previous?.detail ?? '') : '') : desktopUnavailableDetail(surface.id),
+      detail,
       // Per connector, because a Core call proves nothing about whether the user ever
       // created the Desktop connector in ChatGPT. Publication is our side of the wire;
       // these two are the only evidence of the other side.

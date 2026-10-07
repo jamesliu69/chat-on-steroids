@@ -136,14 +136,13 @@ export async function secureStorageStatus(platform: NodeJS.Platform = process.pl
   try {
     const safeStorage = await electronSafeStorage();
     if (!(await keychain(() => safeStorage.isAsyncEncryptionAvailable(), available => available))) {
+      let detail: string;
+      if (platform === 'linux') detail = 'Secure credential storage is unavailable. Start or unlock a Linux desktop keyring/Secret Service (for example GNOME Keyring or KWallet), then try again.';
+      else if (platform === 'darwin') detail = 'macOS Keychain credential storage is unavailable. Unlock the login keychain, then try again.';
+      else detail = 'Secure operating-system credential storage is unavailable on this machine.';
       return {
         available: false,
-        detail:
-          platform === 'linux'
-            ? 'Secure credential storage is unavailable. Start or unlock a Linux desktop keyring/Secret Service (for example GNOME Keyring or KWallet), then try again.'
-            : platform === 'darwin'
-              ? 'macOS Keychain credential storage is unavailable. Unlock the login keychain, then try again.'
-              : 'Secure operating-system credential storage is unavailable on this machine.'
+        detail
       };
     }
     if (platform === 'linux') {

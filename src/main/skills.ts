@@ -520,7 +520,11 @@ function originBytes(origin: GitHubSkillOrigin | undefined, revision: string): B
 }
 
 export function skillPackageRevision(files: Array<{ relative: string; sha: string; size: number }>): string {
-  const ordered = [...files].sort((left, right) => left.relative < right.relative ? -1 : left.relative > right.relative ? 1 : 0)
+  const ordered = [...files].sort((left, right) => {
+    if (left.relative < right.relative) return -1;
+    if (left.relative > right.relative) return 1;
+    return 0;
+  })
     .map(file => ({ relative: file.relative, sha: file.sha, size: file.size }));
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');
 }

@@ -27,10 +27,12 @@ export function registerWorkspaceTerminalIpc(getWindow: () => BrowserWindow | nu
         current.once('destroyed', retire); current.once('did-start-loading', retire);
       }
       const service = terminals!;
-      const data = args.action === 'create' ? await service.create(args.id, args.projectId, args.cols, args.rows)
-        : args.action === 'write' ? await service.write(args.id, args.data)
-        : args.action === 'resize' ? service.resize(args.id, args.cols, args.rows)
-        : args.action === 'ack' ? service.acknowledge(args.id, args.count) : service.close(args.id);
+      let data: unknown;
+      if (args.action === 'create') data = await service.create(args.id, args.projectId, args.cols, args.rows);
+      else if (args.action === 'write') data = await service.write(args.id, args.data);
+      else if (args.action === 'resize') data = service.resize(args.id, args.cols, args.rows);
+      else if (args.action === 'ack') data = service.acknowledge(args.id, args.count);
+      else data = service.close(args.id);
       return { ok: true, data };
     } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
   });

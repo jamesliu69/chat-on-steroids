@@ -488,7 +488,8 @@ export class PluginManager {
     this.starting.get(row.id)?.controller.abort();
     const live = this.live.get(row.id);
     this.live.delete(row.id);
-    row.status = row.enabled ? ['error', 'needs-auth'].includes(row.status) ? row.status : 'installed' : 'disabled';
+    if (!row.enabled) row.status = 'disabled';
+    else if (!['error', 'needs-auth'].includes(row.status)) row.status = 'installed';
     // Revocation happens before process/transport retirement can yield.
     this.exposureCache = null;
     if (live) {
@@ -523,7 +524,9 @@ export class PluginManager {
       } catch (error) {
         if (this.authenticating.get(id) === operation && row.enabled && this.records.includes(row)) {
           row.status = error instanceof PluginOAuthSetupError ? 'error' : 'needs-auth';
-          row.error = operation.controller.signal.aborted ? undefined : error instanceof PluginOAuthSetupError ? error.message : 'Sign-in was not completed. Check the service setup and try Sign in again.';
+          if (operation.controller.signal.aborted) row.error = undefined;
+          else if (error instanceof PluginOAuthSetupError) row.error = error.message;
+          else row.error = 'Sign-in was not completed. Check the service setup and try Sign in again.';
         }
       } finally {
         provider?.dispose();
@@ -781,7 +784,9 @@ export class PluginManager {
       if (!signal.aborted) {
         const needsAuth = e instanceof PluginNeedsAuth || e instanceof UnauthorizedError;
         row.status = needsAuth ? 'needs-auth' : 'error';
-        row.error = row.source.auth === 'oauth' ? needsAuth ? 'Sign in to connect this plugin.' : 'The OAuth server could not connect. Check its setup and try again.' : String(this.redact((e as Error).message)).slice(0, 600);
+        if (row.source.auth !== 'oauth') row.error = String(this.redact((e as Error).message)).slice(0, 600);
+        else if (needsAuth) row.error = 'Sign in to connect this plugin.';
+        else row.error = 'The OAuth server could not connect. Check its setup and try again.';
       }
     } finally {
       signal.removeEventListener('abort', retire);
@@ -872,7 +877,9 @@ export class PluginManager {
       // A failed/ambiguous call must not leave a broken process running idle.
       if (this.live.get(row.id) === live && this.records.includes(row)) {
         const needsAuth = error instanceof PluginNeedsAuth || error instanceof UnauthorizedError;
-        row.status = row.enabled ? needsAuth ? 'needs-auth' : 'error' : 'disabled';
+        if (!row.enabled) row.status = 'disabled';
+        else if (needsAuth) row.status = 'needs-auth';
+        else row.status = 'error';
         row.error = needsAuth ? 'Sign in again to reconnect this plugin.' : 'Server call failed or disconnected. Restart after checking its application.';
         this.changed();
       }
