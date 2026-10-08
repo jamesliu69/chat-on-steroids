@@ -13,7 +13,7 @@ vi.mock('../src/main/agents.js', async (original) => ({
 }));
 vi.mock('../src/main/session/recorder.js', async (original) => ({
   ...await original<typeof import('../src/main/session/recorder.js')>(),
-  freshCallOrigin: (_tool: string, _at: number, request: string | null) => request?.startsWith('req-') ? request.slice(4) : null,
+  freshCallOrigin: (request: string | null) => request?.startsWith('req-') ? request.slice(4) : null,
   recordToolCall: async () => null, recordAgentMessage: broker.record
 }));
 vi.mock('../src/main/session/store.js', async (original) => ({

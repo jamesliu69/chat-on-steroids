@@ -2290,6 +2290,7 @@ var CLF_DOM = (() => {
    */
   function insertPrompt(value, mode = false, failure = () => undefined) {
     const box = composer();
+    const append = typeof mode === 'string' && mode === 'append';
     const reject = reason => {
       // A bounded predicate survives tab retirement without exposing authored data.
       safe(() => failure(reason), undefined);
@@ -2311,7 +2312,7 @@ var CLF_DOM = (() => {
       if (!selection) return reject('selection_missing');
       if (existing === '') { selection.selectAllChildren(box); } else {
         selection.selectAllChildren(box);
-        if (mode === 'append') {
+        if (append) {
           selection.collapseToEnd();
           value = `\n${value}`;
         }
@@ -2340,7 +2341,7 @@ var CLF_DOM = (() => {
       if (value === '') host.append(document.createElement('br'));
       if (!document.execCommand('insertHTML', false, paragraph.innerHTML)) return reject('native_edit_rejected');
       const compact = text => String(text || '').replaceAll(/\s+/g, '');
-      const expected = mode === 'append' ? existing + value : value;
+      const expected = append ? existing + value : value;
       if (!box.isConnected || composer() !== box) return reject('editor_replaced');
       if (compact(box.textContent) !== compact(expected)) return reject('text_mismatch');
       return true;

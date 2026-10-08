@@ -1,15 +1,15 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_EXCLUDES, globToRegExp, search, searchOneFile } from '../src/main/search.js';
-import { ripgrepExecutableName } from '../src/main/ripgrep.js';
+import * as ripgrep from '../src/main/ripgrep.js';
 import { makeTempDir, removeTempDir, writeTree } from './helpers.js';
 
 describe('ripgrep executable naming', () => {
   it('uses .exe only on Windows', () => {
-    expect(ripgrepExecutableName('win32')).toBe('rg.exe');
-    expect(ripgrepExecutableName('darwin')).toBe('rg');
-    expect(ripgrepExecutableName('linux')).toBe('rg');
+    expect(ripgrep.ripgrepExecutableName('win32')).toBe('rg.exe');
+    expect(ripgrep.ripgrepExecutableName('darwin')).toBe('rg');
+    expect(ripgrep.ripgrepExecutableName('linux')).toBe('rg');
   });
 });
 
@@ -261,6 +261,26 @@ describe('content search', () => {
   it('skips binary files', async () => {
     const out = await search(req({ query: 'findme', mode: 'content' }));
     expect(out.hits.map((h) => h.path)).not.toContain('/root/src/blob.bin');
+  });
+
+  it('preserves UTF-16 and binary handling in the JavaScript fallback', async () => {
+    const locateRipgrep = vi.spyOn(ripgrep, 'locateRipgrep').mockReturnValue(null);
+    try {
+      const utf16 = await search(
+        req({ query: 'findme', mode: 'content', include: '**/utf16.txt', exclude: [] })
+      );
+      expect(locateRipgrep).toHaveBeenCalled();
+      expect(utf16.hits).toEqual([
+        { path: '/root/src/utf16.txt', line: 2, text: 'findme utf16' }
+      ]);
+
+      const binary = await search(
+        req({ query: 'findme', mode: 'content', include: '**/blob.bin', exclude: [] })
+      );
+      expect(binary.hits).toEqual([]);
+    } finally {
+      locateRipgrep.mockRestore();
+    }
   });
 
   it('honours the default exclusions', async () => {

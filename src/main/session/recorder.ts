@@ -847,22 +847,15 @@ function noteCallEvidence(
   return stored;
 }
 
-export function freshCallOrigin(tool: string, after: number, requestId: string | null = null): string | null {
-  void tool;
-  void after;
+export function freshCallOrigin(requestId: string | null): string | null {
   return requestCorrelation(requestId)?.conversationId ?? null;
 }
 
 export async function awaitFreshCallOrigin(
-  tool: string,
-  after: number,
-  within: number,
-  options: { exact?: boolean; requestId?: string | null } = {}
+  requestId: string | null,
+  within: number
 ): Promise<string | null> {
-  void tool;
-  void after;
-  void options.exact;
-  const correlation = await awaitRequestCorrelation(options.requestId ?? null, within);
+  const correlation = await awaitRequestCorrelation(requestId, within);
   return correlation?.conversationId ?? null;
 }
 

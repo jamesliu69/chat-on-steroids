@@ -4,10 +4,8 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 
 type AwaitFreshCallOrigin = (
-  tool: string,
-  after: number,
-  within: number,
-  options: { exact?: boolean; requestId?: string | null }
+  requestId: string | null,
+  within: number
 ) => Promise<string | null>;
 
 const gate = vi.hoisted(() => ({
@@ -158,9 +156,9 @@ it('keeps the source fenced after dispatch and permits an unrelated proven sourc
   expect(compactingConversation(SOURCE_CHAT)?.token).toBe(ticket.token);
   expect(anyCompactingConversation()).toBe(true);
 
-  gate.awaitFreshCallOrigin.mockImplementationOnce(async (_tool, _after, _timeout, options) => {
+  gate.awaitFreshCallOrigin.mockImplementationOnce(async (requestId) => {
     observeRequestCorrelation({
-      requestId: options.requestId!,
+      requestId: requestId!,
       conversationId: SOURCE_CHAT,
       sessionId: session.id,
       messageId: 'late-source-message',
@@ -189,9 +187,9 @@ it('keeps the source fenced after dispatch and permits an unrelated proven sourc
 it('keeps the blocked-chat exact identity wait when no continuation is open', async () => {
   const blockedSession = await createSession({ title: 'MCP blocked proof', conversationId: SOURCE_CHAT });
   setChatBlocked(SOURCE_CHAT, true);
-  gate.awaitFreshCallOrigin.mockImplementationOnce(async (_tool, _after, _timeout, options) => {
+  gate.awaitFreshCallOrigin.mockImplementationOnce(async (requestId) => {
     observeRequestCorrelation({
-      requestId: options.requestId!,
+      requestId: requestId!,
       conversationId: SOURCE_CHAT,
       sessionId: blockedSession.id,
       messageId: 'blocked-message',

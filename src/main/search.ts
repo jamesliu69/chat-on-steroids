@@ -9,6 +9,7 @@
 
 import { rawCreateReadStream as createReadStream, rawPromises as fs } from './rawfs.js';
 import { spawn } from 'node:child_process';
+import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import { locateRipgrep } from './ripgrep.js';
 import { isExcludedFolderName, sniffBinaryBytes, type TextEncoding } from './fsops.js';
@@ -105,6 +106,28 @@ export interface SearchRequest {
   maxResults: number;
   /** Absolute whole-tool deadline shared by every approved root. */
   deadline?: number;
+}
+
+interface SearchCandidate {
+  real: string;
+  rel: string;
+}
+
+interface PendingDirectory {
+  dir: string;
+  rel: string;
+}
+
+interface FallbackSearchState {
+  hits: SearchHit[];
+  candidates: SearchCandidate[];
+  filesScanned: number;
+  stoppedBecause: SearchOutcome['stoppedBecause'];
+}
+
+interface LineCollector {
+  results: Array<{ line: number; text: string }>;
+  consider: (line: string) => void;
 }
 
 /** Translates a glob into a regex. Supports *, ?, ** and nothing else, on purpose. */
@@ -322,6 +345,121 @@ async function searchWithRipgrep(
   });
 }
 
+function searchBudgetStopReason(
+  deadline: number,
+  filesScanned: number
+): Extract<SearchOutcome['stoppedBecause'], 'time' | 'files'> | null {
+  if (Date.now() > deadline) return 'time';
+  if (filesScanned >= MAX_FILES_SCANNED) return 'files';
+  return null;
+}
+
+function matchesFileName(req: SearchRequest, fileName: string, needle: string): boolean {
+  const haystack = req.caseSensitive ? fileName : fileName.toLowerCase();
+  return needle === '' || haystack.includes(needle);
+}
+
+function collectFile(
+  req: SearchRequest,
+  current: PendingDirectory,
+  dirent: Dirent,
+  childRel: string,
+  includeMatcher: ((relPath: string) => boolean) | null,
+  needle: string,
+  state: FallbackSearchState
+): void {
+  state.filesScanned++;
+  if (includeMatcher && !includeMatcher(childRel)) return;
+  if (req.mode === 'content') {
+    state.candidates.push({ real: path.join(current.dir, dirent.name), rel: childRel });
+    return;
+  }
+  if (!matchesFileName(req, dirent.name, needle)) return;
+  state.hits.push({ path: `${req.virtualDir}/${childRel}` });
+  if (state.hits.length >= req.maxResults) state.stoppedBecause = 'limit';
+}
+
+function collectDirectory(
+  req: SearchRequest,
+  current: PendingDirectory,
+  dirent: Dirent,
+  childRel: string,
+  pendingDirectories: PendingDirectory[]
+): void {
+  if (isExcludedFolderName(dirent.name, req.exclude)) return;
+  pendingDirectories.push({ dir: path.join(current.dir, dirent.name), rel: childRel });
+}
+
+async function scanDirectory(
+  req: SearchRequest,
+  current: PendingDirectory,
+  pendingDirectories: PendingDirectory[],
+  includeMatcher: ((relPath: string) => boolean) | null,
+  needle: string,
+  deadline: number,
+  state: FallbackSearchState
+): Promise<void> {
+  let directory;
+  try {
+    directory = await fs.opendir(current.dir);
+  } catch {
+    return;
+  }
+  try {
+    for await (const dirent of directory) {
+      const stopReason = searchBudgetStopReason(deadline, state.filesScanned);
+      if (stopReason) {
+        state.stoppedBecause = stopReason;
+        return;
+      }
+      const childRel = current.rel ? `${current.rel}/${dirent.name}` : dirent.name;
+      if (dirent.isDirectory()) {
+        collectDirectory(req, current, dirent, childRel, pendingDirectories);
+        continue;
+      }
+      if (!dirent.isFile()) continue;
+      collectFile(req, current, dirent, childRel, includeMatcher, needle, state);
+      if (state.stoppedBecause === 'limit') return;
+    }
+  } finally {
+    await directory.close().catch(() => undefined);
+  }
+}
+
+async function walkSearchTree(req: SearchRequest, deadline: number): Promise<FallbackSearchState> {
+  const state: FallbackSearchState = {
+    hits: [],
+    candidates: [],
+    filesScanned: 0,
+    stoppedBecause: null
+  };
+  const needle = req.caseSensitive ? req.query : req.query.toLowerCase();
+  const includeMatcher = req.include ? compileIncludeMatcher(req.include, req.caseSensitive) : null;
+  const pendingDirectories: PendingDirectory[] = [{ dir: req.realDir, rel: '' }];
+  // Queue head cursor rather than Array.shift(): a broad tree can enqueue thousands of
+  // directories, and shifting the front reindexes the whole remaining array on every BFS
+  // step. Keeping the same append-only breadth-first order makes traversal O(n) instead of
+  // adding an avoidable O(n²) queue-management term.
+  let directoryHead = 0;
+  let directoriesScanned = 0;
+  while (directoryHead < pendingDirectories.length) {
+    const stopReason = searchBudgetStopReason(deadline, state.filesScanned);
+    if (stopReason) {
+      state.stoppedBecause = stopReason;
+      break;
+    }
+    if (directoriesScanned >= MAX_DIRECTORIES_SCANNED) {
+      state.stoppedBecause = 'files';
+      break;
+    }
+    const current = pendingDirectories[directoryHead++]!;
+    directoriesScanned++;
+    await scanDirectory(req, current, pendingDirectories, includeMatcher, needle, deadline, state);
+    if (state.stoppedBecause !== null) break;
+  }
+  return state;
+}
+
 export async function search(req: SearchRequest): Promise<SearchOutcome> {
   if (req.mode === 'content') {
     const ripgrep = locateRipgrep();
@@ -330,96 +468,26 @@ export async function search(req: SearchRequest): Promise<SearchOutcome> {
   }
   const started = Date.now();
   const deadline = Math.min(started + TIME_BUDGET_MS, req.deadline ?? Number.POSITIVE_INFINITY);
-  const hits: SearchHit[] = [];
-  let filesScanned = 0;
-  let directoriesScanned = 0;
-  let stoppedBecause: SearchOutcome['stoppedBecause'] = null;
+  const state = await walkSearchTree(req, deadline);
 
-  const needle = req.caseSensitive ? req.query : req.query.toLowerCase();
-  const includeMatcher = req.include ? compileIncludeMatcher(req.include, req.caseSensitive) : null;
-  const candidates: Array<{ real: string; rel: string }> = [];
-
-  const outOfBudget = (): boolean => {
-    if (Date.now() > deadline) {
-      stoppedBecause = 'time';
-      return true;
-    }
-    if (filesScanned >= MAX_FILES_SCANNED) {
-      stoppedBecause = 'files';
-      return true;
-    }
-    return false;
-  };
-
-  const pendingDirectories: Array<{ dir: string; rel: string }> = [{ dir: req.realDir, rel: '' }];
-  // Queue head cursor rather than Array.shift(): a broad tree can enqueue thousands of
-  // directories, and shifting the front reindexes the whole remaining array on every BFS
-  // step. Keeping the same append-only breadth-first order makes traversal O(n) instead of
-  // adding an avoidable O(n²) queue-management term.
-  let directoryHead = 0;
-  while (directoryHead < pendingDirectories.length && !outOfBudget()) {
-    if (directoriesScanned >= MAX_DIRECTORIES_SCANNED) {
-      stoppedBecause = 'files';
-      break;
-    }
-    const current = pendingDirectories[directoryHead++]!;
-    directoriesScanned++;
-    let directory;
-    try {
-      directory = await fs.opendir(current.dir);
-    } catch {
-      continue;
-    }
-    try {
-      for await (const dirent of directory) {
-        if (outOfBudget()) break;
-        const childRel = current.rel ? `${current.rel}/${dirent.name}` : dirent.name;
-        if (dirent.isDirectory()) {
-          if (!isExcludedFolderName(dirent.name, req.exclude)) {
-            pendingDirectories.push({ dir: path.join(current.dir, dirent.name), rel: childRel });
-          }
-          continue;
-        }
-        if (!dirent.isFile()) continue;
-        filesScanned++;
-        if (includeMatcher && !includeMatcher(childRel)) continue;
-        if (req.mode === 'name') {
-          const haystack = req.caseSensitive ? dirent.name : dirent.name.toLowerCase();
-          if (needle === '' || haystack.includes(needle)) {
-            hits.push({ path: `${req.virtualDir}/${childRel}` });
-            if (hits.length >= req.maxResults) {
-              stoppedBecause = 'limit';
-              break;
-            }
-          }
-        } else {
-          candidates.push({ real: path.join(current.dir, dirent.name), rel: childRel });
-        }
-      }
-    } finally {
-      await directory.close().catch(() => undefined);
-    }
-    if (stoppedBecause === 'limit') break;
-  }
-
-  if (req.mode === 'content' && stoppedBecause !== 'limit') {
-    await scanContents(req, candidates, hits, deadline, (reason) => {
-      stoppedBecause = reason;
+  if (req.mode === 'content' && state.stoppedBecause !== 'limit') {
+    await scanContents(req, state.candidates, state.hits, deadline, (reason) => {
+      state.stoppedBecause = reason;
     });
   }
 
   return {
-    hits,
-    filesScanned,
-    truncated: stoppedBecause !== null,
-    stoppedBecause,
+    hits: state.hits,
+    filesScanned: state.filesScanned,
+    truncated: state.stoppedBecause !== null,
+    stoppedBecause: state.stoppedBecause,
     elapsedMs: Date.now() - started
   };
 }
 
 async function scanContents(
   req: SearchRequest,
-  candidates: Array<{ real: string; rel: string }>,
+  candidates: SearchCandidate[],
   hits: SearchHit[],
   deadline: number,
   stop: (reason: 'limit' | 'time') => void
@@ -529,41 +597,67 @@ export async function searchOneFile(
   };
 }
 
+async function isSearchableContentFile(realPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(realPath);
+    return stat.size > 0 && stat.size <= MAX_CONTENT_FILE_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+function compileContentLineMatcher(req: SearchRequest): (line: string) => boolean {
+  if (!req.regex) {
+    const needle = req.caseSensitive ? req.query : req.query.toLowerCase();
+    return req.caseSensitive
+      ? (line: string): boolean => line.includes(needle)
+      : (line: string): boolean => line.toLowerCase().includes(needle);
+  }
+  try {
+    const regex = new RegExp(req.query, req.caseSensitive ? '' : 'i');
+    return (line: string): boolean => regex.test(line);
+  } catch (error) {
+    throw new Error(`Invalid search regex: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function createLineCollector(req: SearchRequest): LineCollector {
+  const matches = compileContentLineMatcher(req);
+  const results: Array<{ line: number; text: string }> = [];
+  let lineNo = 0;
+  return {
+    results,
+    consider(line: string): void {
+      lineNo++;
+      if (!matches(line)) return;
+      const trimmed = line.trim();
+      results.push({
+        line: lineNo,
+        text: trimmed.length > MAX_LINE_CHARS ? `${trimmed.slice(0, MAX_LINE_CHARS)}…` : trimmed
+      });
+    }
+  };
+}
+
+function consumeCompleteLines(carry: string, consider: (line: string) => void): string {
+  let remainder = carry;
+  let at = remainder.indexOf('\n');
+  while (at !== -1) {
+    consider(remainder.slice(0, at).replace(/\r$/, ''));
+    remainder = remainder.slice(at + 1);
+    at = remainder.indexOf('\n');
+  }
+  return remainder;
+}
+
 async function scanOneFile(
   realPath: string,
   req: SearchRequest
 ): Promise<Array<{ line: number; text: string }>> {
-  let stat;
-  try {
-    stat = await fs.stat(realPath);
-  } catch {
-    return [];
-  }
-  if (stat.size === 0 || stat.size > MAX_CONTENT_FILE_BYTES) return [];
-  const needle = req.caseSensitive ? req.query : req.query.toLowerCase();
-  let regex: RegExp | null = null;
-  if (req.regex) {
-    try {
-      regex = new RegExp(req.query, req.caseSensitive ? '' : 'i');
-    } catch (error) {
-      throw new Error(`Invalid search regex: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  const results: Array<{ line: number; text: string }> = [];
-  let lineNo = 0;
+  if (!(await isSearchableContentFile(realPath))) return [];
+  const collector = createLineCollector(req);
   let carry = '';
   let decoder: TextDecoder | null = null;
-
-  const consider = (line: string): void => {
-    lineNo++;
-    const haystack = req.caseSensitive ? line : line.toLowerCase();
-    if (regex ? !regex.test(line) : !haystack.includes(needle)) return;
-    const trimmed = line.trim();
-    results.push({
-      line: lineNo,
-      text: trimmed.length > MAX_LINE_CHARS ? `${trimmed.slice(0, MAX_LINE_CHARS)}…` : trimmed
-    });
-  };
 
   const stream = createReadStream(realPath, { highWaterMark: 64 * 1024 });
   try {
@@ -574,21 +668,16 @@ async function scanOneFile(
         decoder = new TextDecoder(textEncodingFromHead(data));
       }
       carry += decoder.decode(data, { stream: true });
-      let at = carry.indexOf('\n');
-      while (at !== -1) {
-        consider(carry.slice(0, at).replace(/\r$/, ''));
-        carry = carry.slice(at + 1);
-        at = carry.indexOf('\n');
-      }
+      carry = consumeCompleteLines(carry, collector.consider);
       // A file with no newlines would otherwise grow `carry` without bound.
       if (carry.length > MAX_CONTENT_FILE_BYTES) break;
     }
     if (decoder !== null) carry += decoder.decode();
-    if (carry.length > 0) consider(carry.replace(/\r$/, ''));
+    if (carry.length > 0) collector.consider(carry.replace(/\r$/, ''));
   } catch {
-    return results;
+    return collector.results;
   } finally {
     stream.destroy();
   }
-  return results;
+  return collector.results;
 }

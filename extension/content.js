@@ -4255,13 +4255,15 @@
     const id = typeof forConversation === 'string' && /^[0-9a-f-]{8,64}$/i.test(forConversation) ? forConversation : null;
     const next = id && typeof text === 'string' && text ? text : null;
     const previous = livePreviewSent;
+    const sameConversation = typeof id === 'string' && typeof previous.conversationId === 'string' &&
+      previous.conversationId === id;
     if (previous.conversationId === id && previous.text === next) return;
     livePreviewSent = { conversationId: id, text: next };
     // A route change must not leave the old chat's caption behind.
     if (previous.text && previous.conversationId && previous.conversationId !== id) {
       void ask({ type: 'live_preview', conversationId: previous.conversationId, text: null });
     }
-    if (id && (next || previous.conversationId === id)) void ask({ type: 'live_preview', conversationId: id, text: next });
+    if (id && (next || sameConversation)) void ask({ type: 'live_preview', conversationId: id, text: next });
   }
 
   async function refreshFiber(settled = null, presentationOnly = false) {
@@ -11822,7 +11824,10 @@
   const notePageHide = (event) => {
     // Hand over anything still queued before this script stops existing. The worker
     // outlives the page, so this is the last chance for these observations to survive.
-    void flush();
+    flush().catch(() => {
+      // Page teardown owns no retry loop; the queued observations remain in page memory
+      // until this document actually exits or the worker confirms durable receipt.
+    });
     // `persisted` means the page went into the back/forward cache: it is frozen, not
     // gone, and the same script resumes on pageshow. Reporting that as a close ended the
     // session and the next observation reopened it, which is where the flood of

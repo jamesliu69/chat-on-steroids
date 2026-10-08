@@ -147,13 +147,13 @@ function level(items: RowMenuItem[], label: () => string, depth: number): HTMLEl
   ui(menu, 'aria-label', label);
   for (const item of items) {
     if (item.separated && menu.childElementCount) menu.append(el('div', 'row-menu-separator'));
-    menu.append(itemButton(item, menu, depth));
+    menu.append(itemButton(item, depth));
   }
   menu.addEventListener('keydown', event => keyboard(event, menu, depth));
   return menu;
 }
 
-function itemButton(item: RowMenuItem, menu: HTMLElement, depth: number): HTMLButtonElement {
+function itemButton(item: RowMenuItem, depth: number): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `row-menu-item${item.danger ? ' is-danger' : ''}`;
@@ -200,7 +200,6 @@ function itemButton(item: RowMenuItem, menu: HTMLElement, depth: number): HTMLBu
     });
   }
   button.addEventListener('pointermove', () => { if (document.activeElement !== button && !button.disabled) button.focus({ preventScroll: true }); });
-  void menu;
   return button;
 }
 

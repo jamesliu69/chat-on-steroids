@@ -413,6 +413,36 @@
       return request;
     } catch { return null; }
   }
+  function observeFetchResponse(result, args, resume, observedAt, order) {
+    result.then((response) => {
+      if (!active) return;
+      let status = null, streamOpened = false;
+      try {
+        const url = new URL(response.url);
+        if (url.origin === location.origin && url.pathname === '/backend-api/f/conversation/resume') {
+          status = response.status;
+          streamOpened = status === 200 && response.headers.get('content-type')?.includes('text/event-stream');
+        }
+      } catch { /* Unknown response identity cannot report a failure. */ }
+      if (resume) post({ type: 'cos-resume-response', ...resume,
+        status: inspectedResponses.has(response) ? null : status,
+        ...(streamOpened && !inspectedResponses.has(response) ? { streamOpened: true } : {}) }, location.origin);
+      if (inspectedResponses.has(response)) return;
+      inspectedResponses.add(response);
+      inspect(response, observedAt, order).catch(() => {});
+      inspectSystemHints(response).catch(() => {});
+      let method = 'GET';
+      try {
+        const explicit = args[1] && typeof args[1].method === 'string' ? args[1].method : null;
+        const inherited = args[0] && typeof args[0] === 'object' && typeof args[0].method === 'string' ? args[0].method : null;
+        method = String(explicit || inherited || 'GET').toUpperCase();
+      } catch { return; }
+      if (method === 'POST') inspectRequestOrigins(response, observedAt).catch(() => {});
+    }).catch(() => {
+      // Network rejection only retires custody; it cannot prove that the stream is gone.
+      if (resume) post({ type: 'cos-resume-response', ...resume, status: null }, location.origin);
+    });
+  }
   const installFetchObserver = () => {
     if (!active || window.fetch === observedFetch || typeof window.fetch !== 'function') return;
     // A page wrapper may still call our earlier wrapper. Capture its downstream
@@ -424,35 +454,7 @@
       noteSendModel(args, observedAt);
       const resume = active ? resumeRequest(args) : null;
       const result = downstreamFetch.apply(this, args);
-      if (!active) return result;
-      void result.then((response) => {
-        if (!active) return;
-        let status = null, streamOpened = false;
-        try {
-          const url = new URL(response.url);
-          if (url.origin === location.origin && url.pathname === '/backend-api/f/conversation/resume') {
-            status = response.status;
-            streamOpened = status === 200 && response.headers.get('content-type')?.includes('text/event-stream');
-          }
-        } catch { /* Unknown response identity cannot report a failure. */ }
-        if (resume) post({ type: 'cos-resume-response', ...resume,
-          status: inspectedResponses.has(response) ? null : status,
-          ...(streamOpened && !inspectedResponses.has(response) ? { streamOpened: true } : {}) }, location.origin);
-        if (inspectedResponses.has(response)) return;
-        inspectedResponses.add(response);
-        void inspect(response, observedAt, order).catch(() => {});
-        void inspectSystemHints(response).catch(() => {});
-        let method = 'GET';
-        try {
-          const explicit = args[1] && typeof args[1].method === 'string' ? args[1].method : null;
-          const inherited = args[0] && typeof args[0] === 'object' && typeof args[0].method === 'string' ? args[0].method : null;
-          method = String(explicit || inherited || 'GET').toUpperCase();
-        } catch { return; }
-        if (method === 'POST') void inspectRequestOrigins(response, observedAt).catch(() => {});
-      }).catch(() => {
-        // Network rejection only retires custody; it cannot prove that the stream is gone.
-        if (resume) post({ type: 'cos-resume-response', ...resume, status: null }, location.origin);
-      });
+      if (active) observeFetchResponse(result, args, resume, observedAt, order);
       return result;
     };
     // ChatGPT installs its own fetch instrumentation after document_start. Keep that owner in

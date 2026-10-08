@@ -605,5 +605,14 @@ it('uses existing process custody for nested exec and write_stdin across a conve
   expect(await rebindSession(a.session.id, a.conversationId, replacement)).toBe(true);
   observeRequestCorrelation({ requestId, conversationId: replacement, sessionId: a.session.id, messageId: randomUUID(), tool: 'exec', observedAt: Date.now() });
   const continued = await call(requestId, `text(await tools.write_stdin({session_id:${processId},chars:"owner\\r",yield_time_ms:1000}));`);
-  expect(text(continued)).toContain('OWNED_RESULT');
+  const received = [text(continued)];
+  // A successfully owned PTY can still be running when the first bounded poll returns.
+  // Keep polling that same process under its rebound exact owner rather than treating
+  // a legitimate "still running" result as a failed identity or launching it again.
+  for (let attempt = 0; attempt < 6 && !received.join('\n').includes('OWNED_RESULT'); attempt++) {
+    if (!received.at(-1)?.includes(`Process running with session ID ${processId}`)) break;
+    const next = await call(requestId, `text(await tools.write_stdin({session_id:${processId},chars:"",yield_time_ms:1000}));`);
+    received.push(text(next));
+  }
+  expect(received.join('\n')).toContain('OWNED_RESULT');
 });

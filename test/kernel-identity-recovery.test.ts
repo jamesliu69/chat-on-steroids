@@ -8,10 +8,10 @@ const fixture = vi.hoisted(() => ({
 }));
 vi.mock('../src/main/session/recorder.js', async original => ({
   ...await original<typeof import('../src/main/session/recorder.js')>(),
-  freshCallOrigin: (_tool: string, _at: number, requestId: string) => requestCorrelation(requestId)?.conversationId ?? null,
-  awaitFreshCallOrigin: async (_tool: string, _at: number, _timeout: number, options: { requestId: string }) => {
-    fixture.awaitIdentity(options.requestId);
-    return requestCorrelation(options.requestId)?.conversationId ?? null;
+  freshCallOrigin: (requestId: string | null) => requestCorrelation(requestId)?.conversationId ?? null,
+  awaitFreshCallOrigin: async (requestId: string | null, _timeout: number) => {
+    fixture.awaitIdentity(requestId);
+    return requestCorrelation(requestId)?.conversationId ?? null;
   },
   recordToolCall: fixture.record
 }));

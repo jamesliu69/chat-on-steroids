@@ -1783,6 +1783,181 @@ function isTurnCorrection(event: SessionEvent, turnId?: string | null, turns?: T
     responseTurnId(turns, event.turnId) === responseTurnId(turns, turnId);
 }
 
+type CompletedFinalEvent = Extract<SessionEvent, { kind: 'assistant_message' | 'turn_end' }>;
+type AuthoredQuestionEvent = Extract<SessionEvent, { kind: 'user_message' }>;
+
+function sameResponseTurn(
+  turns: TimelineTurns | undefined,
+  left: string | null | undefined,
+  right: string | null | undefined
+): boolean {
+  return !!left && !!right && responseTurnId(turns, left) === responseTurnId(turns, right);
+}
+
+async function readStableCompletionWindow(
+  entry: OpenSession,
+  sessionId: string,
+  conversationId: string
+): Promise<{ recent: SessionEvent[]; question: AuthoredQuestionEvent | undefined } | null> {
+  const revision = entry.nextSeq;
+  if (entry.summary.conversationId !== conversationId) return null;
+  const [recent, questions] = await Promise.all([
+    readRecentEventsFromDisk(sessionId, 256, {
+      kinds: ['turn_start', 'turn_end', 'user_message', 'assistant_message', 'native_image', 'tool_call', 'page_tool']
+    }),
+    readRecentEventsFromDisk(sessionId, 1, {
+      kinds: ['user_message'],
+      orderByOrigin: true,
+      before: Infinity,
+      acceptEvent: event => !injectedUserMessage(event, entry.summary.timelineTurns)
+    })
+  ]);
+  if (entry.nextSeq !== revision || entry.summary.conversationId !== conversationId) return null;
+  const question = questions[0];
+  return { recent, question: question?.kind === 'user_message' ? question : undefined };
+}
+
+function isCompletedImageEnd(
+  event: SessionEvent,
+  recent: readonly SessionEvent[],
+  requestedTurnId: string | null | undefined,
+  turns: TimelineTurns | undefined
+): boolean {
+  if (event.kind !== 'turn_end' || event.outcome !== 'completed' || !event.providerMessageId || !event.turnId) return false;
+  if (requestedTurnId && !sameResponseTurn(turns, event.turnId, requestedTurnId)) return false;
+  return recent.some(image =>
+    image.kind === 'native_image' &&
+    image.messageId === event.providerMessageId &&
+    image.providerStatus === 'finished_successfully' &&
+    sameResponseTurn(turns, image.turnId, event.turnId)
+  );
+}
+
+function isRequestedAssistantFinal(
+  event: SessionEvent,
+  requestedTurnId: string | null | undefined,
+  turns: TimelineTurns | undefined
+): boolean {
+  if (event.kind !== 'assistant_message' || event.final !== true || !event.messageId) return false;
+  if (!event.message.text.trim() && !event.providerMessageId) return false;
+  if (!requestedTurnId || event.turnId === requestedTurnId) return true;
+  if (event.providerMessageId && sameResponseTurn(turns, event.turnId, requestedTurnId)) return true;
+  return requestedTurnId.startsWith('reply:') && event.messageId === requestedTurnId.slice(6);
+}
+
+function findCompletedFinalEvent(
+  recent: readonly SessionEvent[],
+  requestedTurnId: string | null | undefined,
+  turns: TimelineTurns | undefined
+): CompletedFinalEvent | undefined {
+  return recent.findLast((event): event is CompletedFinalEvent =>
+    isCompletedImageEnd(event, recent, requestedTurnId, turns) ||
+    isRequestedAssistantFinal(event, requestedTurnId, turns)
+  );
+}
+
+interface CompletionFreshWorkContext {
+  final: CompletedFinalEvent;
+  contentSeq: number;
+  completedAt: number;
+  conversationId: string;
+  summary: SessionSummary;
+  lastBoundary: Extract<SessionEvent, { kind: 'turn_start' | 'turn_end' }> | undefined;
+  nativeReopen: boolean;
+  nativeFinal: boolean;
+  ownQuestion: string | undefined;
+}
+
+function toolCallContinuesAfterFinal(
+  event: Extract<SessionEvent, { kind: 'tool_call' }>,
+  context: CompletionFreshWorkContext
+): boolean {
+  if (event.time <= context.completedAt) return false;
+  const owner = event.source === 'mcp' && event.call.attribution === 'request_id'
+    ? recordedRequestTurn(context.summary.requestTurns, event.call.requestId, context.conversationId)
+    : undefined;
+  const settledByNativeFinal = !!(
+    context.final.providerMessageId &&
+    (context.final.kind === 'turn_end' || context.final.state === 'final') &&
+    owner &&
+    owner.origin < context.contentSeq &&
+    sameResponseTurn(context.summary.timelineTurns, owner.turnId, context.final.turnId) &&
+    event.call.conversationId === context.conversationId &&
+    (!event.turnId || sameResponseTurn(context.summary.timelineTurns, event.turnId, context.final.turnId))
+  );
+  return !settledByNativeFinal;
+}
+
+function turnStartContinuesAfterFinal(
+  event: Extract<SessionEvent, { kind: 'turn_start' }>,
+  context: CompletionFreshWorkContext
+): boolean {
+  if (context.nativeReopen && event === context.lastBoundary) return false;
+  const originalTurnStart = event.source !== 'app' && !!context.final.turnId &&
+    event.turnId === context.final.turnId &&
+    context.summary.timelineTurns?.[context.final.turnId]?.origin === positionOf(event);
+  return !originalTurnStart;
+}
+
+function eventContinuesAfterFinal(event: SessionEvent, context: CompletionFreshWorkContext): boolean {
+  if (event === context.final || workSequence(event) <= context.contentSeq) return false;
+  if (event.kind === 'tool_call') return toolCallContinuesAfterFinal(event, context);
+  if (event.kind === 'turn_end') {
+    return !sameResponseTurn(context.summary.timelineTurns, event.turnId, context.final.turnId) ||
+      (event.outcome !== 'completed' && !(event.outcome === 'stalled' && context.nativeFinal));
+  }
+  if (event.kind === 'turn_start') return turnStartContinuesAfterFinal(event, context);
+  if (event.kind === 'user_message') {
+    const correction = isTurnCorrection(event, context.final.turnId, context.summary.timelineTurns) &&
+      positionOf(event) < context.contentSeq;
+    return !correction && !(context.ownQuestion && event.messageId === context.ownQuestion);
+  }
+  return event.kind === 'assistant_message' || event.kind === 'page_tool';
+}
+
+function completedFinalStillCurrent(
+  entry: OpenSession,
+  recent: readonly SessionEvent[],
+  question: AuthoredQuestionEvent | undefined,
+  final: CompletedFinalEvent,
+  conversationId: string,
+  contentSeq: number,
+  completedAt: number
+): boolean {
+  const turns = entry.summary.timelineTurns;
+  const correction = (event: SessionEvent): boolean =>
+    isTurnCorrection(event, final.turnId, turns) && positionOf(event) < contentSeq;
+  if (question && positionOf(question) >= positionOf(final) && !correction(question)) return false;
+  if (!final.turnId && (!question || question.time > final.time)) return false;
+  if (entry.summary.activeTurnId && !sameResponseTurn(turns, entry.summary.activeTurnId, final.turnId)) return false;
+
+  const boundaries = recent
+    .filter((event): event is Extract<SessionEvent, { kind: 'turn_start' | 'turn_end' }> =>
+      event.kind === 'turn_start' || event.kind === 'turn_end')
+    .sort((a, b) => a.seq - b.seq);
+  const lastBoundary = boundaries.at(-1);
+  const priorBoundary = boundaries.at(-2);
+  const nativeReopen = !!final.providerMessageId &&
+    lastBoundary?.kind === 'turn_start' &&
+    lastBoundary.source === 'app' &&
+    lastBoundary.turnId === final.turnId &&
+    priorBoundary?.kind === 'turn_end' &&
+    priorBoundary.turnId === final.turnId &&
+    priorBoundary.outcome === 'completed';
+  const context: CompletionFreshWorkContext = {
+    final,
+    contentSeq,
+    completedAt,
+    conversationId,
+    summary: entry.summary,
+    lastBoundary,
+    nativeReopen,
+    nativeFinal: final.kind === 'turn_end' || (final.final === true && !!final.providerMessageId),
+    ownQuestion: final.turnId ? turns?.[final.turnId]?.questionId : undefined
+  };
+  return !recent.some(event => eventContinuesAfterFinal(event, context));
+}
+
 /** Latest lifecycle boundary for one recovery source. Injected same-turn instructions
  * do not replace it; a new question, another turn, or a stop still does. Message revisions
  * retain their authored position so replaying an old question cannot cancel current work. */
@@ -1810,72 +1985,18 @@ export async function readCompletedFinal(sessionId: string, conversationId: stri
 } | null> {
   const entry = await ensureOpen(sessionId);
   await flushSession(sessionId);
-  const revision = entry.nextSeq;
-  if (entry.summary.conversationId !== conversationId) return null;
-  const [recent, questions] = await Promise.all([
-    readRecentEventsFromDisk(sessionId, 256, { kinds: ['turn_start', 'turn_end', 'user_message', 'assistant_message', 'native_image', 'tool_call', 'page_tool'] }),
-    readRecentEventsFromDisk(sessionId, 1, { kinds: ['user_message'], orderByOrigin: true,
-      before: Infinity, acceptEvent: event => !injectedUserMessage(event, entry.summary.timelineTurns) })
-  ]);
-  if (entry.nextSeq !== revision || entry.summary.conversationId !== conversationId) return null;
-  const sameTurn = (left: string | null | undefined, right: string | null | undefined) => !!left && !!right &&
-    responseTurnId(entry.summary.timelineTurns, left) === responseTurnId(entry.summary.timelineTurns, right);
+  const window = await readStableCompletionWindow(entry, sessionId, conversationId);
+  if (!window) return null;
   // Pixels/media alone are not completion. Require the provider's exact terminal
   // message on a completed lifecycle boundary and its matching recorded image.
   // These facts may arrive in either batch; never manufacture assistant prose.
-  const imageEnd = (event: SessionEvent) => event.kind === 'turn_end' && event.outcome === 'completed' &&
-    !!event.providerMessageId && !!event.turnId && (!turnId || sameTurn(event.turnId, turnId)) &&
-    recent.some(image => image.kind === 'native_image' && image.messageId === event.providerMessageId &&
-      image.providerStatus === 'finished_successfully' && sameTurn(image.turnId, event.turnId));
-  const final = recent.findLast(event => imageEnd(event) || (event.kind === 'assistant_message' && event.final === true &&
-    (!!event.message.text.trim() || !!event.providerMessageId) && !!event.messageId && (!turnId || event.turnId === turnId ||
-      (!!event.providerMessageId && sameTurn(event.turnId, turnId)) ||
-      (turnId.startsWith('reply:') && event.messageId === turnId.slice(6)))));
-  if (!final || (final.kind !== 'assistant_message' && final.kind !== 'turn_end')) return null;
+  const final = findCompletedFinalEvent(window.recent, turnId, entry.summary.timelineTurns);
+  if (!final) return null;
   const messageId = final.kind === 'turn_end' ? final.providerMessageId : final.messageId;
   if (!messageId) return null;
   const seq = final.kind === 'turn_end' ? positionOf(final) : final.finalContentSeq ?? positionOf(final);
   const completedAt = final.kind === 'turn_end' ? final.time : final.finalObservedAt ?? final.time;
-  const question = questions[0];
-  const correction = (event: SessionEvent) => isTurnCorrection(event, final.turnId, entry.summary.timelineTurns) && positionOf(event) < seq;
-  // The question this turn answered, reported again after the answer, is not a new question: a
-  // new chat's first message can reach the page as "just authored" (re-escaped) only after
-  // ChatGPT's redraw, when the turn has already ended. A genuinely new question has a new id.
-  const ownQuestion = final.turnId ? entry.summary.timelineTurns?.[final.turnId]?.questionId : undefined;
-  const nativeFinal = final.kind === 'turn_end' || (final.final === true && !!final.providerMessageId);
-  if (question && positionOf(question) >= positionOf(final) && !correction(question)) return null;
-  // With no generation identity, require an actual preceding authored boundary.
-  if (!final.turnId && (!question || question.time > final.time)) return null;
-  if (entry.summary.activeTurnId && !sameTurn(entry.summary.activeTurnId, final.turnId)) return null;
-  const boundaries = recent.filter(event => event.kind === 'turn_start' || event.kind === 'turn_end').sort((a, b) => a.seq - b.seq);
-  const last = boundaries.at(-1), prior = boundaries.at(-2);
-  const nativeReopen = !!final.providerMessageId && last?.kind === 'turn_start' && last.source === 'app' &&
-    last.turnId === final.turnId && prior?.kind === 'turn_end' && prior.turnId === final.turnId && prior.outcome === 'completed';
-  if (recent.some(event => {
-    if (event === final || workSequence(event) <= seq) return false;
-    if (event.kind === 'tool_call') {
-      if (event.time <= completedAt) return false;
-      // A public native final settles its request even when Pro delivers another
-      // connector call afterwards. Require proof recorded BEFORE that final; a new
-      // request or conflicting generation is fresh work, not a trailing result.
-      const owner = event.source === 'mcp' && event.call.attribution === 'request_id'
-        ? recordedRequestTurn(entry.summary.requestTurns, event.call.requestId, conversationId) : undefined;
-      return !(final.providerMessageId && (final.kind === 'turn_end' || final.state === 'final') && owner && owner.origin < seq &&
-        sameTurn(owner.turnId, final.turnId) && event.call.conversationId === conversationId &&
-        (!event.turnId || sameTurn(event.turnId, final.turnId)));
-    }
-    // The page's ten-minute check ends a turn as `stalled` when it never saw the end. After
-    // ChatGPT's own final for that turn, the turn did end; nothing new happened (#1099).
-    if (event.kind === 'turn_end') return !sameTurn(event.turnId, final.turnId) ||
-      (event.outcome !== 'completed' && !(event.outcome === 'stalled' && nativeFinal));
-    // The first start of the final's own turn, recorded after that final: ChatGPT reported a fast
-    // answer's end before the page opened the turn from the Send receipt (#1099). Not new work.
-    if (event.kind === 'turn_start') return !(nativeReopen && event === last) &&
-      !(event.source !== 'app' && !!final.turnId && event.turnId === final.turnId &&
-        entry.summary.timelineTurns?.[final.turnId]?.origin === positionOf(event));
-    if (event.kind === 'user_message') return !correction(event) && !(ownQuestion && event.messageId === ownQuestion);
-    return event.kind === 'assistant_message' || event.kind === 'page_tool';
-  })) return null;
+  if (!completedFinalStillCurrent(entry, window.recent, window.question, final, conversationId, seq, completedAt)) return null;
   return { messageId, turnId: final.turnId ?? null, completedAt, contentSeq: seq,
     text: final.kind === 'turn_end' ? '' : modelFacingText(final.message.text, final.renderedHtml) };
 }
@@ -1890,9 +2011,43 @@ export async function readCompletedFinal(sessionId: string, conversationId: stri
  * generation in the same interval is Retry/regenerate reusing the question and is ambiguous.
  * Anything short of that is `pending`; nothing here picks the newest or the mounted answer.
  */
-export async function readHandoffResponse(sessionId: string, conversationId: string, anchorMessageId: string, token: string): Promise<
-  { status: 'complete'; text: string; messageId: string } | { status: 'pending' | 'ambiguous' }
-> {
+type HandoffResponse =
+  { status: 'complete'; text: string; messageId: string } |
+  { status: 'pending' | 'ambiguous' };
+
+type HandoffIntervalAnalysis =
+  { status: 'ready'; final: Extract<SessionEvent, { kind: 'assistant_message' }> } |
+  { status: 'pending' } |
+  { status: 'ambiguous' };
+
+function analyzeHandoffInterval(interval: readonly SessionEvent[], turns: TimelineTurns | undefined): HandoffIntervalAnalysis {
+  const generations = new Set<string>();
+  for (const event of interval) {
+    if (event.kind === 'user_message') continue;
+    if (event.turnId) {
+      generations.add(responseTurnId(turns, event.turnId));
+      continue;
+    }
+    if (event.kind !== 'assistant_message' || event.final) return { status: 'ambiguous' };
+  }
+  if (generations.size > 1) return { status: 'ambiguous' };
+  const [generation] = generations;
+  const boundary = interval
+    .filter(event => event.kind === 'turn_start' || event.kind === 'turn_end')
+    .at(-1);
+  if (!generation || boundary?.kind !== 'turn_end' || boundary.outcome !== 'completed') return { status: 'pending' };
+  const finals = interval.filter((event): event is Extract<SessionEvent, { kind: 'assistant_message' }> =>
+    event.kind === 'assistant_message' && event.final === true && !!event.messageId && !!event.message.text.trim());
+  if (finals.length > 1) return { status: 'ambiguous' };
+  return finals[0] ? { status: 'ready', final: finals[0] } : { status: 'pending' };
+}
+
+export async function readHandoffResponse(
+  sessionId: string,
+  conversationId: string,
+  anchorMessageId: string,
+  token: string
+): Promise<HandoffResponse> {
   const pending = { status: 'pending' } as const, ambiguous = { status: 'ambiguous' } as const;
   const entry = await ensureOpen(sessionId);
   await flushSession(sessionId);
@@ -1908,21 +2063,10 @@ export async function readHandoffResponse(sessionId: string, conversationId: str
   const turns = entry.summary.timelineTurns;
   const next = events.findIndex(event => event.kind === 'user_message' && !injectedUserMessage(event, turns));
   const interval = next < 0 ? events : events.slice(0, next);
-  const generations = new Set<string>();
-  for (const event of interval) {
-    if (event.kind === 'user_message') continue;
-    if (event.turnId) generations.add(responseTurnId(turns, event.turnId));
-    else if (event.kind !== 'assistant_message' || event.final) return ambiguous;
-  }
-  if (generations.size > 1) return ambiguous;
-  const [generation] = generations;
-  const boundary = interval.filter(event => event.kind === 'turn_start' || event.kind === 'turn_end').at(-1);
-  if (!generation || boundary?.kind !== 'turn_end' || boundary.outcome !== 'completed') return pending;
-  const finals = interval.filter((event): event is Extract<SessionEvent, { kind: 'assistant_message' }> =>
-    event.kind === 'assistant_message' && event.final === true && !!event.messageId && !!event.message.text.trim());
-  if (finals.length > 1) return ambiguous;
-  const final = finals[0];
-  if (!final) return pending;
+  const analysis = analyzeHandoffInterval(interval, turns);
+  if (analysis.status === 'ambiguous') return ambiguous;
+  if (analysis.status === 'pending') return pending;
+  const final = analysis.final;
   let text: string | null;
   if (!final.message.truncated) text = final.message.text;
   else if (final.message.assetId) text = await readOverflowText(sessionId, final.message.assetId);
@@ -2914,6 +3058,46 @@ export async function indexedSessions(): Promise<SessionSummary[]> {
  * opt into `includeHistorical` so a conversation that was superseded by Compact & Resume still
  * resolves to the durable session whose `chatIds` lineage contains it. Ambiguity fails closed.
  */
+function currentConversationIds(catalog: AttachmentCatalog, conversationId: string): Set<string> {
+  const ids = new Set(catalog.current.get(conversationId) ?? []);
+  // A create is deliberately visible to this process from the moment its live entry exists.
+  // That prevents a concurrent recorder batch from manufacturing a second session while the
+  // first session's initial files are still being written. Rebinds never expose B here early:
+  // they mutate the live summary only after durable meta says B.
+  for (const [id, entry] of open) {
+    if (entry.summary.conversationId === conversationId) ids.add(id);
+  }
+  return ids;
+}
+
+function historicalConversationIds(catalog: AttachmentCatalog, conversationId: string): Set<string> {
+  const ids = new Set(catalog.historical.get(conversationId) ?? []);
+  for (const [id, entry] of open) {
+    if (entry.summary.chatIds.includes(conversationId)) ids.add(id);
+  }
+  return ids;
+}
+
+async function readConversationCandidates(
+  ids: ReadonlySet<string>,
+  matches: (summary: SessionSummary) => boolean
+): Promise<{ summaries: SessionSummary[]; unreadable: boolean }> {
+  const results = await Promise.all([...ids].map(async id => {
+    try {
+      return { summary: await getSession(id), unreadable: false };
+    } catch {
+      return { summary: null, unreadable: true };
+    }
+  }));
+  return {
+    summaries: results
+      .map(result => result.summary)
+      .filter((summary): summary is SessionSummary => !!summary && matches(summary))
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+    unreadable: results.some(result => result.unreadable)
+  };
+}
+
 export async function findSessionByConversation(
   conversationId: string,
   options: { includeHistorical?: boolean; requireUnique?: boolean } = {}
@@ -2925,26 +3109,11 @@ export async function findSessionByConversation(
   // is remembered for the life of the process and only a create or a rebind of this exact chat
   // clears it, so one unreadable moment used to make a recorded chat permanently unrecorded:
   // every later observation from it is treated as belonging to no session at all.
-  let unreadable = !catalog.complete;
-  const answer = async (id: string): Promise<SessionSummary | null> => {
-    try {
-      return await getSession(id);
-    } catch {
-      unreadable = true;
-      return null;
-    }
-  };
-  const currentIds = new Set(catalog.current.get(conversationId) ?? []);
-  // A create is deliberately visible to this process from the moment its live entry exists.
-  // That prevents a concurrent recorder batch from manufacturing a second session while the
-  // first session's initial files are still being written. Rebinds never expose B here early:
-  // they mutate the live summary only after durable meta says B.
-  for (const [id, entry] of open) {
-    if (entry.summary.conversationId === conversationId) currentIds.add(id);
-  }
-  const current = (await Promise.all([...currentIds].map(answer)))
-    .filter((summary): summary is SessionSummary => summary?.conversationId === conversationId)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const currentLookup = await readConversationCandidates(
+    currentConversationIds(catalog, conversationId),
+    summary => summary.conversationId === conversationId
+  );
+  const current = currentLookup.summaries;
   if (current.length === 1) return current[0] ?? null;
   if (current.length > 1) {
     if (options.requireUnique === true) {
@@ -2957,16 +3126,13 @@ export async function findSessionByConversation(
     return current[0] ?? null;
   }
   if (options.includeHistorical !== true) {
-    if (!unreadable) rememberMissingCurrentConversation(conversationId);
+    if (catalog.complete && !currentLookup.unreadable) rememberMissingCurrentConversation(conversationId);
     return null;
   }
-  const historicalIds = new Set(catalog.historical.get(conversationId) ?? []);
-  for (const [id, entry] of open) {
-    if (entry.summary.chatIds.includes(conversationId)) historicalIds.add(id);
-  }
-  const historical = (await Promise.all([...historicalIds].map(answer)))
-    .filter((summary): summary is SessionSummary => summary?.chatIds.includes(conversationId) === true)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const historical = (await readConversationCandidates(
+    historicalConversationIds(catalog, conversationId),
+    summary => summary.chatIds.includes(conversationId)
+  )).summaries;
   if (historical.length === 1) return historical[0] ?? null;
   if (historical.length > 1) {
     logWarn(`session store: conversation ${conversationId} appears in ${historical.length} session lineages; refusing to guess`);
@@ -3654,6 +3820,45 @@ function sameStoredImage(file: StoredImageFile, observed: VerifiedAssetFile): bo
   return observed.image && observed.dev === file.dev && observed.ino === file.ino && observed.bytes === file.bytes;
 }
 
+async function restoreQuarantinedImage(quarantine: string, target: string): Promise<void> {
+  // A replacement is never deleted. Restore the selected directory entry when possible;
+  // otherwise leave the quarantined file as forensic evidence outside future inventories.
+  try {
+    await fs.lstat(quarantine);
+    try {
+      await fs.lstat(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') await fs.rename(quarantine, target);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (error instanceof Error) throw error;
+      throw new Error(String(error));
+    }
+  }
+}
+
+async function moveSelectedImageToQuarantine(target: string, quarantine: string): Promise<boolean> {
+  try {
+    await fs.rename(target, quarantine);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function inspectQuarantinedImage(
+  file: StoredImageFile,
+  directory: VerifiedAssetsDirectory,
+  quarantineName: string
+): Promise<VerifiedAssetFile | null> {
+  const movedDirectory = await verifiedAssetsDirectory(file.sessionId);
+  if (!movedDirectory || !sameFilesystemPath(movedDirectory.realPath, directory.realPath)) return null;
+  const moved = await inspectVerifiedAssetFile(movedDirectory, quarantineName);
+  return moved && sameStoredImage(file, moved) ? moved : null;
+}
+
 /**
  * Atomically moves the selected directory entry aside, then verifies the moved object before
  * unlinking it. A path replacement can therefore make cleanup abstain, but cannot make it
@@ -3669,34 +3874,14 @@ async function deleteSelectedImage(file: StoredImageFile): Promise<number> {
   const target = path.join(currentDirectory.path, file.assetId);
   const quarantineName = `.cleanup-${process.pid}-${randomUUID()}.tmp`;
   const quarantine = path.join(currentDirectory.path, quarantineName);
+  if (!(await moveSelectedImageToQuarantine(target, quarantine))) return 0;
   try {
-    await fs.rename(target, quarantine);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-    throw error;
-  }
-  try {
-    const movedDirectory = await verifiedAssetsDirectory(file.sessionId);
-    if (!movedDirectory || !sameFilesystemPath(movedDirectory.realPath, currentDirectory.realPath)) return 0;
-    const moved = await inspectVerifiedAssetFile(movedDirectory, quarantineName);
-    if (!moved || !sameStoredImage(file, moved)) return 0;
+    const moved = await inspectQuarantinedImage(file, currentDirectory, quarantineName);
+    if (!moved) return 0;
     await fs.unlink(quarantine);
     return moved.bytes;
   } finally {
-    // A replacement is never deleted. Restore the selected directory entry when possible;
-    // otherwise leave the quarantined file as forensic evidence outside future inventories.
-    try {
-      await fs.lstat(quarantine);
-      try { await fs.lstat(target); }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') await fs.rename(quarantine, target);
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        if (error instanceof Error) throw error;
-        throw new Error(String(error));
-      }
-    }
+    await restoreQuarantinedImage(quarantine, target);
   }
 }
 

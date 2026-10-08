@@ -197,7 +197,10 @@ describe('runCommand', () => {
     const result = await launchCommand(shell!, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], cwd);
     expect(result.pid).toBeGreaterThan(0);
 
-    const deadline = Date.now() + 3000;
+    // launchCommand intentionally returns after spawn, not after PowerShell has initialized.
+    // On a busy Windows CI host that cold startup can exceed three seconds; require the
+    // real marker within a bounded interval instead of mistaking a late start for no start.
+    const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       const text = await fs.readFile(marker, 'utf8').catch(() => '');
       if (text === 'launched') return;

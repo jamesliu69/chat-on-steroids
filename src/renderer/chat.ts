@@ -2443,7 +2443,7 @@ async function revealSearchMatch(id: string, query: string): Promise<void> {
   readTimeline();
   row.scrollIntoView({ block: 'center' });
   row.classList.remove('is-search-hit');
-  row.offsetWidth;
+  row.getBoundingClientRect();
   row.classList.add('is-search-hit');
   window.setTimeout(() => row.classList.remove('is-search-hit'), 2600);
 }
@@ -2646,6 +2646,11 @@ async function fillTimelineHistory(): Promise<void> {
   }
 }
 
+async function copyToolOutput(button: HTMLButtonElement, value: string): Promise<void> {
+  if (await run(api.writeClipboard(value))) ui(button, 'textContent', () => t('Copied'));
+  else toast(t('Could not copy text.'));
+}
+
 function appendToolOutput(box: HTMLDetailsElement, { call }: Extract<SessionEvent, { kind: 'tool_call' }>,
   context?: { id: string; current: () => boolean }): void {
   const raw = el('div', 'raw');
@@ -2655,10 +2660,9 @@ function appendToolOutput(box: HTMLDetailsElement, { call }: Extract<SessionEven
     header.append(icon(KIND_ICON[call.summary.kind] ?? 'i-terminal', 'ico'), el('strong', '', label));
     const copy = el('button', 'tool-copy', () => t('Copy')) as HTMLButtonElement;
     copy.type = 'button';
-    copy.addEventListener('click', () => void (async () => {
-      if (await run(api.writeClipboard(value))) ui(copy, 'textContent', () => t('Copied'));
-      else toast(t('Could not copy text.'));
-    })());
+    copy.addEventListener('click', () => {
+      copyToolOutput(copy, value).catch(() => toast(t('Could not copy text.')));
+    });
     header.append(copy);
     panel.append(header, textBlock('pre', value, truncated, chars));
     raw.append(panel);
@@ -3835,7 +3839,10 @@ function paintRecoveryStatus(): boolean {
       (event.kind === 'user_message' && event.source === 'extension')));
   host.hidden = !recovery || !!advanced || Date.now() - recovery.time > 120000 || (!!sessionId && dismissedRecoveryNotices.get(sessionId) === revision);
   host.replaceChildren();
-  if (host.hidden) return paintRecoveryVerdict(host, sessionId);
+  if (host.hidden) {
+    paintRecoveryVerdict(host, sessionId);
+    return false;
+  }
   if (!host.hidden && recovery?.kind === 'progress') {
     const row = el('div', 'recovery-notice');
     row.append(icon('i-pulse'), el('span', 'queue-label', recovery.message.text),
@@ -3857,13 +3864,13 @@ function paintRecoveryStatus(): boolean {
  * with every reason written somewhere nobody was looking. The newest app note (never a handoff
  * note) stays here until a newer question or turn supersedes it, or it is dismissed.
  */
-function paintRecoveryVerdict(host: HTMLElement, sessionId: string | null): boolean {
+function paintRecoveryVerdict(host: HTMLElement, sessionId: string | null): void {
   const verdict = detailFor === selectedId ? [...events].reverse().find(event => event.source === 'app' && event.kind === 'note' && !event.continuation) : undefined;
-  if (verdict?.kind !== 'note') return false;
+  if (verdict?.kind !== 'note') return;
   const revision = JSON.stringify(['note', verdict.time, verdict.message.text]);
   const superseded = events.some(event => positionOf(event) > positionOf(verdict) &&
     (event.kind === 'turn_start' || (event.kind === 'user_message' && event.source === 'extension')));
-  if (superseded || (!!sessionId && dismissedRecoveryNotices.get(sessionId) === revision)) return false;
+  if (superseded || (!!sessionId && dismissedRecoveryNotices.get(sessionId) === revision)) return;
   const row = el('div', 'recovery-notice');
   row.append(icon('i-pulse'), el('span', 'queue-label', verdict.message.text),
     dockAction(() => t('Dismiss recovery notice'), 'i-x', () => {
@@ -3872,7 +3879,6 @@ function paintRecoveryVerdict(host: HTMLElement, sessionId: string | null): bool
     }));
   host.append(row);
   host.hidden = false;
-  return false;
 }
 
 /**
@@ -4199,7 +4205,7 @@ function paintTurnNow(): void {
     turnNowText.title = text;
     // A new step fades in; restarting the animation needs the class off for one style pass.
     turnNow.classList.remove('is-new');
-    turnNow.offsetWidth;
+    turnNow.getBoundingClientRect();
     if (text) turnNow.classList.add('is-new');
   }
   const seconds = now?.since === undefined ? 0 : Math.max(0, Math.floor((Date.now() - now.since) / 1000));
@@ -5321,6 +5327,46 @@ function paintPendingInputs(): void {
   reconcileChildren(host, [...next, ...host.querySelectorAll<HTMLElement>(':scope > .queued-input')]);
   holdSentMessage();
 }
+interface QueuedInputEditContext {
+  entry: InputEntry;
+  card: HTMLElement;
+  label: HTMLElement;
+  field: HTMLTextAreaElement;
+  save: HTMLButtonElement;
+  cancel: HTMLButtonElement;
+  contents: ChildNode[];
+  selection: number;
+  retireCard: () => void;
+}
+
+async function saveQueuedInputEdit({
+  entry, card, label, field, save, cancel, contents, selection, retireCard
+}: QueuedInputEditContext): Promise<void> {
+  if (save.disabled || cancel.disabled || !card.isConnected || selection !== selectionGeneration) return;
+  const value = field.value;
+  if (!value.trim()) { cancel.click(); return; }
+  save.disabled = true; cancel.disabled = true; ui(save, 'textContent', () => t("Saving…")); field.readOnly = true;
+  try {
+    const saved = await run(api.editQueuedInput(entry.id, value));
+    if (!card.isConnected || selection !== selectionGeneration) return;
+    if (saved) {
+      // The durable edit receipt ends editing, regardless of focus or a slower queue
+      // refresh. Refreshes preserve drafts; they do not own Save completion.
+      entry.text = value.trim(); label.textContent = entry.text;
+      card.classList.remove('is-editing'); card.replaceChildren(...contents);
+      inputQueueGeneration++;
+      void refreshInputQueue();
+    } else if (saved === false) {
+      // A claimed or removed row no longer owns an editor. Refresh projects
+      // its actual delivery state; it must never preserve this stale draft.
+      inputQueueGeneration++;
+      retireCard();
+      void refreshInputQueue();
+    }
+  } catch (error) { toast(error instanceof Error ? error.message : t("Could not save this task.")); }
+  finally { save.disabled = false; cancel.disabled = false; ui(save, 'textContent', () => t("Save")); field.readOnly = false; }
+}
+
 async function refreshInputQueue(): Promise<void> {
   const request = ++inputQueueGeneration;
   const selection = selectionGeneration;
@@ -5444,30 +5490,9 @@ async function refreshInputQueue(): Promise<void> {
         const field = document.createElement('textarea'); field.dir = 'auto'; field.value = entry.text; ui(field, 'aria-label', () => t("Queued task"));
         const contents = [...card.childNodes];
         const save = el('button', 'btn', () => t("Save")) as HTMLButtonElement; save.type = 'button';
-        save.onclick = async () => {
-          if (save.disabled || cancel.disabled || !card.isConnected || selection !== selectionGeneration) return;
-          const value = field.value;
-          if (!value.trim()) { cancel.click(); return; }
-          save.disabled = true; cancel.disabled = true; ui(save, 'textContent', () => t("Saving…")); field.readOnly = true;
-          try {
-            const saved = await run(api.editQueuedInput(entry.id, value));
-            if (!card.isConnected || selection !== selectionGeneration) return;
-            if (saved) {
-              // The durable edit receipt ends editing, regardless of focus or a slower
-              // queue refresh. Refreshes preserve drafts; they do not own Save completion.
-              entry.text = value.trim(); label.textContent = entry.text;
-              card.classList.remove('is-editing'); card.replaceChildren(...contents);
-              inputQueueGeneration++;
-              void refreshInputQueue();
-            } else if (saved === false) {
-              // A claimed or removed row no longer owns an editor. Refresh projects
-              // its actual delivery state; it must never preserve this stale draft.
-              inputQueueGeneration++;
-              retireCard();
-              void refreshInputQueue();
-            }
-          } catch (error) { toast(error instanceof Error ? error.message : t("Could not save this task.")); }
-          finally { save.disabled = false; cancel.disabled = false; ui(save, 'textContent', () => t("Save")); field.readOnly = false; }
+        save.onclick = () => {
+          saveQueuedInputEdit({ entry, card, label, field, save, cancel, contents, selection, retireCard })
+            .catch(error => toast(error instanceof Error ? error.message : t("Could not save this task.")));
         };
         card.classList.add('is-editing'); card.replaceChildren(field, save, cancel); field.focus();
       };

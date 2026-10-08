@@ -1435,7 +1435,8 @@
         messages[0].status === 'finished_successfully' && messages[1].status === 'finished_successfully' &&
         !conflictingRequestScope(messages[0], messages[1]) && ourPath(request.path)) {
       const displayed = completedCallOf(messages[1]);
-      if (displayed?.requestId === request.requestId && identify(request, displayed) === displayed.tool) completed = displayed;
+      if (displayed && typeof request.requestId === 'string' && typeof displayed.requestId === 'string' &&
+          displayed.requestId === request.requestId && identify(request, displayed) === displayed.tool) completed = displayed;
     }
     if (completed) return { v: VERSION, index, tool: completed.tool, path: null, app: completed.app,
       resource: completed.resource, messageId: completed.messageId, turnId: str(group.turnId),

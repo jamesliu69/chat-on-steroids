@@ -7,6 +7,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import type { Dirent } from 'node:fs';
 import { rawCreateReadStream as createReadStream, rawPromises as fs } from './rawfs.js';
 import path from 'node:path';
 import { lineDelta, type LineDelta } from './diffstat.js';
@@ -207,36 +208,93 @@ function invalidImage(kind: string, detail: string): never {
   throw new FsOpError(`Invalid or corrupt ${kind} image: ${detail}`);
 }
 
+interface PngChunk {
+  type: string;
+  length: number;
+  typeStart: number;
+  dataStart: number;
+  crcOffset: number;
+  nextOffset: number;
+}
+
+function readPngChunk(data: Buffer, offset: number): PngChunk {
+  const length = data.readUInt32BE(offset);
+  const typeStart = offset + 4;
+  const dataStart = offset + 8;
+  const crcOffset = dataStart + length;
+  if (crcOffset + 4 > data.length) invalidImage('PNG', 'a chunk extends past the end of the file');
+  return {
+    type: data.subarray(typeStart, dataStart).toString('ascii'),
+    length,
+    typeStart,
+    dataStart,
+    crcOffset,
+    nextOffset: crcOffset + 4
+  };
+}
+
+function validatePngHeader(data: Buffer, chunk: PngChunk): void {
+  if (chunk.type !== 'IHDR' || chunk.length !== 13) invalidImage('PNG', 'IHDR is missing or malformed');
+  const width = data.readUInt32BE(chunk.dataStart);
+  const height = data.readUInt32BE(chunk.dataStart + 4);
+  if (width === 0 || height === 0) invalidImage('PNG', 'image dimensions are zero');
+}
+
+function validatePngChunkCrc(data: Buffer, chunk: PngChunk): void {
+  const expectedCrc = data.readUInt32BE(chunk.crcOffset);
+  const actualCrc = pngCrc32(data, chunk.typeStart, chunk.crcOffset);
+  if (expectedCrc !== actualCrc) invalidImage('PNG', `CRC check failed for ${chunk.type || 'unknown'} chunk`);
+}
+
 function validatePng(data: Buffer): void {
   if (data.length < 33) invalidImage('PNG', 'file is too short');
-  let offset = 8;
-  let first = true;
+  const header = readPngChunk(data, 8);
+  validatePngHeader(data, header);
+  validatePngChunkCrc(data, header);
+  let offset = header.nextOffset;
   let sawIend = false;
+
   while (offset + 12 <= data.length) {
-    const length = data.readUInt32BE(offset);
-    const typeStart = offset + 4;
-    const dataStart = offset + 8;
-    const crcOffset = dataStart + length;
-    if (crcOffset + 4 > data.length) invalidImage('PNG', 'a chunk extends past the end of the file');
-    const type = data.subarray(typeStart, dataStart).toString('ascii');
-    if (first) {
-      if (type !== 'IHDR' || length !== 13) invalidImage('PNG', 'IHDR is missing or malformed');
-      const width = data.readUInt32BE(dataStart);
-      const height = data.readUInt32BE(dataStart + 4);
-      if (width === 0 || height === 0) invalidImage('PNG', 'image dimensions are zero');
-      first = false;
-    }
-    const expectedCrc = data.readUInt32BE(crcOffset);
-    const actualCrc = pngCrc32(data, typeStart, crcOffset);
-    if (expectedCrc !== actualCrc) invalidImage('PNG', `CRC check failed for ${type || 'unknown'} chunk`);
-    offset = crcOffset + 4;
-    if (type === 'IEND') {
-      if (length !== 0) invalidImage('PNG', 'IEND chunk is malformed');
-      sawIend = true;
-      break;
-    }
+    const chunk = readPngChunk(data, offset);
+    validatePngChunkCrc(data, chunk);
+    offset = chunk.nextOffset;
+    if (chunk.type !== 'IEND') continue;
+    if (chunk.length !== 0) invalidImage('PNG', 'IEND chunk is malformed');
+    sawIend = true;
+    break;
   }
   if (!sawIend) invalidImage('PNG', 'IEND chunk is missing');
+}
+
+const JPEG_FRAME_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+
+interface JpegMarker {
+  marker: number;
+  nextOffset: number;
+}
+
+function nextJpegMarker(data: Buffer, offset: number): JpegMarker | null {
+  while (offset < data.length && data[offset] === 0xff) offset++;
+  if (offset >= data.length) return null;
+  return { marker: data[offset]!, nextOffset: offset + 1 };
+}
+
+function jpegMarkerHasNoSegment(marker: number): boolean {
+  return marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7);
+}
+
+function validateJpegSegment(data: Buffer, offset: number, marker: number): { nextOffset: number; frame: boolean } {
+  if (offset + 2 > data.length) invalidImage('JPEG', 'segment length is truncated');
+  const length = data.readUInt16BE(offset);
+  if (length < 2 || offset + length > data.length) {
+    invalidImage('JPEG', 'segment extends past the end of the file');
+  }
+  if (!JPEG_FRAME_MARKERS.has(marker)) return { nextOffset: offset + length, frame: false };
+  if (length < 7) invalidImage('JPEG', 'frame header is malformed');
+  const height = data.readUInt16BE(offset + 3);
+  const width = data.readUInt16BE(offset + 5);
+  if (width === 0 || height === 0) invalidImage('JPEG', 'image dimensions are zero');
+  return { nextOffset: offset + length, frame: true };
 }
 
 function validateJpeg(data: Buffer): void {
@@ -249,25 +307,18 @@ function validateJpeg(data: Buffer): void {
   }
   let offset = 2;
   let sawFrame = false;
-  const frameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+
   while (offset < end) {
-    while (offset < data.length && data[offset] === 0xff) offset++;
-    if (offset >= data.length) break;
-    const marker = data[offset++]!;
+    const found = nextJpegMarker(data, offset);
+    if (found === null) break;
+    const marker = found.marker;
+    offset = found.nextOffset;
     if (marker === 0xd9) break;
     if (marker === 0xda) break; // scan data continues until the already-validated EOI marker
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-    if (offset + 2 > data.length) invalidImage('JPEG', 'segment length is truncated');
-    const length = data.readUInt16BE(offset);
-    if (length < 2 || offset + length > data.length) invalidImage('JPEG', 'segment extends past the end of the file');
-    if (frameMarkers.has(marker)) {
-      if (length < 7) invalidImage('JPEG', 'frame header is malformed');
-      const height = data.readUInt16BE(offset + 3);
-      const width = data.readUInt16BE(offset + 5);
-      if (width === 0 || height === 0) invalidImage('JPEG', 'image dimensions are zero');
-      sawFrame = true;
-    }
-    offset += length;
+    if (jpegMarkerHasNoSegment(marker)) continue;
+    const segment = validateJpegSegment(data, offset, marker);
+    offset = segment.nextOffset;
+    sawFrame ||= segment.frame;
   }
   if (!sawFrame) invalidImage('JPEG', 'frame header is missing');
 }
@@ -429,63 +480,92 @@ export interface DirEntry {
   bytes: number | null;
 }
 
+interface ListDirectoryOptions {
+  recursive?: boolean;
+  maxEntries: number;
+  exclude: readonly string[];
+}
+
+interface DirectoryWalkState {
+  entries: DirEntry[];
+  truncated: boolean;
+}
+
+function sortDirectoryEntries(dirents: Dirent[]): void {
+  dirents.sort((a, b) => {
+    const ad = a.isDirectory() ? 0 : 1;
+    const bd = b.isDirectory() ? 0 : 1;
+    return ad === bd ? a.name.localeCompare(b.name) : ad - bd;
+  });
+}
+
+async function readDirectoryEntries(dir: string, topLevel: boolean): Promise<Dirent[] | null> {
+  let dirents: Dirent[];
+  try {
+    dirents = await fs.readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (topLevel) throw error;
+    return null;
+  }
+  sortDirectoryEntries(dirents);
+  return dirents;
+}
+
+function directoryEntryType(dirent: Dirent): DirEntry['type'] {
+  if (dirent.isDirectory()) return 'directory';
+  if (dirent.isFile()) return 'file';
+  return 'other';
+}
+
+async function directoryEntryBytes(dir: string, dirent: Dirent): Promise<number | null> {
+  if (!dirent.isFile()) return null;
+  try {
+    return (await fs.stat(path.join(dir, dirent.name))).size;
+  } catch {
+    return null;
+  }
+}
+
+async function walkDirectory(
+  dir: string,
+  virt: string,
+  topLevel: boolean,
+  opts: ListDirectoryOptions,
+  state: DirectoryWalkState
+): Promise<void> {
+  if (state.truncated) return;
+  const dirents = await readDirectoryEntries(dir, topLevel);
+  if (dirents === null) return;
+
+  for (const dirent of dirents) {
+    if (state.entries.length >= opts.maxEntries) {
+      state.truncated = true;
+      return;
+    }
+    const isDir = dirent.isDirectory();
+    if (isDir && opts.recursive && isExcludedFolderName(dirent.name, opts.exclude)) continue;
+    const childVirtual = `${virt}/${dirent.name}`;
+    state.entries.push({
+      name: dirent.name,
+      virtualPath: childVirtual,
+      type: directoryEntryType(dirent),
+      bytes: await directoryEntryBytes(dir, dirent)
+    });
+    if (isDir && opts.recursive) {
+      await walkDirectory(path.join(dir, dirent.name), childVirtual, false, opts, state);
+    }
+  }
+}
+
 /** Lists a directory, optionally recursing, always bounded by maxEntries. */
 export async function listDirectory(
   realDir: string,
   virtualDir: string,
-  opts: { recursive?: boolean; maxEntries: number; exclude: readonly string[] }
+  opts: ListDirectoryOptions
 ): Promise<{ entries: DirEntry[]; truncated: boolean }> {
-  const entries: DirEntry[] = [];
-  let truncated = false;
-
-  const walk = async (dir: string, virt: string, depth: number): Promise<void> => {
-    if (truncated) return;
-    let dirents;
-    try {
-      dirents = await fs.readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      if (depth === 0) throw err;
-      return; // Unreadable subdirectory: skip rather than fail the whole listing.
-    }
-    dirents.sort((a, b) => {
-      const ad = a.isDirectory() ? 0 : 1;
-      const bd = b.isDirectory() ? 0 : 1;
-      return ad === bd ? a.name.localeCompare(b.name) : ad - bd;
-    });
-    for (const dirent of dirents) {
-      if (entries.length >= opts.maxEntries) {
-        truncated = true;
-        return;
-      }
-      const isDir = dirent.isDirectory();
-      if (isDir && opts.recursive && isExcludedFolderName(dirent.name, opts.exclude)) continue;
-      const childVirtual = `${virt}/${dirent.name}`;
-      let bytes: number | null = null;
-      if (dirent.isFile()) {
-        try {
-          bytes = (await fs.stat(path.join(dir, dirent.name))).size;
-        } catch {
-          bytes = null;
-        }
-      }
-      let entryType: 'directory' | 'file' | 'other';
-      if (isDir) entryType = 'directory';
-      else if (dirent.isFile()) entryType = 'file';
-      else entryType = 'other';
-      entries.push({
-        name: dirent.name,
-        virtualPath: childVirtual,
-        type: entryType,
-        bytes
-      });
-      if (isDir && opts.recursive) {
-        await walk(path.join(dir, dirent.name), childVirtual, depth + 1);
-      }
-    }
-  };
-
-  await walk(realDir, virtualDir, 0);
-  return { entries, truncated };
+  const state: DirectoryWalkState = { entries: [], truncated: false };
+  await walkDirectory(realDir, virtualDir, true, opts, state);
+  return state;
 }
 
 export interface EditOp {
@@ -579,16 +659,7 @@ export async function editTextFile(
   return { replacements: prepared.replacements, bytes: prepared.nextBytes.length, delta: prepared.delta };
 }
 
-/**
- * Preflights every file before touching any of them, stages complete replacements in
- * sibling temp files, then commits by rename. A commit-time failure triggers a
- * best-effort reverse rollback using the exact original bytes. This cannot provide a
- * filesystem-wide ACID transaction across unrelated NTFS files, but ordinary stale
- * snippets, path failures and validation errors are guaranteed to make zero changes.
- */
-export async function editTextFiles(
-  files: readonly BatchTextEditInput[]
-): Promise<BatchTextEditResult[]> {
+function validateBatchTextEditInputs(files: readonly BatchTextEditInput[]): void {
   if (files.length === 0) throw new FsOpError('At least one file is required');
   if (files.length > MAX_BATCH_EDIT_FILES) {
     throw new FsOpError(`Too many files in one batch (limit ${MAX_BATCH_EDIT_FILES})`);
@@ -601,10 +672,14 @@ export async function editTextFiles(
   const seen = new Set<string>();
   for (const file of files) {
     const key = process.platform === 'win32' ? file.realPath.toLowerCase() : file.realPath;
-    if (seen.has(key)) throw new FsOpError(`${file.virtualPath}: the same file appears more than once in the batch`);
+    if (seen.has(key)) {
+      throw new FsOpError(`${file.virtualPath}: the same file appears more than once in the batch`);
+    }
     seen.add(key);
   }
+}
 
+async function prepareBatchTextEdits(files: readonly BatchTextEditInput[]): Promise<PreparedTextEdit[]> {
   const prepared: PreparedTextEdit[] = [];
   let totalBytes = 0;
   for (const file of files) {
@@ -616,76 +691,118 @@ export async function editTextFiles(
     }
     prepared.push(item);
   }
+  return prepared;
+}
 
+function batchTempPath(target: string, kind: 'stage' | 'rollback'): string {
+  return path.join(path.dirname(target), `.clf-${kind}-${process.pid}-${randomUUID()}.tmp`);
+}
+
+async function writeBatchTemp(temp: string, data: Buffer): Promise<void> {
+  try {
+    const handle = await fs.open(temp, 'wx');
+    try {
+      await handle.writeFile(data);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    await fs.rm(temp, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function stageBatchTextEdits(prepared: readonly PreparedTextEdit[], staged: Map<string, string>): Promise<void> {
+  // Same-directory temps keep the final rename on one volume and avoid exposing partially
+  // written target files.
+  for (const item of prepared) {
+    const temp = batchTempPath(item.realPath, 'stage');
+    await writeBatchTemp(temp, item.nextBytes);
+    staged.set(item.realPath, temp);
+  }
+}
+
+async function commitBatchTextEdits(
+  prepared: readonly PreparedTextEdit[],
+  staged: Map<string, string>,
+  committed: PreparedTextEdit[]
+): Promise<void> {
+  for (const item of prepared) {
+    // Refuse to clobber a file another process changed after our preflight.
+    const current = await fs.readFile(item.realPath);
+    if (!current.equals(item.originalBytes)) {
+      throw new FsOpError(`${item.virtualPath}: file changed after preflight; batch was aborted`);
+    }
+    const temp = staged.get(item.realPath);
+    if (!temp) throw new FsOpError(`${item.virtualPath}: internal staging file is missing`);
+    await fs.rename(temp, item.realPath);
+    staged.delete(item.realPath);
+    committed.push(item);
+  }
+}
+
+async function rollbackBatchTextEdit(item: PreparedTextEdit): Promise<string | null> {
+  const current = await fs.readFile(item.realPath);
+  if (!current.equals(item.nextBytes)) return `${item.virtualPath} changed again before rollback`;
+
+  const rollbackTemp = batchTempPath(item.realPath, 'rollback');
+  await writeBatchTemp(rollbackTemp, item.originalBytes);
+  try {
+    await fs.rename(rollbackTemp, item.realPath);
+  } finally {
+    await fs.rm(rollbackTemp, { force: true }).catch(() => undefined);
+  }
+  return null;
+}
+
+async function rollbackBatchTextEdits(committed: readonly PreparedTextEdit[]): Promise<string[]> {
+  const problems: string[] = [];
+  for (const item of [...committed].reverse()) {
+    try {
+      const problem = await rollbackBatchTextEdit(item);
+      if (problem !== null) problems.push(problem);
+    } catch (error) {
+      problems.push(`${item.virtualPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return problems;
+}
+
+async function cleanupBatchTemps(staged: ReadonlyMap<string, string>): Promise<void> {
+  for (const temp of staged.values()) await fs.rm(temp, { force: true }).catch(() => undefined);
+}
+
+function throwBatchEditFailure(error: unknown, rollbackProblems: readonly string[]): never {
+  if (rollbackProblems.length === 0) throw error;
+  const reason = error instanceof Error ? error.message : String(error);
+  throw new FsOpError(
+    `${reason}. Rollback could not safely restore every committed file: ${rollbackProblems.join('; ')}`
+  );
+}
+
+/**
+ * Preflights every file before touching any of them, stages complete replacements in
+ * sibling temp files, then commits by rename. A commit-time failure triggers a
+ * best-effort reverse rollback using the exact original bytes. This cannot provide a
+ * filesystem-wide ACID transaction across unrelated NTFS files, but ordinary stale
+ * snippets, path failures and validation errors are guaranteed to make zero changes.
+ */
+export async function editTextFiles(
+  files: readonly BatchTextEditInput[]
+): Promise<BatchTextEditResult[]> {
+  validateBatchTextEditInputs(files);
+  const prepared = await prepareBatchTextEdits(files);
   const staged = new Map<string, string>();
   const committed: PreparedTextEdit[] = [];
-  const makeTemp = (target: string, kind: 'stage' | 'rollback'): string =>
-    path.join(path.dirname(target), `.clf-${kind}-${process.pid}-${randomUUID()}.tmp`);
-  const writeTemp = async (temp: string, data: Buffer): Promise<void> => {
-    try {
-      const handle = await fs.open(temp, 'wx');
-      try {
-        await handle.writeFile(data);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-    } catch (err) {
-      await fs.rm(temp, { force: true }).catch(() => undefined);
-      throw err;
-    }
-  };
 
   try {
-    // Stage every complete new file first. Same-directory temps keep the final rename
-    // on one volume and avoid exposing partially written target files.
-    for (const item of prepared) {
-      const temp = makeTemp(item.realPath, 'stage');
-      await writeTemp(temp, item.nextBytes);
-      staged.set(item.realPath, temp);
-    }
-
-    for (const item of prepared) {
-      // Refuse to clobber a file another process changed after our preflight.
-      const current = await fs.readFile(item.realPath);
-      if (!current.equals(item.originalBytes)) {
-        throw new FsOpError(`${item.virtualPath}: file changed after preflight; batch was aborted`);
-      }
-      const temp = staged.get(item.realPath);
-      if (!temp) throw new FsOpError(`${item.virtualPath}: internal staging file is missing`);
-      await fs.rename(temp, item.realPath);
-      staged.delete(item.realPath);
-      committed.push(item);
-    }
-  } catch (err) {
-    const rollbackProblems: string[] = [];
-    for (const item of [...committed].reverse()) {
-      try {
-        const current = await fs.readFile(item.realPath);
-        if (!current.equals(item.nextBytes)) {
-          rollbackProblems.push(`${item.virtualPath} changed again before rollback`);
-          continue;
-        }
-        const rollbackTemp = makeTemp(item.realPath, 'rollback');
-        await writeTemp(rollbackTemp, item.originalBytes);
-        try {
-          await fs.rename(rollbackTemp, item.realPath);
-        } finally {
-          await fs.rm(rollbackTemp, { force: true }).catch(() => undefined);
-        }
-      } catch (rollbackErr) {
-        rollbackProblems.push(`${item.virtualPath}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
-      }
-    }
-    for (const temp of staged.values()) await fs.rm(temp, { force: true }).catch(() => undefined);
-
-    const reason = err instanceof Error ? err.message : String(err);
-    if (rollbackProblems.length > 0) {
-      throw new FsOpError(
-        `${reason}. Rollback could not safely restore every committed file: ${rollbackProblems.join('; ')}`
-      );
-    }
-    throw err;
+    await stageBatchTextEdits(prepared, staged);
+    await commitBatchTextEdits(prepared, staged, committed);
+  } catch (error) {
+    const rollbackProblems = await rollbackBatchTextEdits(committed);
+    await cleanupBatchTemps(staged);
+    throwBatchEditFailure(error, rollbackProblems);
   }
 
   return prepared.map((item) => ({

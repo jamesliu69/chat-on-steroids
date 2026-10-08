@@ -245,16 +245,14 @@ function execChildEnvironment(): NodeJS.ProcessEnv {
 }
 
 /** Resolve one stable terminal principal without borrowing another chat's identity. */
-async function execPrincipal(tool: 'exec_command' | 'write_stdin', finalizeAnonymous = false): Promise<string | null> {
+async function execPrincipal(finalizeAnonymous = false): Promise<string | null> {
   const call = currentCall();
   if (call?.caller.unattributedFrozen && !finalizeAnonymous) return null;
   const caller = currentCaller();
   const allowUnattributed = call?.allowUnattributed ?? getConfig().multiAgent.allowUnattributedCalls;
   let conversationId = provenConversation(caller.requestId, caller.conversationId);
   if (!conversationId && caller.requestId && !allowUnattributed) {
-    conversationId = await awaitFreshCallOrigin(tool, call?.startedAt ?? Date.now(), IDENTITY_EVIDENCE_MS, {
-      requestId: caller.requestId
-    });
+    conversationId = await awaitFreshCallOrigin(caller.requestId, IDENTITY_EVIDENCE_MS);
     if (conversationId && call) call.caller.conversationId = conversationId;
   }
   if (!conversationId && !caller.requestId && finalizeAnonymous) {
@@ -920,7 +918,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               }
             }
 
-            const initialOwner = await execPrincipal('exec_command');
+            const initialOwner = await execPrincipal();
             const unread = backgroundExecObligations(initialOwner).exitedUnread;
             if (unread.length >= MAX_UNREAD_EXEC_RESULTS_PER_CONVERSATION) {
               const sessionIds = unread.map((session) => session.processId).join(', ');
@@ -960,7 +958,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               env: execChildEnvironment(),
               tty: input.tty ?? DEFAULT_TTY
             });
-            const owner = await execPrincipal('exec_command', true);
+            const owner = await execPrincipal(true);
             // Which exact session or temporary request principal may later write to this
             // process id. Request custody upgrades lazily when exact correlation arrives.
             noteExecOwner(output.processId ?? output.completedSessionId ?? null, owner);
@@ -1070,7 +1068,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           // The ownership registry decides both admission and the reason for refusal.
           // A request-scoped caller can continue a process it opened before proof. Another
           // request must wait for exact correlation; a numeric process id is not custody.
-          let asking = await execPrincipal('write_stdin', true);
+          let asking = await execPrincipal(true);
           let denied = execOwnershipFailure(input.session_id, asking);
           if (denied === 'unidentified') {
             const caller = currentCaller();
@@ -1078,13 +1076,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               // A later turn in the same chat can reach Core before the page reports this
               // request-id mate. Wait only for that exact correlation, then re-run the same
               // ownership check; the numeric session id never becomes authority by itself.
-              await awaitFreshCallOrigin(
-                'write_stdin',
-                currentCall()?.startedAt ?? Date.now(),
-                IDENTITY_EVIDENCE_MS,
-                { exact: true, requestId: caller.requestId }
-              );
-              asking = await execPrincipal('write_stdin', true);
+              await awaitFreshCallOrigin(caller.requestId, IDENTITY_EVIDENCE_MS);
+              asking = await execPrincipal(true);
               denied = execOwnershipFailure(input.session_id, asking);
             }
           }
@@ -1414,12 +1407,6 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
     })),
     async (input) => {
-      // One clock for one MCP call. The dispatcher owns startedAt and the recorder later uses
-      // that exact value to consume any page request reserved while proving caller identity.
-      // Taking a second Date.now() here made callerNow reserve evidence under one timestamp
-      // and recordToolCall look for it under another, leaving the first request permanently
-      // reserved until TTL and breaking the very next worker control call.
-      const startedAt = currentCall()?.startedAt ?? Date.now();
       return guard('agents', async () => {
         if (!reg.agentToolsLive) return reg.featureDisabled('Multi-agent mode', 'Multi-agent mode (experimental)');
 
@@ -1431,7 +1418,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           const staged = stageSpawn({
             workers: input.workers,
             context: input.context ?? null,
-            caller: await callerNow(startedAt, { exact: true, runId: input.run_id })
+            caller: await callerNow({ exact: true, runId: input.run_id })
           });
           await acceptAgentMutation(staged,
             'The worker run could not cross its durable acceptance barrier. The spawn was rolled back; retry this same request.');
@@ -1488,7 +1475,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
             if (!input.text) {
               return fail('agents action=message with target_run_id requires text.');
             }
-            const caller = await callerNow(startedAt, { runId: input.run_id, member: true });
+            const caller = await callerNow({ runId: input.run_id, member: true });
             const staged = stagePrimeMessage(caller, input.target_run_id, input.text);
             await acceptAgentMutation(staged,
               'The prime message could not cross its durable acceptance barrier. Nothing was queued; retry the same message request.',
@@ -1523,7 +1510,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
           if (items.length === 0) return fail('agents action=message requires to and text, or a messages array.');
           // Before any slot is reserved: a sleeping worker whose chat has since crossed the
           // context ceiling is not revivable, and this is the call that would otherwise wake it.
-          const caller = await callerNow(startedAt, { runId: input.run_id, member: true });
+          const caller = await callerNow({ runId: input.run_id, member: true });
           await measureSleepingWorkers(caller);
           // One call, one identity resolution, one all-or-nothing delivery: a prime
           // redirecting its whole run cannot end up with two of its three messages sent.
@@ -1569,7 +1556,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
               'agents action=finish requires result: the report the prime reads in your place — what you changed, what you verified and what is left. Send it as result and call finish again.'
             );
           }
-          const staged = stageFinishAgent(await callerNow(startedAt, { runId: input.run_id, member: true }), input.result);
+          const staged = stageFinishAgent(await callerNow({ runId: input.run_id, member: true }), input.result);
           if (!staged.repeat) {
             await acceptAgentMutation(staged,
               'The worker finish could not cross its durable acceptance barrier. Nothing was published; retry the same finish result.');
@@ -1604,7 +1591,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
 
         // Status describes only this exact caller's family. No family is a normal empty
         // result, independent of whether another prime has workers; discovery grants no role.
-        const caller = await callerNow(startedAt, { runId: input.run_id });
+        const caller = await callerNow({ runId: input.run_id });
         await measureSleepingWorkers(caller);
         const status = statusForCaller(caller);
         const me = status.self;
@@ -1726,7 +1713,7 @@ function registerAgentsTool(reg: SurfaceRegistrar): void {
  * The proven identity is then adopted for the rest of the call, so this result is recorded
  * against the right agent and carries the right inbox.
  */
-async function callerNow(startedAt: number, options: { exact?: boolean; runId?: string; member?: boolean } = {}): Promise<Caller> {
+async function callerNow(options: { exact?: boolean; runId?: string; member?: boolean } = {}): Promise<Caller> {
   const base = currentCaller();
   // `exact` marks the one action that binds a run: spawn. It is the call whose refusal the
   // model cannot absorb, so it gets the longer ceiling; every other `agents` action can be
@@ -1740,12 +1727,9 @@ async function callerNow(startedAt: number, options: { exact?: boolean; runId?: 
   const resolved =
     base.conversationId ??
     requestCorrelation(base.requestId)?.conversationId ??
-    (allowRequest && requestOwnsTarget ? null : await awaitFreshCallOrigin('agents', startedAt, window, {
-      ...options,
-      // ChatGPT's own id for this request, when it sent one. It names the conversation
-      // outright, so two workers calling at the same moment are no longer a hard case.
-      requestId: base.requestId
-    }));
+    // ChatGPT's own id for this request names the conversation outright, so two workers
+    // calling at the same moment are no longer a hard case.
+    (allowRequest && requestOwnsTarget ? null : await awaitFreshCallOrigin(base.requestId, window));
   const caller: Caller = {
     ...base,
     conversationId: resolved,

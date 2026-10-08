@@ -200,6 +200,48 @@ export function initSkillsLibrary(api: AppApi): () => void {
     return checkPass;
   };
 
+  const updateConfirmedSkill = async (
+    skill: ManagedSkill,
+    dialog: HTMLDialogElement,
+    close: HTMLButtonElement,
+    cancel: HTMLButtonElement,
+    submit: HTMLButtonElement
+  ): Promise<void> => {
+    submit.disabled = close.disabled = cancel.disabled = true;
+    dialog.setAttribute('aria-busy', 'true');
+    ui(submit, 'textContent', () => t('Checking GitHub…'));
+    const own = ++epoch;
+    try {
+      const result = await run(api.skillsUpdateGithub(skill.id));
+      if (!result) return;
+      if (own === epoch) {
+        checking.delete(skill.id);
+        setSkills(result.skills);
+        const installed = skills.find(item => item.id === skill.id);
+        if (installed?.origin) {
+          checks.set(skill.id, { id: skill.id, originRevision: installed.origin.revision, state: 'current', checkedAt: Date.now() });
+          paintSource(installed);
+        }
+      } else {
+        update(api.listManagedSkills()).catch(() => undefined);
+      }
+      let updateMessage: string;
+      if (result.warning) updateMessage = t(result.warning);
+      else if (result.status === 'current') updateMessage = t('Skill is already up to date');
+      else updateMessage = t('Skill updated from GitHub');
+      toast(updateMessage);
+      dialog.close();
+    } catch {
+      toast(t('Could not reach GitHub. Try again.'));
+    } finally {
+      if (submit.isConnected) {
+        submit.disabled = close.disabled = cancel.disabled = false;
+        dialog.removeAttribute('aria-busy');
+        ui(submit, 'textContent', () => t('Check and update'));
+      }
+    }
+  };
+
   const confirmUpdate = (skill: ManagedSkill): void => {
     if (!skill.origin) return;
     document.querySelector('#skillUpdateDialog')?.remove();
@@ -218,38 +260,10 @@ export function initSkillsLibrary(api: AppApi): () => void {
     const cancel = el('button', 'btn', () => t('Cancel')) as HTMLButtonElement;
     cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
     const submit = el('button', 'btn btn-solid', () => t('Check and update')) as HTMLButtonElement;
-    submit.type = 'button'; submit.addEventListener('click', () => void (async () => {
-      submit.disabled = close.disabled = cancel.disabled = true;
-      dialog.setAttribute('aria-busy', 'true'); ui(submit, 'textContent', () => t('Checking GitHub…'));
-      const own = ++epoch;
-      try {
-        const result = await run(api.skillsUpdateGithub(skill.id));
-        if (!result) return;
-        if (own === epoch) {
-          checking.delete(skill.id);
-          setSkills(result.skills);
-          const installed = skills.find(item => item.id === skill.id);
-          if (installed?.origin) {
-            checks.set(skill.id, { id: skill.id, originRevision: installed.origin.revision, state: 'current', checkedAt: Date.now() });
-            paintSource(installed);
-          }
-        }
-        else void update(api.listManagedSkills());
-        let updateMessage: string;
-        if (result.warning) updateMessage = t(result.warning);
-        else if (result.status === 'current') updateMessage = t('Skill is already up to date');
-        else updateMessage = t('Skill updated from GitHub');
-        toast(updateMessage);
-        dialog.close();
-      } catch {
-        toast(t('Could not reach GitHub. Try again.'));
-      } finally {
-        if (submit.isConnected) {
-          submit.disabled = close.disabled = cancel.disabled = false;
-          dialog.removeAttribute('aria-busy'); ui(submit, 'textContent', () => t('Check and update'));
-        }
-      }
-    })());
+    submit.type = 'button';
+    submit.addEventListener('click', () => {
+      updateConfirmedSkill(skill, dialog, close, cancel, submit).catch(() => toast(t('Could not reach GitHub. Try again.')));
+    });
     actions.append(cancel, submit); body.append(actions); dialog.append(head, body);
     dialog.addEventListener('click', event => { if (event.target === dialog && !submit.disabled) dialog.close(); });
     dialog.addEventListener('cancel', event => { if (submit.disabled) event.preventDefault(); });

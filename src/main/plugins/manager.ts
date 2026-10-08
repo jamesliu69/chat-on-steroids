@@ -58,11 +58,14 @@ const boundedFetch: typeof fetch = async (input, init) => {
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 };
 
+async function openExternalAuthorization(url: URL): Promise<void> {
+  const { shell } = await import('electron');
+  await shell.openExternal(url.href);
+}
+
 /** Installation policy owns connections; lifecycle mutations serialize per installation. */
 export class PluginManager {
-  constructor(private openAuthorization: (url: URL) => Promise<void> = async url => {
-    const { shell } = await import('electron'); await shell.openExternal(url.href);
-  }) {}
+  constructor(private openAuthorization: (url: URL) => Promise<void> = openExternalAuthorization) {}
   private root = '';
   private records: RecordEntry[] = [];
   private live = new Map<string, Live>();

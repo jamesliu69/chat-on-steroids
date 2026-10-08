@@ -55,18 +55,19 @@ app.whenReady().then(async () => {
     assert.equal(await js('window.fixtureReady'), true);
     if (preview) {
       const title = 'Setup completo — prévia com dados simulados';
+      const previewAction = code => js(code).catch(error => console.error('Preview action failed:', error));
       win.on('page-title-updated', event => { event.preventDefault(); win.setTitle(title); });
-      win.webContents.on('did-finish-load', () => { void js("setLanguage('pt-BR')"); win.setTitle(title); });
+      win.webContents.on('did-finish-load', () => { previewAction("setLanguage('pt-BR')"); win.setTitle(title); });
       await js("setLanguage('pt-BR')"); win.setTitle(title);
-      const connection = (present, version) => { void js(`fixture.bridge.externalExtension={present:${present},version:${JSON.stringify(version)},lastSeenAt:Date.now()};paint()`); };
+      const connection = (present, version) => { previewAction(`fixture.bridge.externalExtension={present:${present},version:${JSON.stringify(version)},lastSeenAt:Date.now()};paint()`); };
       Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Simular conexão', submenu: [
         { label: 'Aguardando extensão', click: () => connection(false, null) },
         { label: 'Extensão conectada', click: () => connection(true, '2.1.26') },
         { label: 'Extensão desatualizada', click: () => connection(true, '2.1.25') },
-        { label: 'Login ChatGPT concluído', click: () => { void js("simulate('login')"); } }
-        ,{ label: 'Túnel configurado', click: () => { void js("simulate('tunnel')"); } },
-        { label: 'Chave de API configurada', click: () => { void js("simulate('key')"); } },
-        { label: 'Plugin conectado', click: () => { void js("simulate('plugin')"); } }
+        { label: 'Login ChatGPT concluído', click: () => { previewAction("simulate('login')"); } }
+        ,{ label: 'Túnel configurado', click: () => { previewAction("simulate('tunnel')"); } },
+        { label: 'Chave de API configurada', click: () => { previewAction("simulate('key')"); } },
+        { label: 'Plugin conectado', click: () => { previewAction("simulate('plugin')"); } }
       ] }, { label: 'Visualização', submenu: [{ role: 'reload' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' },
         {label:'Salvar e abrir captura desta janela',click:async()=>{const file=path.join(output,'live-preview.png');fs.writeFileSync(file,(await win.webContents.capturePage()).toPNG());await require('electron').shell.openPath(file);}}
       ] }]));

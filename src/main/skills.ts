@@ -37,7 +37,8 @@ const MAX_LIBRARY_ENTRIES = 256;
 const SKILL_FILENAME = 'SKILL.md';
 const RESERVED_IDS = new Set(['prompt']);
 const WINDOWS_RESERVED_ID = /^(?:con|prn|aux|nul|conin\$|conout\$|com\d|lpt\d)(?:\.|$)/i;
-const SIMPLE_SCALAR_UNSAFE = /^(?:[[\]{}|>&*!%@`]|[-?:]\s)|(?::\s)/;
+const SIMPLE_SCALAR_UNSAFE_PREFIX = /^(?:[[\]{}|>&*!%@`]|[-?:]\s)/;
+const SIMPLE_SCALAR_MAPPING_SEPARATOR = /:\s/;
 
 let root: string | null = null;
 let catalog: SkillSummary[] = [];
@@ -130,7 +131,7 @@ function simpleScalar(value: string): string | null {
     if (!(value.startsWith("'") && value.endsWith("'"))) return null;
     return value.slice(1, -1).replaceAll(/''/g, "'");
   }
-  return SIMPLE_SCALAR_UNSAFE.test(value) ? null : value;
+  return SIMPLE_SCALAR_UNSAFE_PREFIX.test(value) || SIMPLE_SCALAR_MAPPING_SEPARATOR.test(value) ? null : value;
 }
 
 function markdownBodyAndMetadata(text: string): { lines: string[]; name: string | null; description: string | null } {

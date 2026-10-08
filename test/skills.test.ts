@@ -99,6 +99,22 @@ describe('managed Skills store', () => {
     });
   });
 
+  it('does not publish unquoted YAML mapping separators as scalar metadata', async () => {
+    const source = await sourceFile('nested-scalar.md', [
+      '---',
+      'name: Reviewer: unquoted',
+      'description: Inspect: metadata',
+      '---',
+      '# Trusted reviewer',
+      '',
+      'Read the source before publishing.'
+    ].join('\n'));
+    expect(await importSkillFile(source)).toMatchObject({
+      name: 'Trusted reviewer',
+      description: 'Read the source before publishing.'
+    });
+  });
+
   it.each(['>-', '|', '>+', '|-'])('publishes bounded YAML %s descriptions instead of body fallback', async scalar => {
     const text = [
       '\uFEFF---',

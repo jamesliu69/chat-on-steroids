@@ -441,8 +441,8 @@ function noteOutcomeSafely(outcome: ToolOutcome): void {
  * inbox, and control of the run: `agents` establishes identity for itself, and refuses without
  * it by name.
  */
-function callerConversation(tool: string, startedAt: number, requestId: string | null): string | null {
-  return freshCallOrigin(tool, startedAt, requestId);
+function callerConversation(requestId: string | null): string | null {
+  return freshCallOrigin(requestId);
 }
 
 /** Publishes both halves of one exact request proof into the call context. */
@@ -469,11 +469,10 @@ type McpCallContext = Pick<ServerContext, 'sessionId'>;
  * conversations had named an unclaimed `agents` request inside the same window — and both
  * were refused WORKER_IDENTITY_LOST. Nothing about timing needs to be assumed now.
  */
-function requestIdOf(mcpCtx: McpCallContext | undefined): string | null {
+function requestIdOf(): string | null {
   // server.ts normalizes x-request-id exactly once at raw HTTP ingress and binds that value
   // to this async request. Re-reading the SDK header here would create a second parser/source
   // of truth for the correlation key.
-  void mcpCtx;
   return inboundRequestId();
 }
 
@@ -715,11 +714,11 @@ async function dispatchTracked(
   // request id, identity-sensitive handlers (workspace/session/agents) see it before they
   // touch state. If the page is one tick late this stays null; only handlers that actually
   // require identity wait for their own exact mate. Ordinary absolute reads/execs never wait.
-  if (!nested) setCallerConversation(context, callerConversation(name, startedAt, requestId));
+  if (!nested) setCallerConversation(context, callerConversation(requestId));
   await reconcileAgentRequestOwners().catch(error => {
     logWarn(`Worker ownership recovery deferred: ${error instanceof Error ? error.message : String(error)}`);
   });
-  if (!context.caller.conversationId) setCallerConversation(context, callerConversation(name, startedAt, requestId));
+  if (!context.caller.conversationId) setCallerConversation(context, callerConversation(requestId));
   // Only calls that need an *existing* per-chat workspace before the handler runs are
   // identity-sensitive here. An absolute read or an exec with an explicit absolute workdir is
   // self-contained and must stay fast; if its exact page mate is late, workspace.ts simply
@@ -752,7 +751,7 @@ async function dispatchTracked(
     else wait = IDENTITY_EVIDENCE_MS;
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, identityWindow(wait), { requestId })
+      await awaitFreshCallOrigin(requestId, identityWindow(wait))
     );
   }
   // Retired and dormant worker histories remain identity fences after their active run ends.
@@ -769,7 +768,7 @@ async function dispatchTracked(
       : HISTORICAL_READ_EVIDENCE_MS;
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, identityWindow(historicalWait), { requestId })
+      await awaitFreshCallOrigin(requestId, identityWindow(historicalWait))
     );
   }
   if (
@@ -786,7 +785,7 @@ async function dispatchTracked(
     if (staleIdentityRisk) {
       setCallerConversation(
         context,
-        await awaitFreshCallOrigin(name, startedAt, UNATTRIBUTED_IDENTITY_GUARD_MS, { requestId })
+        await awaitFreshCallOrigin(requestId, UNATTRIBUTED_IDENTITY_GUARD_MS)
       );
       if (!context.caller.conversationId) {
         context.caller.unattributedFrozen = true;
@@ -820,7 +819,7 @@ async function dispatchTracked(
   ) {
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, identityWindow(REQUEST_ID_GRACE_MS), { requestId })
+      await awaitFreshCallOrigin(requestId, identityWindow(REQUEST_ID_GRACE_MS))
     );
   }
   const supersededConversation = context.caller.conversationId
@@ -1065,7 +1064,7 @@ async function dispatchTracked(
   // already established its own inside the call and adopted it, and re-reading here would
   // only be able to disagree with the stronger answer it waited for.
   if (!context.caller.conversationId) {
-    const resolved = callerConversation(name, startedAt, requestId);
+    const resolved = callerConversation(requestId);
     if (resolved) setCallerConversation(context, resolved);
   }
   await reconcileAgentRequestOwners().catch(error => {
@@ -1530,7 +1529,7 @@ export function createRegistrar(server: McpServer | null, ctx: ToolContext, surf
           name,
           args,
           mcpCtx?.sessionId ?? null,
-          requestIdOf(mcpCtx),
+          requestIdOf(),
           surface,
           () => handler(args),
           undefined,

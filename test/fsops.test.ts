@@ -16,13 +16,14 @@ import {
   replaceTextFile,
   sniffBinary,
   sniffBinaryBytes,
-  statInfo
+  statInfo,
+  validateImageStructure
 } from '../src/main/fsops.js';
 // Reading back an edited file to check what landed. `fsops` no longer has a reader of its own —
 // the second implementation it used to carry was dead — so these assertions go through the one
 // the app actually reads with. Its own behaviour is covered in read-backend.test.ts.
 import { readTextFile } from '../src/main/codex/read-backend.js';
-import { makeTempDir, removeTempDir, writeTree } from './helpers.js';
+import { DIR_LINK, makeTempDir, removeTempDir, writeTree } from './helpers.js';
 
 let dir: string;
 const lines = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`);
@@ -174,6 +175,25 @@ describe('listDirectory', () => {
       exclude: []
     });
     expect(entries.map((e) => e.name)).toContain('index.js');
+  });
+
+  it('does not recurse through a directory symlink or junction', async () => {
+    const target = at('linked-target');
+    const link = at('tree/linked');
+    await writeTree(target, { 'secret.txt': 'outside the listed tree' });
+    await fs.symlink(target, link, DIR_LINK);
+    try {
+      const { entries } = await listDirectory(at('tree'), '/root/tree', {
+        recursive: true,
+        maxEntries: 100,
+        exclude: []
+      });
+      expect(entries.find((entry) => entry.name === 'linked')?.type).toBe('other');
+      expect(entries.some((entry) => entry.virtualPath === '/root/tree/linked/secret.txt')).toBe(false);
+    } finally {
+      await fs.unlink(link);
+      await fs.rm(target, { recursive: true, force: true });
+    }
   });
 
   it('fails loudly when the top-level directory is unreadable', async () => {
@@ -377,6 +397,46 @@ describe('editTextFile', () => {
     expect((await fs.readdir(dir)).some((name) => name.startsWith('.clf-'))).toBe(false);
   });
 
+  it('does not overwrite a newer external edit while rolling back an earlier commit', async () => {
+    const first = await scratch('batch-rollback-newer-a.txt', 'alpha\n');
+    const second = await scratch('batch-rollback-newer-b.txt', 'beta\n');
+    const originalRename = fs.rename.bind(fs);
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(from).includes('.clf-stage-') && String(to) === first) {
+        await originalRename(from, to);
+        await fs.writeFile(first, 'external\n', 'utf8');
+        return;
+      }
+      if (String(from).includes('.clf-stage-') && String(to) === second) {
+        throw new Error('simulated later commit failure');
+      }
+      return originalRename(from, to);
+    });
+
+    try {
+      await expect(
+        editTextFiles([
+          {
+            realPath: first,
+            virtualPath: '/root/a.txt',
+            edits: [{ oldText: 'alpha', newText: 'ALPHA' }]
+          },
+          {
+            realPath: second,
+            virtualPath: '/root/b.txt',
+            edits: [{ oldText: 'beta', newText: 'BETA' }]
+          }
+        ])
+      ).rejects.toThrow(/Rollback could not safely restore.*changed again before rollback/);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(await fs.readFile(first, 'utf8')).toBe('external\n');
+    expect(await fs.readFile(second, 'utf8')).toBe('beta\n');
+    expect((await fs.readdir(dir)).some((name) => name.startsWith('.clf-'))).toBe(false);
+  });
+
   it('refuses the same file twice in one batch', async () => {
     const file = await scratch('batch-duplicate.txt', 'alpha\n');
     await expect(
@@ -408,6 +468,16 @@ describe('image and binary helpers', () => {
     const target = at('corrupt.png');
     await fs.writeFile(target, corrupt);
     await expect(readImageFile(target)).rejects.toThrow(/invalid or corrupt PNG/i);
+  });
+
+  it('accepts a JPEG frame before EOI and ignores trailing container bytes', () => {
+    const jpeg = Buffer.from([
+      0xff, 0xd8,
+      0xff, 0xc0, 0x00, 0x07, 0x08, 0x00, 0x01, 0x00, 0x01,
+      0xff, 0xd9,
+      0x0a
+    ]);
+    expect(() => validateImageStructure(jpeg, 'image/jpeg')).not.toThrow();
   });
 
   it('decodes standard and URL-safe base64 strictly', () => {

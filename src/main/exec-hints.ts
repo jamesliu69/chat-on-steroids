@@ -709,6 +709,42 @@ interface QuotedRegion {
   body: string;
 }
 
+type ShellQuote = '"' | "'" | null;
+
+interface BashQuoteStep {
+  quote: ShellQuote;
+  nextIndex: number;
+  handled: boolean;
+  doubleQuoteChange: 'open' | 'close' | null;
+}
+
+/** Advances one character through bash-style quote and backslash rules. */
+function bashQuoteStep(command: string, index: number, quote: ShellQuote): BashQuoteStep {
+  const char = command.charAt(index);
+  if (quote === '"') {
+    if (char === '\\') return { quote, nextIndex: index + 1, handled: true, doubleQuoteChange: null };
+    const closing = char === '"';
+    return {
+      quote: closing ? null : quote,
+      nextIndex: index,
+      handled: true,
+      doubleQuoteChange: closing ? 'close' : null
+    };
+  }
+  if (quote === "'") {
+    return {
+      quote: char === "'" ? null : quote,
+      nextIndex: index,
+      handled: true,
+      doubleQuoteChange: null
+    };
+  }
+  if (char === '\\') return { quote: null, nextIndex: index + 1, handled: true, doubleQuoteChange: null };
+  if (char === '"') return { quote: '"', nextIndex: index, handled: true, doubleQuoteChange: 'open' };
+  if (char === "'") return { quote: "'", nextIndex: index, handled: true, doubleQuoteChange: null };
+  return { quote: null, nextIndex: index, handled: false, doubleQuoteChange: null };
+}
+
 /**
  * Whether PowerShell would reach the end of this line with every quote closed.
  *
@@ -752,28 +788,15 @@ function powershellQuotingTerminates(command: string): boolean {
  */
 function bashDoubleQuotedRegions(command: string): QuotedRegion[] | null {
   const regions: QuotedRegion[] = [];
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote = null;
   let open = -1;
 
   for (let i = 0; i < command.length; i++) {
-    const char = command.charAt(i);
-    if (quote === null) {
-      if (char === '\\') i++;
-      else if (char === '"') {
-        quote = '"';
-        open = i;
-      } else if (char === "'") quote = "'";
-      continue;
-    }
-    if (quote === '"') {
-      if (char === '\\') i++;
-      else if (char === '"') {
-        regions.push({ open, close: i, body: command.slice(open + 1, i) });
-        quote = null;
-      }
-      continue;
-    }
-    if (char === "'") quote = null;
+    const step = bashQuoteStep(command, i, quote);
+    if (step.doubleQuoteChange === 'open') open = i;
+    if (step.doubleQuoteChange === 'close') regions.push({ open, close: i, body: command.slice(open + 1, i) });
+    quote = step.quote;
+    i = step.nextIndex;
   }
 
   return quote === null ? regions : null;
@@ -879,6 +902,23 @@ export function repairPowerShellQuoting(cmd: string, shellType: ShellType): Norm
   };
 }
 
+/** Updates grouping depth for the small shell scanners in this file. */
+function groupDepthAfter(char: string, depth: number): number {
+  if (char === '(' || char === '{') return depth + 1;
+  if (char === ')' || char === '}') return Math.max(0, depth - 1);
+  return depth;
+}
+
+/** Number of characters in a top-level bash statement/pipeline boundary at `index`. */
+function bashBoundaryWidth(command: string, index: number): number {
+  const char = command.charAt(index);
+  const next = command.charAt(index + 1);
+  if ((char === '|' && next === '|') || (char === '&' && next === '&') || (char === '\r' && next === '\n')) {
+    return 2;
+  }
+  return char === ';' || char === '|' || char === '\n' || char === '\r' ? 1 : 0;
+}
+
 /**
  * The pipeline/statement prefix immediately before one bash-read quoted argument.
  *
@@ -887,93 +927,84 @@ export function repairPowerShellQuoting(cmd: string, shellType: ShellType): Norm
  * top-level command boundary. The returned text ends immediately before the opening quote.
  */
 function bashSegmentPrefix(command: string, end: number): string | null {
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote = null;
   let depth = 0;
   let start = 0;
 
   for (let i = 0; i < end; i++) {
     const char = command.charAt(i);
-    if (quote === '"') {
-      if (char === '\\') i++;
-      else if (char === '"') quote = null;
+    const quoteStep = bashQuoteStep(command, i, quote);
+    quote = quoteStep.quote;
+    if (quoteStep.handled) {
+      i = quoteStep.nextIndex;
       continue;
     }
-    if (quote === "'") {
-      if (char === "'") quote = null;
-      continue;
-    }
-    if (char === '\\') {
-      i++;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === '(' || char === '{') {
-      depth++;
-      continue;
-    }
-    if (char === ')' || char === '}') {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
+
+    depth = groupDepthAfter(char, depth);
     if (depth !== 0) continue;
 
-    if (char === ';' || char === '|' || char === '\n' || char === '\r') {
-      start = i + 1;
-      if (
-        (char === '|' && command.charAt(i + 1) === '|') ||
-        (char === '\r' && command.charAt(i + 1) === '\n')
-      ) {
-        start = ++i + 1;
-      }
-      continue;
-    }
-    if (char === '&' && command.charAt(i + 1) === '&') {
-      start = ++i + 1;
+    const boundaryWidth = bashBoundaryWidth(command, i);
+    if (boundaryWidth > 0) {
+      start = i + boundaryWidth;
+      i += boundaryWidth - 1;
     }
   }
 
   return quote === null && depth === 0 ? command.slice(start, end) : null;
 }
 
+function isKnownRipgrepFlag(flag: string): boolean {
+  return RG_VALUE_FLAGS.has(flag) || RG_BOOLEAN_FLAGS.has(flag);
+}
+
+interface RipgrepPatternState {
+  seenPattern: boolean;
+  optionsEnded: boolean;
+  pendingValue: 'pattern' | 'other' | null;
+}
+
+function consumePendingRipgrepValue(state: RipgrepPatternState): boolean {
+  if (state.pendingValue === null) return false;
+  if (state.pendingValue === 'pattern') state.seenPattern = true;
+  state.pendingValue = null;
+  return true;
+}
+
+/** Applies one known ripgrep option while locating the next pattern slot. */
+function applyRipgrepPatternOption(token: Token, state: RipgrepPatternState): boolean {
+  const flag = token.value.split('=')[0] as string;
+  if (!isKnownRipgrepFlag(flag)) return false;
+  if (RG_NO_PATTERN_FLAGS.has(flag)) state.seenPattern = true;
+  if (!RG_VALUE_FLAGS.has(flag)) return true;
+  if (token.value.includes('=')) {
+    if (RG_PATTERN_FLAGS.has(flag)) state.seenPattern = true;
+    return true;
+  }
+  state.pendingValue = RG_PATTERN_FLAGS.has(flag) ? 'pattern' : 'other';
+  return true;
+}
+
 /** Whether the next argument after `tokens` is provably ripgrep's search pattern. */
 function nextRipgrepArgumentIsPattern(tokens: readonly Token[]): boolean {
   if (!RIPGREP_NAMES.has(programName(tokens[0]))) return false;
-  let seenPattern = false;
-  let optionsEnded = false;
-  let pendingValue: 'pattern' | 'other' | null = null;
+  const state: RipgrepPatternState = { seenPattern: false, optionsEnded: false, pendingValue: null };
 
   for (let i = 1; i < tokens.length; i++) {
     const token = tokens[i] as Token;
-    if (pendingValue !== null) {
-      if (pendingValue === 'pattern') seenPattern = true;
-      pendingValue = null;
+    if (consumePendingRipgrepValue(state)) continue;
+    if (!state.optionsEnded && token.value === '--') {
+      state.optionsEnded = true;
       continue;
     }
-    if (!optionsEnded && token.value === '--') {
-      optionsEnded = true;
+    if (!state.optionsEnded && token.value.startsWith('-')) {
+      if (!applyRipgrepPatternOption(token, state)) return false;
       continue;
     }
-    if (!optionsEnded && token.value.startsWith('-')) {
-      const flag = token.value.split('=')[0] as string;
-      if (!RG_VALUE_FLAGS.has(flag) && !RG_BOOLEAN_FLAGS.has(flag)) return false;
-      if (RG_NO_PATTERN_FLAGS.has(flag)) seenPattern = true;
-      if (RG_VALUE_FLAGS.has(flag)) {
-        if (token.value.includes('=')) {
-          if (RG_PATTERN_FLAGS.has(flag)) seenPattern = true;
-        } else {
-          pendingValue = RG_PATTERN_FLAGS.has(flag) ? 'pattern' : 'other';
-        }
-      }
-      continue;
-    }
-    if (!seenPattern) seenPattern = true;
+    state.seenPattern = true;
   }
 
-  if (pendingValue !== null) return pendingValue === 'pattern';
-  return !seenPattern;
+  if (state.pendingValue !== null) return state.pendingValue === 'pattern';
+  return !state.seenPattern;
 }
 
 /**
@@ -1258,6 +1289,65 @@ function expandGlob(pattern: string, list: DirectoryLister): { hits: string[]; d
  * the statements before it did. Brace expansion carries no such debt — it is pure text, cwd
  * and filesystem play no part — so it stays on for the whole command line.
  */
+interface RipgrepNormalizeState {
+  seenPattern: boolean;
+  skipValue: boolean;
+  optionsEnded: boolean;
+}
+
+type RipgrepTokenDisposition = 'verbatim' | 'operand' | 'unknown-option';
+
+function classifyRipgrepNormalizationToken(token: Token, state: RipgrepNormalizeState): RipgrepTokenDisposition {
+  if (state.skipValue) {
+    state.skipValue = false;
+    return 'verbatim';
+  }
+  if (!state.optionsEnded && token.value === '--') {
+    // `--` has exact arity: it consumes nothing and makes every following token positional.
+    state.optionsEnded = true;
+    return 'verbatim';
+  }
+  if (state.optionsEnded || !token.value.startsWith('-')) return 'operand';
+
+  const flag = token.value.split('=')[0] as string;
+  // An unknown option may or may not consume the next token. Refuse the whole segment rather
+  // than guess which token is the pattern and which is a path.
+  if (!isKnownRipgrepFlag(flag)) return 'unknown-option';
+  // Inline values consume nothing after the option; separate values must pass through verbatim.
+  state.skipValue = RG_VALUE_FLAGS.has(flag) && !token.value.includes('=');
+  if (RG_PATTERN_FLAGS.has(flag) || RG_NO_PATTERN_FLAGS.has(flag)) state.seenPattern = true;
+  return 'verbatim';
+}
+
+interface RipgrepOperandNormalization {
+  args: string[];
+  note: string | null;
+}
+
+function normalizeRipgrepOperand(token: Token, list: DirectoryLister, allowGlob: boolean): RipgrepOperandNormalization {
+  const braced = expandBraces(token);
+  if (braced) {
+    return {
+      args: braced.map(quoteArgument),
+      note:
+        `PowerShell has no brace expansion, so \`${token.value}\` reached ripgrep as one literal name. ` +
+        `It was expanded here to the ${braced.length} paths bash would have produced: ${listExpandedNames(braced)}.`
+    };
+  }
+
+  const expanded = allowGlob && isExpandableGlob(token) ? expandGlob(token.value, list) : null;
+  if (!expanded) return { args: [token.raw], note: null };
+  return {
+    args: expanded.hits.map(quoteArgument),
+    note:
+      `PowerShell does not expand globs for native programs, so \`${token.value}\` was expanded here to ` +
+      `${expanded.hits.length === 1 ? 'the one entry' : ("the " + expanded.hits.length + " entries")} of the ` +
+      `${expanded.directory === '.' ? 'working directory' : ("relative directory " + expanded.directory)} ` +
+      `matching it: ${listExpandedNames(expanded.hits)}. Sub-directories were not searched, exactly as ` +
+      `the glob asked; use \`-g '${token.value}'\` if a recursive match was what you meant.`
+  };
+}
+
 function normalizeRipgrepSegment(
   segment: string,
   list: DirectoryLister,
@@ -1268,68 +1358,25 @@ function normalizeRipgrepSegment(
 
   const notes: string[] = [];
   const out: string[] = [tokens[0]?.raw ?? ''];
-  let seenPattern = false;
-  let skipValue = false;
-  let optionsEnded = false;
+  const state: RipgrepNormalizeState = { seenPattern: false, skipValue: false, optionsEnded: false };
 
   for (let i = 1; i < tokens.length; i++) {
     const token = tokens[i] as Token;
-    if (skipValue) {
-      skipValue = false;
+    const disposition = classifyRipgrepNormalizationToken(token, state);
+    if (disposition === 'unknown-option') return { segment, notes: [] };
+    if (disposition === 'verbatim') {
       out.push(token.raw);
       continue;
     }
-    if (!optionsEnded && token.value === '--') {
-      // Unlike an unknown flag, `--` has exact arity: it consumes nothing and makes every
-      // following token positional. Refusing the whole segment here left the most explicit
-      // spelling of `rg -- pattern *.ts` broken on PowerShell even though the token boundaries
-      // after the delimiter are *more* knowable than without it.
-      optionsEnded = true;
-      out.push(token.raw);
-      continue;
-    }
-    if (!optionsEnded && token.value.startsWith('-')) {
-      const flag = token.value.split('=')[0] as string;
-      // An option this table does not know may or may not swallow the next argument, and
-      // the two readings disagree about which token is the pattern and which is a path.
-      // Neither reading is safe to act on, so nothing in this segment is rewritten. A bare
-      // `-` still lands here because it names stdin; `--` is handled above because its arity
-      // and effect on every following token are exact.
-      if (!RG_VALUE_FLAGS.has(flag) && !RG_BOOLEAN_FLAGS.has(flag)) return { segment, notes: [] };
-      // `--glob=*.md` carries its value inline and consumes nothing after it.
-      if (RG_VALUE_FLAGS.has(token.value) && !token.value.includes('=')) skipValue = true;
-      if (RG_PATTERN_FLAGS.has(flag) || RG_NO_PATTERN_FLAGS.has(flag)) seenPattern = true;
-      out.push(token.raw);
-      continue;
-    }
-    if (!seenPattern) {
+    if (!state.seenPattern) {
       // The search pattern itself. `*` is a regex quantifier here, never a filename glob.
-      seenPattern = true;
+      state.seenPattern = true;
       out.push(token.raw);
       continue;
     }
-    const braced = expandBraces(token);
-    if (braced) {
-      out.push(...braced.map(quoteArgument));
-      notes.push(
-        `PowerShell has no brace expansion, so \`${token.value}\` reached ripgrep as one literal name. ` +
-          `It was expanded here to the ${braced.length} paths bash would have produced: ${listExpandedNames(braced)}.`
-      );
-      continue;
-    }
-    const expanded = allowGlob && isExpandableGlob(token) ? expandGlob(token.value, list) : null;
-    if (expanded) {
-      out.push(...expanded.hits.map(quoteArgument));
-      notes.push(
-        `PowerShell does not expand globs for native programs, so \`${token.value}\` was expanded here to ` +
-          `${expanded.hits.length === 1 ? 'the one entry' : ("the " + expanded.hits.length + " entries")} of the ` +
-          `${expanded.directory === '.' ? 'working directory' : ("relative directory " + expanded.directory)} ` +
-          `matching it: ${listExpandedNames(expanded.hits)}. Sub-directories were not searched, exactly as ` +
-          `the glob asked; use \`-g '${token.value}'\` if a recursive match was what you meant.`
-      );
-      continue;
-    }
-    out.push(token.raw);
+    const normalized = normalizeRipgrepOperand(token, list, allowGlob);
+    out.push(...normalized.args);
+    if (normalized.note !== null) notes.push(normalized.note);
   }
 
   return { segment: out.join(' '), notes };
@@ -1389,41 +1436,50 @@ export function normalizeShellCommand(
 }
 
 /** Splits on `seps`, maps each part, and joins it back with the separators it was cut on. */
+interface RebuildScanState {
+  current: string;
+  quote: ShellQuote;
+  depth: number;
+}
+
+function appendQuotedRebuildChar(state: RebuildScanState, char: string): boolean {
+  if (state.quote === null) return false;
+  state.current += char;
+  if (char === state.quote) state.quote = null;
+  return true;
+}
+
+function openRebuildQuote(state: RebuildScanState, char: string): boolean {
+  if (char !== '"' && char !== "'") return false;
+  state.quote = char;
+  state.current += char;
+  return true;
+}
+
 function rebuild(text: string, seps: readonly string[], map: (part: string) => string): string {
   const pieces: string[] = [];
   const separators: string[] = [];
-  let current = '';
-  let quote: '"' | "'" | null = null;
-  let depth = 0;
+  const state: RebuildScanState = { current: '', quote: null, depth: 0 };
 
   for (let i = 0; i < text.length; i++) {
     const char = text[i] as string;
-    if (quote !== null) {
-      current += char;
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      current += char;
-      continue;
-    }
-    if (char === '(' || char === '{') depth++;
-    else if (char === ')' || char === '}') depth = Math.max(0, depth - 1);
+    if (appendQuotedRebuildChar(state, char)) continue;
+    if (openRebuildQuote(state, char)) continue;
+    state.depth = groupDepthAfter(char, state.depth);
 
-    if (depth === 0) {
+    if (state.depth === 0) {
       const hit = seps.find((sep) => text.startsWith(sep, i));
       if (hit !== undefined) {
-        pieces.push(current);
+        pieces.push(state.current);
         separators.push(hit);
-        current = '';
+        state.current = '';
         i += hit.length - 1;
         continue;
       }
     }
-    current += char;
+    state.current += char;
   }
-  pieces.push(current);
+  pieces.push(state.current);
 
   return pieces.map(map).reduce((acc, part, index) => acc + (index === 0 ? '' : separators[index - 1]) + part, '');
 }

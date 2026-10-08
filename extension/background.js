@@ -4362,7 +4362,7 @@ chrome.tabs.onRemoved.addListener((id) => {
     delete discardProtectedTabs[String(id)];
     void persistLive().catch(() => undefined);
   }
-  void serializeTab(id, async () => {
+  serializeTab(id, async () => {
     await load();
     const key = String(id), removal = tabRemovals[key];
     const byExtension = Boolean(removal && removal.documentId === tabDocuments[key] &&
