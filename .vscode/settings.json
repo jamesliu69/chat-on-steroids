@@ -1,0 +1,6 @@
+{
+    "sonarlint.connectedMode.project": {
+        "connectionId": "http-localhost-32769-",
+        "projectKey": "chat-on-steroids"
+    }
+}

@@ -1,3 +1,4 @@
+import { DEFAULT_HELPER_CHAT_MODEL, SUPERSEDED_HELPER_CHAT_MODELS } from '../shared/chat-models.js';
 import { UI_LANGUAGES } from '../shared/ui-language.js';
 import { REASONING_EFFORTS } from '../shared/session.js';
 import { appearanceSchema } from './appearance-schema.js';
@@ -44,6 +45,7 @@ import {
 } from '../shared/goal.js';
 import { DEFAULT_HANDOFF_LENGTH, DEFAULT_HANDOFF_PROMPT, HANDOFF_LENGTHS, MAX_HANDOFF_PROMPT_CHARS } from '../shared/handoff.js';
 import { logError } from './logger.js';
+import { APP_VERSION } from './version.js';
 import { RESERVED_ROOT_NAMES } from './sandbox.js';
 import { capabilitiesForPlatform } from './platform.js';
 import {
@@ -145,7 +147,7 @@ const DEFAULT_GOAL: GoalSettings = {
   loopBackend: 'chatgpt',
   impulseMinutes: 0,
   includeToolCalls: false,
-  helperModel: 'gpt-5.6-sol',
+  helperModel: DEFAULT_HELPER_CHAT_MODEL,
   helperReasoning: 'high',
   enabled: false,
   // The mode a fresh install runs the moment somebody flips the switch. Goal, because it is
@@ -334,7 +336,10 @@ const configSchema = z.object({
     followOutput: z.boolean().optional().default(true),
     mentionCore: z.boolean().optional().default(true),
     language: z.enum(UI_LANGUAGES).optional(),
+    // The version this install last started as; What's New shows once per real update (#1172).
+    lastSeenVersion: z.string().trim().min(1).max(40).optional().catch(undefined),
     browserPreferences: z.object({ overwrite: z.boolean(), durations: z.boolean() }).strict().optional(),
+    cosBrowserTrayHint: z.boolean().optional(),
     finishTool: z.boolean().optional(),
     planBackend: z.enum(['chatgpt', 'api']).optional(),
     finishAction: z.enum(['notify', 'goal']).optional(),
@@ -444,7 +449,7 @@ const configSchema = z.object({
       enabled: z.boolean().optional().default(DEFAULT_GOAL.enabled),
       backend: z.enum(['api', 'chatgpt', 'templates']).optional().default('chatgpt'),
       loopBackend: z.enum(['api', 'chatgpt']).optional().default('chatgpt'),
-      helperModel: z.string().trim().min(1).max(80).optional().default('gpt-5.6-sol').catch('gpt-5.6-sol'),
+      helperModel: z.string().trim().min(1).max(80).optional().default(DEFAULT_HELPER_CHAT_MODEL).catch(DEFAULT_HELPER_CHAT_MODEL),
       helperReasoning: z.enum(REASONING_EFFORTS).optional().default('high').catch('high'),
       // Repaired rather than rejected for the same reason `reasoning` below is: a config
       // written by a version that knows one more mode than this one must not send every root
@@ -511,7 +516,7 @@ const configSchema = z.object({
         .catch(DEFAULT_GOAL.loopPrompt)
     })
     .optional()
-    .default({ ...DEFAULT_GOAL, backend: 'chatgpt', loopBackend: 'chatgpt', impulseMinutes: 0, includeToolCalls: false, helperModel: 'gpt-5.6-sol', helperReasoning: 'high' }),
+    .default({ ...DEFAULT_GOAL, backend: 'chatgpt', loopBackend: 'chatgpt', impulseMinutes: 0, includeToolCalls: false, helperModel: DEFAULT_HELPER_CHAT_MODEL, helperReasoning: 'high' }),
   mcp: z
     .object({
       // Repaired rather than rejected, like the Goal prompts above: this is free text a person
@@ -562,7 +567,10 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     readOnly: false,
     commandAllowlist: { ...DEFAULT_COMMAND_ALLOWLIST, rules: [] },
     tunnel: { kind: 'openai', tunnelId: '', desktopTunnelId: '', binaryPath: '' },
-    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, autoSelectSkills: false, backgroundChats: true, browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true },
+    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, autoSelectSkills: false, backgroundChats: true, browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true,
+      // The built-in browser is opt-in: Chrome with the companion stays the default for new and
+      // existing installs alike, and the built-in one runs only once someone chooses it.
+      chatBrowser: 'chrome' },
     sessions: { ...DEFAULT_SESSIONS },
     compaction: { ...DEFAULT_COMPACTION },
     multiAgent: { ...FIRST_LAUNCH_MULTI_AGENT },
@@ -587,7 +595,8 @@ function conservativeRecoveryConfig(): Config {
     capabilities: { ...DEFAULT_CAPABILITIES },
     readOnly: true,
     multiAgent: { ...DEFAULT_MULTI_AGENT },
-    ui: { ...defaultConfig().ui, autoContinue: false },
+    // Damage is not a choice of browser either: keep the one every older config reads as.
+    ui: { ...defaultConfig().ui, autoContinue: false, autoRefreshPlugins: false, chatBrowser: 'chrome' },
     // A config file that could not be trusted is not consent to have a second model typing
     // into the user's chat, whatever the unreadable file said.
     goal: { ...DEFAULT_GOAL }
@@ -622,12 +631,22 @@ function adoptCurrentGoalPrompt(config: Config): Config {
   if (SUPERSEDED_GOAL_LOOP_SYSTEM_PROMPTS.includes(goal.loopPrompt)) {
     goal.loopPrompt = DEFAULT_GOAL_LOOP_SYSTEM_PROMPT;
   }
+  // The same fence for the helper model: only the exact shipped value moves. GPT-5.6 Sol is no longer
+  // in ChatGPT's catalog, so a config still holding it fell back to ChatGPT's selection on every decision.
+  if (goal.helperModel && SUPERSEDED_HELPER_CHAT_MODELS.includes(goal.helperModel)) goal.helperModel = DEFAULT_HELPER_CHAT_MODEL;
   return { ...config, goal };
 }
 
 let configPath = '';
 let current: Config = defaultConfig();
 let runtimeConfigOverride: Config | null = null;
+// This run started from conservativeRecoveryConfig. Setup says so beside its access choice, because
+// read-only with no reason given reads as a broken app. Lasts until read-only is switched off.
+let recovered = false;
+
+export function settingsRecovered(): boolean {
+  return recovered;
+}
 // Every UI mutation ultimately lands in the same tiny JSON file. Keep those
 // read-modify-write transactions strictly ordered so two fast checkbox/root changes
 // cannot race on config.json.tmp or overwrite each other's newer state.
@@ -669,14 +688,36 @@ export function initConfigPath(userDataDir: string): void {
   runtimeConfigOverride = null;
 }
 
-export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config> {
+/**
+ * Keeps an unusable settings file before recovery defaults can replace it.
+ *
+ * The next save after a failed read writes the recovery settings over the file. Found on the
+ * Windows test VM (2026-10-06): a settings file with a byte-order mark lost its folders and tunnel
+ * that way within a second. The copy keeps the original bytes next to the file; failing to write it
+ * is logged and never blocks starting.
+ */
+async function keepUnreadable(raw: string): Promise<void> {
+  const copy = `${configPath}.unreadable-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   try {
-    const raw = await fs.readFile(configPath, 'utf8');
-    const source = JSON.parse(raw) as unknown;
+    await fs.writeFile(copy, raw, 'utf8');
+    logError(`The settings file could not be used; its original was kept as ${path.basename(copy)}`);
+  } catch (error) {
+    logError(`Could not keep a copy of the unusable settings file: ${(error as Error).message}`);
+  }
+}
+
+export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config> {
+  let raw: string | null = null;
+  try {
+    raw = await fs.readFile(configPath, 'utf8');
+    // Windows PowerShell 5.1 and older Notepad start UTF-8 files with a byte-order mark; it is not JSON.
+    const source = JSON.parse(raw.replace(/^\uFEFF/, '')) as unknown;
     const parsed = configSchema.safeParse(source);
     if (!parsed.success) {
       logError('Settings file was invalid and has been reset to defaults');
+      await keepUnreadable(raw);
       current = conservativeRecoveryConfig();
+      recovered = true;
     } else {
       const loaded = preserveDisabledRecording(parsed.data, source, options);
       current = enforceFeatureDependencies(
@@ -694,9 +735,12 @@ export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config>
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       logError(`Could not read settings: ${(err as Error).message}`);
+      if (raw !== null) await keepUnreadable(raw);
       current = conservativeRecoveryConfig();
+      recovered = true;
     } else {
-      current = defaultConfig();
+      // A fresh install has nothing new to show: it records its own version before anything can.
+      current = { ...defaultConfig(), ui: { ...defaultConfig().ui, lastSeenVersion: APP_VERSION } };
     }
   }
   return current;
@@ -801,6 +845,7 @@ async function persistConfig(parsed: Config): Promise<Config> {
   // Only publish the new in-memory state after the durable write succeeded. A disk
   // error must not leave the UI believing settings were saved when they were not.
   current = parsed;
+  if (!parsed.readOnly) recovered = false;
   return current;
 }
 

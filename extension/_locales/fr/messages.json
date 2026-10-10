@@ -1076,6 +1076,9 @@
   "content_goal_error_invalid_provider": {
     "message": "Le point de terminaison de continuation personnalisé est invalide. Vérifiez son URL dans les paramètres ; utilisez HTTPS ou un point de terminaison HTTP local."
   },
+  "content_history_rate_limited": {
+    "message": "ChatGPT a temporairement limité l’accès à l’historique de cette conversation. Chat On Steroids suspend la récupération automatique jusqu’à la fin de l’attente."
+  },
   "content_goal_error_rate_limited": {
     "message": "Le fournisseur de continuation limite le débit des requêtes. Attendez la nouvelle tentative affichée ou choisissez un autre modèle de continuation."
   },
@@ -1147,6 +1150,21 @@
   },
   "content_goal_error_goal_objective_not_durable": {
     "message": "L’application n’a pas pu enregistrer la tâche. Vérifiez l’espace disque disponible et essayez de l’enregistrer à nouveau."
+  },
+  "popup_sign_in_transfer": {
+    "message": "Transférer la session vers CoS browser"
+  },
+  "popup_sign_in_permission": {
+    "message": "Accès aux cookies refusé. Cliquez à nouveau."
+  },
+  "popup_sign_in_imported": {
+    "message": "Session transférée"
+  },
+  "popup_sign_in_imported_detail": {
+    "message": "Vous êtes connecté à CoS browser."
+  },
+  "popup_sign_in_failed": {
+    "message": "Échec. Relancez la connexion depuis CoS."
   },
   "popup_app_not_running_help": {
     "message": "Vérifiez que Chat On Steroids est ouvert sur cet ordinateur. L’extension se connecte d’elle-même."

@@ -62,6 +62,8 @@ const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
  * Six hours is slow enough to be invisible, and costs one request whenever there is nothing new.
  */
 const RECHECK_MS = 6 * 60 * 60_000;
+/** Opening Settings asks again when the last answer is older than this. */
+export const STALE_CHECK_MS = 10 * 60_000;
 
 /**
  * The artifact this exact installation can apply to itself, or null for one that cannot.
@@ -161,6 +163,16 @@ function set(next: Partial<UpdateStatus>): void {
 export function startUpdateChecks(): void {
   void checkForUpdates();
   setInterval(() => void checkForUpdates(), RECHECK_MS).unref();
+}
+
+/**
+ * Asks again when the last answer is old: opening Settings calls this. Settings say "Up to date"
+ * on the strength of the last check, and a six-hourly check can say that for hours after a
+ * release (2.1.27 did, after 2.1.28 was out). A pass already running is shared, as always.
+ */
+export function checkForUpdatesIfStale(now = Date.now()): Promise<void> {
+  if (status.checkedAt !== null && now - status.checkedAt < STALE_CHECK_MS) return pass ?? Promise.resolve();
+  return checkForUpdates();
 }
 
 /**
@@ -268,12 +280,41 @@ async function adopt(version: string, name: string, expected: string): Promise<s
 
 /** The one fact the release API is asked for: which version is newest. */
 async function latestVersion(): Promise<string> {
-  const response = await get(LATEST_RELEASE_API, CHECK_TIMEOUT_MS, {
-    accept: 'application/vnd.github+json'
-  });
+  let response: Response;
+  try {
+    response = await get(LATEST_RELEASE_API, CHECK_TIMEOUT_MS, {
+      accept: 'application/vnd.github+json'
+    });
+  } catch (err) {
+    // GitHub's API refuses unauthenticated calls once an address has spent its hourly quota, and
+    // some networks get 403 outright (#1253). The public release page has no such quota.
+    if (!/ answered (403|429)$/.test((err as Error).message)) throw err;
+    return latestVersionFromPage();
+  }
   const body = (await response.json()) as { tag_name?: unknown };
   const version = releaseVersion(body.tag_name);
   if (!version) throw new Error('the latest release has no usable version tag');
+  return version;
+}
+
+/**
+ * The newest release from the public page, for when the API declines: `/releases/latest`
+ * redirects to `/releases/tag/v<version>`. A HEAD request reads only where it lands, and only a
+ * landing on github.com counts.
+ */
+async function latestVersionFromPage(): Promise<string> {
+  const response = await fetch(`https://github.com/${REPO}/releases/latest`, {
+    method: 'HEAD',
+    signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+    redirect: 'follow',
+    headers: { 'user-agent': `chat-on-steroids/${APP_VERSION}` }
+  });
+  if (!response.ok) throw new Error(`the release page answered ${response.status}`);
+  let landed: URL | null = null;
+  try { landed = new URL(response.url); } catch { landed = null; }
+  const tag = landed?.origin === 'https://github.com' ? /\/releases\/tag\/([^/]+)$/.exec(landed.pathname)?.[1] : undefined;
+  const version = releaseVersion(tag ? decodeURIComponent(tag) : undefined);
+  if (!version) throw new Error('the release page named no usable version tag');
   return version;
 }
 

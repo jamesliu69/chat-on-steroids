@@ -8,9 +8,10 @@ import {
   initConfigPath,
   loadConfig,
   saveConfig,
+  settingsRecovered,
   updateConfig
 } from '../src/main/config.js';
-import { DESKTOP_CAPABILITIES, type Capability } from '../src/shared/types.js';
+import { DESKTOP_CAPABILITIES, type Capability, type Config } from '../src/shared/types.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
 
 let dir: string;
@@ -177,13 +178,15 @@ describe('settings migration', () => {
     await saveConfig({ ...defaultConfig(), controlApi: { enabled: false, allowActions: true } });
     expect((await loadConfig()).controlApi).toEqual({ enabled: false, allowActions: false });
   });
-  it('defaults automatic plugin refresh off for fresh and legacy settings while preserving explicit opt-in', async () => {
+  it('defaults automatic plugin refresh off for fresh and legacy settings while preserving explicit choices', async () => {
     expect(defaultConfig().ui.autoRefreshPlugins).toBe(false);
     const legacy = defaultConfig(); delete legacy.ui.autoRefreshPlugins;
     await saveConfig(legacy);
     expect((await loadConfig()).ui.autoRefreshPlugins).toBe(false);
     await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, autoRefreshPlugins: true } });
     expect((await loadConfig()).ui.autoRefreshPlugins).toBe(true);
+    await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, autoRefreshPlugins: false } });
+    expect((await loadConfig()).ui.autoRefreshPlugins).toBe(false);
   });
   it('defaults automatic Skill selection off for fresh and legacy settings while preserving explicit opt-in', async () => {
     expect(defaultConfig().ui.autoSelectSkills).toBe(false);
@@ -525,6 +528,20 @@ describe('shipped defaults', () => {
     expect(defaultConfig().sessions).toMatchObject({ record: true, retainDays: 30 });
   });
 
+  it('keeps Chrome as the default browser on a first launch and moves no existing config', async () => {
+    // The built-in browser is opt-in, for new installs too.
+    await fs.rm(path.join(dir, 'config.json'), { force: true });
+    expect((await loadConfig()).ui.chatBrowser).toBe('chrome');
+    // Written before the choice existed: it reads as the Chrome it always used.
+    const older = defaultConfig() as Config;
+    delete (older.ui as Partial<Config['ui']>).chatBrowser;
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(older), 'utf8');
+    expect((await loadConfig()).ui.chatBrowser).toBe('chrome');
+    // Nor does a damaged file switch anyone's browser.
+    await fs.writeFile(path.join(dir, 'config.json'), '{"roots":', 'utf8');
+    expect((await loadConfig()).ui.chatBrowser).toBe('chrome');
+  });
+
   it('loads a genuinely missing config with every portable Core capability enabled', async () => {
     await fs.rm(path.join(dir, 'config.json'), { force: true });
     const loaded = await loadConfig();
@@ -590,6 +607,18 @@ describe('shipped defaults', () => {
     expect(loaded.capabilities.command).toBe(false);
     expect(loaded.capabilities.control).toBe(false);
     expect(loaded.multiAgent.enabled).toBe(false);
+    expect(loaded.ui.autoRefreshPlugins).toBe(false);
+  });
+
+  it('says a recovered config started read-only until read-only is switched off', async () => {
+    await fs.writeFile(path.join(dir, 'config.json'), '{ definitely-not-json', 'utf8');
+    const recovered = await loadConfig();
+    expect(settingsRecovered()).toBe(true);
+    // Another save that keeps read-only, such as adding a folder, leaves the reason on screen.
+    await saveConfig({ ...recovered, roots: [] });
+    expect(settingsRecovered()).toBe(true);
+    await saveConfig({ ...recovered, readOnly: false });
+    expect(settingsRecovered()).toBe(false);
   });
 
   it('keeps the global worker admission cap off for legacy configs and preserves an explicit opt-in', async () => {
@@ -660,7 +689,7 @@ describe('shipped defaults', () => {
 describe('the goal loop settings', () => {
   it('keeps helper settings independent from the API and preserves a chosen idle tab budget', async () => {
     const config = defaultConfig();
-    expect(config.goal).toMatchObject({ helperModel: 'gpt-5.6-sol', helperReasoning: 'high', model: DEFAULT_GOAL_MODEL });
+    expect(config.goal).toMatchObject({ helperModel: 'gpt-6', helperReasoning: 'high', model: DEFAULT_GOAL_MODEL });
     await saveConfig({ ...config, ui: { ...config.ui, tabsToKeepOpen: 7 }, goal: {
       ...config.goal, model: 'provider/api-model', reasoning: 'low', helperModel: 'account-browser-model', helperReasoning: 'medium'
     } });
@@ -679,6 +708,17 @@ describe('the goal loop settings', () => {
     // both editable instructions on disk and the settings screen has something to paint.
     expect(config.goal.objectivePrompt).toContain('Your job is to prompt ChatGPT');
     expect(config.goal.objectivePrompt).toContain('Read it together with the original task');
+  });
+
+  it('moves the exact superseded helper models to GPT-6 and keeps any other choice', async () => {
+    await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, helperModel: 'gpt-5.6-sol', helperReasoning: 'medium' } });
+    // GPT-5.6 Sol is no longer in ChatGPT's catalog; the untouched shipped value adopts the current default.
+    expect((await loadConfig()).goal).toMatchObject({ helperModel: 'gpt-6', helperReasoning: 'medium' });
+    // 2.1.31's own shipped lane alias adopts the family too, so Settings shows one GPT-6 (#1217).
+    await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, helperModel: 'gpt-6-thinking', helperReasoning: 'high' } });
+    expect((await loadConfig()).goal).toMatchObject({ helperModel: 'gpt-6', helperReasoning: 'high' });
+    await saveConfig({ ...defaultConfig(), goal: { ...defaultConfig().goal, helperModel: 'gpt-5-6-thinking' } });
+    expect((await loadConfig()).goal.helperModel).toBe('gpt-5-6-thinking');
   });
 
   it('keeps the model, reasoning level and system prompt that were chosen', async () => {
@@ -703,7 +743,7 @@ describe('the goal loop settings', () => {
       loopBackend: 'chatgpt',
       includeToolCalls: false,
       impulseMinutes: 0,
-      helperModel: 'gpt-5.6-sol',
+      helperModel: 'gpt-6',
       helperReasoning: 'high',
       enabled: true,
       mode: 'loop',
@@ -850,7 +890,7 @@ describe('the goal loop settings', () => {
       loopBackend: 'chatgpt',
       includeToolCalls: false,
       impulseMinutes: 0,
-      helperModel: 'gpt-5.6-sol',
+      helperModel: 'gpt-6',
       helperReasoning: 'high',
       enabled: false,
       mode: 'goal',
@@ -959,4 +999,34 @@ it('persists optional ordinary new-chat model defaults without inventing them fo
   const loaded = await loadConfig();
   expect(loaded.ui.defaultChatModel).toBe('gpt-5.6-sol');
   expect(loaded.ui.defaultChatReasoning).toBe('xhigh');
+});
+
+describe('a settings file the app cannot read as is', () => {
+  // VM test, 2026-10-06: Windows PowerShell 5.1 wrote config.json with a byte-order mark. The app
+  // fell back to recovery defaults and the next settings save overwrote the user's folders and tunnel.
+  const file = () => path.join(dir, 'config.json');
+  const backups = async () => (await fs.readdir(dir)).filter(name => name.startsWith('config.json.unreadable-'));
+  const clearBackups = async () => { for (const name of await backups()) await fs.rm(path.join(dir, name)); };
+
+  it('reads a file that starts with a byte-order mark like any other', async () => {
+    await clearBackups();
+    const config = { ...defaultConfig(), roots: [{ name: 'project', path: dir }] };
+    await fs.writeFile(file(), '﻿' + JSON.stringify(config), 'utf8');
+    const loaded = await loadConfig();
+    expect(loaded.roots.map(root => root.name)).toEqual(['project']);
+    expect(await backups()).toEqual([]);
+  });
+
+  it.each([
+    ['broken JSON', '{"roots": ['],
+    ['the wrong shape', JSON.stringify({ roots: 'not a list' })]
+  ])('keeps a copy of a file with %s before anything can overwrite it', async (_label, content) => {
+    await clearBackups();
+    await fs.writeFile(file(), content, 'utf8');
+    const loaded = await loadConfig();
+    expect(loaded.readOnly).toBe(true);
+    const saved = await backups();
+    expect(saved).toHaveLength(1);
+    expect(await fs.readFile(path.join(dir, saved[0]!), 'utf8')).toBe(content);
+  });
 });

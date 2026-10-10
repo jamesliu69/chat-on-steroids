@@ -40,11 +40,13 @@ import type {
   StoredText,
   ToolEditReview
 } from '../../shared/session.js';
+import type { WorkerAssignmentSummary } from '../../shared/session.js';
 import { continuationMarkerOf, eventTokens, MAX_TOOL_RESULT_TOKENS, normalizedToolOutcome, storedTextTokens, workSequence } from '../../shared/session.js';
 import { applyTurnIdentity, authoredTimeOf, chronological, injectedUserMessage, positionOf, projectTimeline,
   recordedRequestTurn, responseTurnId, type Chronological, type TimelineTurns } from '../../shared/chronology.js';
-import { automaticTitle, firstTitleMessage, legacyContextTitle, legacyLabelPending, projectPageTitle, providerTitleIgnored, refreshUserTitle } from './title.js';
+import { automaticTitle, firstTitleMessage, legacyContextTitle, legacyLabelPending, projectPageTitle, providerTitleIgnored, refreshUserTitle, userTitle } from './title.js';
 import { agentPlanSchema, agentPlanUpdateSchema, MAX_AGENT_PLAN_BYTES, type AgentPlan, type AgentPlanUpdate } from '../../shared/agent-plan.js';
+import { turnTrace, type TurnTrace } from '../../shared/turn-trace.js';
 import { getConfig } from '../config.js';
 import { logError, logInfo, logWarn } from '../logger.js';
 
@@ -89,6 +91,26 @@ let root = '';
  * that exact current attachment invalidates its key before a later lookup may trust it.
  */
 const missingCurrentConversations = new Set<string>();
+/** The journal reader can revisit the same malformed row on every timeline refresh.
+ * Keep warnings informative without presenting unchanged damage as a fresh incident. */
+const recentUnreadableWarned = new Map<string, number>();
+const MAX_RECENT_UNREADABLE_WARNED = 1024;
+
+function reportUnreadableRecentEvents(sessionId: string, damaged: number, fullyScanned: boolean): void {
+  if (damaged === 0) {
+    // A bounded page that never reached the beginning does not prove recovery.
+    if (fullyScanned) recentUnreadableWarned.delete(sessionId);
+    return;
+  }
+  if (damaged <= (recentUnreadableWarned.get(sessionId) ?? 0)) return;
+  recentUnreadableWarned.delete(sessionId);
+  recentUnreadableWarned.set(sessionId, damaged);
+  if (recentUnreadableWarned.size > MAX_RECENT_UNREADABLE_WARNED) {
+    const oldest = recentUnreadableWarned.keys().next().value;
+    if (oldest) recentUnreadableWarned.delete(oldest);
+  }
+  logWarn(`session ${sessionId}: skipped ${damaged} unreadable recent event line(s)`);
+}
 
 interface AttachmentCatalog {
   /** Durable summary projection used for attachment identity and the renderer summary index. */
@@ -137,6 +159,7 @@ function rememberMissingCurrentConversation(conversationId: string): void {
 
 export function initSessionStore(userDataDir: string): void {
   root = path.join(userDataDir, 'sessions');
+  recentUnreadableWarned.clear();
   sessionAssetUsage.clear();
   globalAssetUsage = null;
   assetMutationEpoch = 0;
@@ -166,6 +189,12 @@ function assertReady(): void {
   if (root === '') {
     throw new Error('The session store was used before initSessionStore() named a directory');
   }
+}
+
+/** The chat's plain-text search index (search.ts); it lives and is deleted with the session. */
+export function sessionSearchIndexPath(id: string): string {
+  assertSessionId(id);
+  return path.join(sessionDir(id), 'search.txt');
 }
 
 function sessionDir(id: string): string {
@@ -1635,7 +1664,7 @@ export interface ReadOptions {
  *
  * A malformed line is skipped and counted rather than throwing: the whole point of
  * an append-only log is that a half-written final line costs one event, not the
- * session. Reading the file in one go is fine at the sizes the caps allow.
+ * session. Scan bounded blocks: a transcript-only read must not allocate the entire tool journal.
  */
 export async function readEvents(sessionId: string, options: ReadOptions = {}): Promise<SessionEvent[]> {
   assertSessionId(sessionId);
@@ -1664,40 +1693,39 @@ export async function readEvents(sessionId: string, options: ReadOptions = {}): 
       return chronological(projectTimeline(page, timeline?.timelineTurns, timeline?.requestTurns, active.messages.values()));
     }
   }
-  let raw: string;
-  try {
-    raw = await fs.readFile(path.join(sessionDir(sessionId), 'events.jsonl'), 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') raw = '';
-    else throw err;
-  }
-  const messages = active?.messages ?? (await readCanonicalMessages(sessionId));
-  const canonicalKeys = new Set(messages.keys());
-  const out: SessionEvent[] = [];
+  const journal: SessionEvent[] = [];
   let damaged = 0;
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
+  const oversized = await scanJournalLines(sessionId, line => {
+    if (!line.trim()) return;
     let parsed: SessionEvent;
     try {
       parsed = JSON.parse(line) as SessionEvent;
     } catch {
       damaged++;
-      continue;
+      return;
     }
     if (typeof parsed?.seq !== 'number' || typeof parsed?.kind !== 'string') {
       damaged++;
-      continue;
+      return;
     }
-    if (parsed.seq < from) continue;
-    if (options.kinds && !options.kinds.includes(parsed.kind)) continue;
-    if (options.agent && parsed.agent !== options.agent) continue;
+    if (parsed.seq < from) return;
+    if (options.kinds && !options.kinds.includes(parsed.kind)) return;
+    if (options.agent && parsed.agent !== options.agent) return;
+    journal.push(parsed);
+  });
+  damaged += oversized;
+  // Read the canonical overlay after the asynchronous scan, just as after the old whole-file
+  // read. A message revised while the journal is read must still replace its legacy snapshots.
+  const messages = active?.messages ?? (await readCanonicalMessages(sessionId));
+  const canonicalKeys = new Set(messages.keys());
+  const out = journal.filter(parsed => {
     // Once a message has a canonical record, a pre-1.8 append-only snapshot with the same
     // ChatGPT identity is legacy journal history, not another transcript item.
     if (messageKey(parsed) && canonicalKeys.has(messageKey(parsed)!)) {
-      continue;
+      return false;
     }
-    out.push(parsed);
-  }
+    return true;
+  });
   for (const message of messages.values()) {
     if (message.seq < from) continue;
     if (options.kinds && !options.kinds.includes(message.kind)) continue;
@@ -1715,6 +1743,44 @@ export async function readEvents(sessionId: string, options: ReadOptions = {}): 
     return chronological(projectTimeline(page, timeline?.timelineTurns, timeline?.requestTurns, messages.values()));
   }
   return chronological(projectTimeline(out, timeline?.timelineTurns, timeline?.requestTurns, messages.values())).slice(0, limit);
+}
+
+/** A bounded line scan, including torn/oversized legacy lines and UTF-8 split across blocks. */
+async function scanJournalLines(sessionId: string, accept: (line: string) => void): Promise<number> {
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try { handle = await fs.open(path.join(sessionDir(sessionId), 'events.jsonl'), 'r'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw error; }
+  const block = Buffer.alloc(256 * 1024);
+  const empty = Buffer.alloc(0);
+  let carry = empty, skipping = false, damaged = 0, position = 0;
+  try {
+    const { size } = await handle.stat();
+    // A live recorder may append during the scan. Read the captured journal extent once,
+    // rather than chasing a moving EOF or borrowing a later generation's events.
+    while (position < size) {
+      const { bytesRead } = await handle.read(block, 0, Math.min(block.length, size - position), position);
+      if (!bytesRead) break;
+      position += bytesRead;
+      const bytes = block.subarray(0, bytesRead);
+      let start = 0;
+      while (start < bytes.length) {
+        const newline = bytes.indexOf(0x0a, start);
+        const part = bytes.subarray(start, newline < 0 ? bytes.length : newline);
+        if (!skipping) {
+          if (carry.length + part.length > MAX_LINE_BYTES) { skipping = true; carry = empty; }
+          else if (newline >= 0) accept((carry.length ? Buffer.concat([carry, part]) : part).toString('utf8'));
+          else carry = carry.length ? Buffer.concat([carry, part]) : Buffer.from(part);
+        }
+        if (newline < 0) break;
+        if (skipping) { damaged++; skipping = false; }
+        carry = empty;
+        start = newline + 1;
+      }
+    }
+    if (skipping) damaged++;
+    else if (carry.length) accept(carry.toString('utf8'));
+    return damaged;
+  } finally { await handle.close(); }
 }
 
 /**
@@ -1808,6 +1874,11 @@ export async function readCompletedFinal(sessionId: string, conversationId: stri
   const completedAt = final.kind === 'turn_end' ? final.time : final.finalObservedAt ?? final.time;
   const question = questions[0];
   const correction = (event: SessionEvent) => isTurnCorrection(event, final.turnId, entry.summary.timelineTurns) && positionOf(event) < seq;
+  // The question this turn answered, reported again after the answer, is not a new question: a
+  // new chat's first message can reach the page as "just authored" (re-escaped) only after
+  // ChatGPT's redraw, when the turn has already ended. A genuinely new question has a new id.
+  const ownQuestion = final.turnId ? entry.summary.timelineTurns?.[final.turnId]?.questionId : undefined;
+  const nativeFinal = final.kind === 'turn_end' || (final.final === true && !!final.providerMessageId);
   if (question && positionOf(question) >= positionOf(final) && !correction(question)) return null;
   // With no generation identity, require an actual preceding authored boundary.
   if (!final.turnId && (!question || question.time > final.time)) return null;
@@ -1829,9 +1900,16 @@ export async function readCompletedFinal(sessionId: string, conversationId: stri
         sameTurn(owner.turnId, final.turnId) && event.call.conversationId === conversationId &&
         (!event.turnId || sameTurn(event.turnId, final.turnId)));
     }
-    if (event.kind === 'turn_end') return !sameTurn(event.turnId, final.turnId) || event.outcome !== 'completed';
-    if (event.kind === 'turn_start') return !(nativeReopen && event === last);
-    if (event.kind === 'user_message') return !correction(event);
+    // The page's ten-minute check ends a turn as `stalled` when it never saw the end. After
+    // ChatGPT's own final for that turn, the turn did end; nothing new happened (#1099).
+    if (event.kind === 'turn_end') return !sameTurn(event.turnId, final.turnId) ||
+      (event.outcome !== 'completed' && !(event.outcome === 'stalled' && nativeFinal));
+    // The first start of the final's own turn, recorded after that final: ChatGPT reported a fast
+    // answer's end before the page opened the turn from the Send receipt (#1099). Not new work.
+    if (event.kind === 'turn_start') return !(nativeReopen && event === last) &&
+      !(event.source !== 'app' && !!final.turnId && event.turnId === final.turnId &&
+        entry.summary.timelineTurns?.[final.turnId]?.origin === positionOf(event));
+    if (event.kind === 'user_message') return !correction(event) && !(ownQuestion && event.messageId === ownQuestion);
     return event.kind === 'assistant_message' || event.kind === 'page_tool';
   })) return null;
   return { messageId, turnId: final.turnId ?? null, completedAt, contentSeq: seq,
@@ -2069,9 +2147,10 @@ async function readRecentEventsFromDisk(
 
   const file = path.join(sessionDir(sessionId), 'events.jsonl');
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+  let cursor = 0;
   try {
     handle = await fs.open(file, 'r');
-    let cursor = (await handle.stat()).size;
+    cursor = (await handle.stat()).size;
     let bytes = 0;
     let carry = Buffer.alloc(0);
     while (cursor > 0 && scanning() && bytes < readBudget) {
@@ -2119,7 +2198,7 @@ async function readRecentEventsFromDisk(
   }
   candidates.sort((left, right) => sequence(left) - sequence(right));
   const selected = forward ? candidates.slice(0, cap) : candidates.slice(Math.max(0, candidates.length - cap));
-  if (damaged > 0) logWarn(`session ${sessionId}: skipped ${damaged} unreadable recent event line(s)`);
+  reportUnreadableRecentEvents(sessionId, damaged, cursor === 0 && scanning());
   const timeline = active?.summary ?? (await readDurableSnapshot(sessionId))?.summary;
   return chronological(projectTimeline(selected, timeline?.timelineTurns, timeline?.requestTurns, messages.values()));
 }
@@ -2359,6 +2438,9 @@ function normalizeSummary(id: string, raw: string): MetaCheckpoint | null {
         : {};
     }
     if (publicSummary.titleSource !== undefined && !['fallback', 'provider', 'manual'].includes(publicSummary.titleSource)) delete publicSummary.titleSource;
+    const auto = publicSummary.autoTitle;
+    if (auto !== undefined && (publicSummary.titleSource !== 'manual' || !auto || typeof auto !== 'object' ||
+        typeof auto.title !== 'string' || !['fallback', 'provider'].includes(auto.source))) delete publicSummary.autoTitle;
     const selected = publicSummary.selectedModel;
     if (selected !== undefined && (!selected || typeof selected !== 'object' ||
         typeof selected.conversationId !== 'string' || typeof selected.model !== 'string' ||
@@ -2373,6 +2455,12 @@ function normalizeSummary(id: string, raw: string): MetaCheckpoint | null {
       lastToolActivity.title.length > 200 ||
       !/^(?:edit|create|delete|move|read|search|browse|run|process|screen|input|clipboard|session|agent|other)$/.test(lastToolActivity.kind)
     )) delete publicSummary.lastToolActivity;
+    const assignment = publicSummary.workerAssignment;
+    if (assignment !== undefined && (!assignment || typeof assignment.conversationId !== 'string' ||
+        typeof assignment.agentId !== 'string' || typeof assignment.label !== 'string' || assignment.label.length > 60 ||
+        typeof assignment.task !== 'string' || assignment.task.length > 8200 || !Number.isFinite(assignment.recordedAt))) {
+      delete publicSummary.workerAssignment;
+    }
     const finish = publicSummary.finishTurn;
     if (finish !== undefined && finish !== null && (!finish || typeof finish !== 'object' ||
         typeof finish.turnId !== 'string' || !Number.isFinite(finish.startedAt) ||
@@ -3079,6 +3167,81 @@ export async function updateSessionPlan(
   });
 }
 
+/**
+ * Round outlines (shared/turn-trace.ts): one small file per local turn under `traces/`, beside
+ * the log rather than in it, since an outline is presentation and never evidence. Each write
+ * replaces the turn's whole outline; the newest reads are kept in memory.
+ */
+const TRACE_TURN_ID = /^[A-Za-z0-9_-]{1,100}$/;
+const MAX_TRACE_FILE_BYTES = 512 * 1024;
+const traceCache = new Map<string, { json: string; trace: TurnTrace } | null>();
+function traceCacheKey(id: string, turnId: string): string { return `${id}\u0000${turnId}`; }
+function rememberTrace(key: string, value: { json: string; trace: TurnTrace } | null): void {
+  traceCache.delete(key);
+  traceCache.set(key, value);
+  while (traceCache.size > 512) traceCache.delete(traceCache.keys().next().value!);
+}
+async function readTraceFile(id: string, turnId: string): Promise<{ json: string; trace: TurnTrace } | null> {
+  const key = traceCacheKey(id, turnId);
+  if (traceCache.has(key)) return traceCache.get(key)!;
+  let value: { json: string; trace: TurnTrace } | null = null;
+  try {
+    const json = await fs.readFile(path.join(sessionDir(id), 'traces', `${turnId}.json`), 'utf8');
+    const trace = json.length <= MAX_TRACE_FILE_BYTES ? turnTrace(JSON.parse(json)) : null;
+    value = trace ? { json, trace } : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+  }
+  rememberTrace(key, value);
+  return value;
+}
+
+/** Replaces one turn's outline. False when it is unchanged, invalid, or the session is gone. */
+export async function writeTurnTrace(id: string, turnId: string, input: unknown): Promise<boolean> {
+  assertSessionId(id);
+  const incoming = TRACE_TURN_ID.test(turnId) ? turnTrace(input) : null;
+  if (!incoming) return false;
+  const entry = await ensureOpen(id);
+  return enqueueSessionOperation(entry, 'trace', async () => {
+    // When a call first showed is known only to the page that ran the turn live; a page reloaded
+    // since reads the same calls without it. The earliest time recorded for a call id is kept.
+    const seen = new Map((await readTraceFile(id, turnId))?.trace.flatMap(item => item.kind === 'call' && item.at ? [[item.id, item.at] as const] : []) ?? []);
+    const trace = incoming.map(item => {
+      if (item.kind !== 'call' || !seen.has(item.id)) return item;
+      const at = Math.min(seen.get(item.id)!, item.at ?? Infinity);
+      return { ...item, at };
+    });
+    const json = JSON.stringify(trace);
+    if (Buffer.byteLength(json) > MAX_TRACE_FILE_BYTES) return false;
+    if ((await readTraceFile(id, turnId))?.json === json) return false;
+    const folder = path.join(sessionDir(id), 'traces');
+    const target = path.join(folder, `${turnId}.json`);
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try {
+      await fs.mkdir(folder, { recursive: true });
+      await fs.writeFile(temporary, json, 'utf8');
+      await fs.rename(temporary, target);
+    } finally {
+      await fs.rm(temporary, { force: true }).catch(() => undefined);
+    }
+    rememberTrace(traceCacheKey(id, turnId), { json, trace });
+    return true;
+  });
+}
+
+/** The outlines recorded for these turns; turns without one are absent. */
+export async function readTurnTraces(id: string, turnIds: Iterable<string>): Promise<Record<string, TurnTrace>> {
+  assertSessionId(id);
+  await open.get(id)?.queue;
+  const out: Record<string, TurnTrace> = {};
+  for (const turnId of new Set(turnIds)) {
+    if (!TRACE_TURN_ID.test(turnId)) continue;
+    const found = await readTraceFile(id, turnId);
+    if (found) out[turnId] = found.trace;
+  }
+  return out;
+}
+
 export async function endSession(id: string, dismissBrowserRecovery = false, expectedConversationId?: string): Promise<void> {
   const entry = dismissBrowserRecovery ? await ensureOpen(id) : open.get(id);
   if (!entry) return;
@@ -3122,6 +3285,24 @@ export async function reopenSession(id: string, pageObservedAt?: number): Promis
 export async function renameSession(id: string, title: string, source: SessionSummary['titleSource'] = 'manual', conversationId?: string): Promise<void> {
   const entry = await ensureOpen(id);
   await enqueueSessionOperation(entry, 'rename', async () => {
+    if (source !== 'manual' && entry.summary.titleSource === 'manual') {
+      // The user's name stays; ChatGPT's newer title is kept for when the name is cleared.
+      // The same rules as an unnamed chat: worker and helper chats keep their origin's title, a
+      // chat this app opened is named by its request, and a project page title is never a name.
+      if (source === undefined || (conversationId && entry.summary.conversationId !== conversationId)) return;
+      if (entry.summary.origin && entry.summary.origin.kind !== 'desktop') return;
+      const auto = entry.summary.autoTitle;
+      if (source === 'fallback' && auto?.source === 'provider') return;
+      if (source === 'provider' && (providerTitleIgnored(entry.summary) || projectPageTitle(title))) return;
+      const next = { title: title.slice(0, 120), source };
+      if (auto?.title === next.title && auto.source === next.source) return;
+      entry.summary.autoTitle = next;
+      await writeMeta(entry);
+      return;
+    }
+    if (source === 'manual' && entry.summary.titleSource !== 'manual') {
+      entry.summary.autoTitle = { title: entry.summary.title, source: entry.summary.titleSource === 'provider' ? 'provider' : 'fallback' };
+    }
     if (source !== 'manual') {
       if (conversationId && entry.summary.conversationId !== conversationId) return;
       if (!automaticTitle(entry.summary, firstTitleMessage(entry.messages.values()))) return;
@@ -3131,6 +3312,23 @@ export async function renameSession(id: string, title: string, source: SessionSu
     if (entry.summary.title === title.slice(0, 120) && entry.summary.titleSource === source) return;
     entry.summary.title = title.slice(0, 120);
     entry.summary.titleSource = source;
+    await writeMeta(entry);
+  });
+}
+
+/**
+ * Drops the user's own name for a chat and shows the title the app would show without it: ChatGPT's
+ * current title when one was seen, else the one from the first message (#1107).
+ */
+export async function clearSessionName(id: string): Promise<void> {
+  const entry = await ensureOpen(id);
+  await enqueueSessionOperation(entry, 'rename', async () => {
+    if (entry.summary.titleSource !== 'manual') return;
+    const auto = entry.summary.autoTitle;
+    const first = firstTitleMessage(entry.messages.values());
+    entry.summary.title = auto?.title || (first ? userTitle(first.message.text, first.authoredText) : '') || 'ChatGPT session';
+    entry.summary.titleSource = auto?.source ?? 'fallback';
+    delete entry.summary.autoTitle;
     await writeMeta(entry);
   });
 }
@@ -3183,7 +3381,32 @@ export async function setSessionOrigin(id: string, origin: SessionOrigin, title:
   const entry = await ensureOpen(id);
   await enqueueSessionOperation(entry, 'origin write', async () => {
     if (inheritedProject && entry.summary.projectId && entry.summary.projectId !== inheritedProject) throw new Error('Session origin belongs to another project');
-    const staged = { ...entry.summary, origin, title: title.slice(0, 120), ...(inheritedProject ? { projectId: inheritedProject } : {}) };
+    // A name the user gave the chat stays; the origin's title becomes the one clearing it restores.
+    const named = entry.summary.titleSource === 'manual';
+    const staged = { ...entry.summary, origin, ...(named ? { autoTitle: { title: title.slice(0, 120), source: 'fallback' as const } } : { title: title.slice(0, 120) }),
+      ...(inheritedProject ? { projectId: inheritedProject } : {}) };
+    await writeSummary(staged, entry.historySeq);
+    entry.summary = staged;
+    publishAttachmentSummary(staged);
+  });
+}
+
+/** Archive accepted broker presentation in the exact recorded worker session, never create one. */
+export async function recordWorkerAssignment(assignment: WorkerAssignmentSummary): Promise<void> {
+  if (!assignment.conversationId || !assignment.agentId || assignment.label.length > 60 ||
+      assignment.task.length > 8200 || !Number.isFinite(assignment.recordedAt)) return;
+  const summary = await findSessionByConversation(assignment.conversationId, { requireUnique: true });
+  if (!summary) return;
+  const entry = await ensureOpen(summary.id);
+  await enqueueSessionOperation(entry, 'worker assignment projection', async () => {
+    const current = entry.summary;
+    if (current.conversationId !== assignment.conversationId || current.origin?.kind !== 'worker' ||
+        current.origin.agentId !== assignment.agentId) return;
+    const previous = current.workerAssignment;
+    if (previous && (previous.recordedAt > assignment.recordedAt ||
+        (previous.conversationId === assignment.conversationId && previous.label === assignment.label &&
+         previous.task === assignment.task))) return;
+    const staged = { ...current, workerAssignment: { ...assignment } };
     await writeSummary(staged, entry.historySeq);
     entry.summary = staged;
     publishAttachmentSummary(staged);
@@ -3275,7 +3498,10 @@ export async function rebindSession(
     entry.metaDirty = false;
     missingCurrentConversations.delete(toConversationId);
     publishAttachmentSummary(entry.summary);
-    logInfo(`session ${id} moved from ChatGPT conversation ${fromConversationId} to ${toConversationId}`);
+    // A new chat gets its first id here; "moved from conversation null" read like a fault in Activity.
+    logInfo(fromConversationId
+      ? `session ${id} moved from ChatGPT conversation ${fromConversationId} to ${toConversationId}`
+      : `session ${id} is now ChatGPT conversation ${toConversationId}`);
     return true;
   });
 }
@@ -3899,16 +4125,19 @@ export async function deleteSession(id: string): Promise<void> {
     open.delete(id);
   }
   await fs.rm(sessionDir(id), { recursive: true, force: true });
+  for (const key of [...traceCache.keys()]) if (key.startsWith(`${id}\u0000`)) traceCache.delete(key);
   invalidateAssetUsage(id);
   publishAttachmentRemoval(id);
 }
 
 /** Test seam: forgets in-memory state without touching the files. */
 export function resetSessionStoreForTests(): void {
+  recentUnreadableWarned.clear();
   for (const entry of open.values()) if (entry.metaTimer) clearTimeout(entry.metaTimer);
   open.clear();
   opening.clear();
   reconciling.clear();
+  traceCache.clear();
   sessionAssetUsage.clear();
   globalAssetUsage = null;
   assetMutationEpoch = 0;
@@ -3923,7 +4152,9 @@ export function resetSessionStoreForTests(): void {
 /** Test seam: puts the store back to never having been told where to write. */
 export function unsetSessionRootForTests(): void {
   root = '';
+  recentUnreadableWarned.clear();
   sessionAssetUsage.clear();
+  traceCache.clear();
   globalAssetUsage = null;
   assetMutationEpoch = 0;
   assetWrittenEpoch.clear();

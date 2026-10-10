@@ -22,9 +22,12 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectiveCapabilities, defaultConfig, getConfig } from '../src/main/config.js';
+import { EXEC_COMMAND_CMD_DESCRIPTION, LAUNCHES_WINDOWS_POWERSHELL_5 } from '../src/main/codex/tool-specs.js';
+import { skillCatalogInstructions } from '../src/main/skills.js';
 import { lastRequestAt, selfTestHeaders, startMcpServer, tunnelProbeHeaders, type McpEndpoint } from '../src/main/mcp/server.js';
 import { lastToolCallAt, type ToolContext } from '../src/main/mcp/tools.js';
 import { friendlyError } from '../src/main/mcp/kernel.js';
+import { serverInstructions } from '../src/main/mcp/instructions.js';
 import { SURFACE_LIST, surfaceDefinition, type SurfaceId } from '../src/main/mcp/surfaces.js';
 import {
   appendEvent,
@@ -246,6 +249,13 @@ let approved: string;
 let outside: string;
 let endpoint: McpEndpoint;
 let ctx: ToolContext;
+
+/**
+ * Characters of Core server instructions, measured with everything switched on. There is no
+ * provider limit behind it; it keeps the text read at the start of every chat from growing
+ * unnoticed, so raise it only together with a deliberate addition.
+ */
+const CORE_INSTRUCTIONS_BUDGET = 21_500;
 
 function withCaps(overrides: Partial<Capabilities>): Capabilities {
   return { ...DEFAULT_CAPABILITIES, ...overrides };
@@ -613,7 +623,7 @@ describe('surface boundaries', () => {
     everything();
     const names = toolNames(await core('tools/list'));
     // find is absent because exec_command is present — they are mutually exclusive.
-    expect(names).toEqual(['agents', 'apply_patch', 'download_artifact', 'exec', 'exec_command', 'read', 'session', 'update_plan', 'view_image', 'write_stdin']);
+    expect(names).toEqual(['agents', 'apply_patch', 'download_artifact', 'exec', 'exec_command', 'read', 'save_image', 'session', 'update_plan', 'view_image', 'write_stdin']);
     for (const name of surfaceDefinition('desktop').tools.filter(name => name !== 'exec')) expect(names, name).not.toContain(name);
   });
 
@@ -718,7 +728,8 @@ describe('surface boundaries', () => {
     );
     expect(targetRun).toMatchObject({ type: 'string', minLength: 1, maxLength: 36 });
     const worker = agentsTool.inputSchema.properties.workers.items;
-    expect(worker.properties.label.description).toBe('Short name shown to the user, e.g. "Security".');
+    // The prime is asked to name every worker: the Sub-agents list shows that name, or a generic "Worker 2".
+    expect(worker.properties.label.description).toBe('Name its job in 1-3 words, e.g. "Tests"; shown to the user.');
     expect(worker.properties.task.description).toBe(
       'This worker\'s job: objective, relevant files, constraints and expected handoff.'
     );
@@ -733,6 +744,10 @@ describe('surface boundaries', () => {
       'utf8'
     );
     expect(targetRunOverhead).toBe(148);
+    // A sleeping worker woken for new work can be renamed for it (the Sub-agents list shows the name).
+    const revivalLabel = agentsTool.inputSchema.properties.messages.items.properties.label;
+    expect(revivalLabel.description).toBe('New job name when waking.');
+    expect(Buffer.byteLength(`,"label":${JSON.stringify(revivalLabel)}`, 'utf8')).toBe(97);
   });
 
   it('removes the agents tool entirely once multi-agent is switched off', async () => {
@@ -865,13 +880,53 @@ describe('surface boundaries', () => {
     }
   });
 
+  it('reads the user\'s own Skills read-only through /user-skills, and nothing else in their homes', async () => {
+    everything();
+    const home = path.join(base, 'user-skills-home');
+    await fs.mkdir(path.join(home, '.claude/skills/review'), { recursive: true });
+    await fs.writeFile(path.join(home, '.claude/skills/review/SKILL.md'), '---\nname: Review\n---\nRead the whole diff first.');
+    await fs.mkdir(path.join(home, '.codex'), { recursive: true });
+    await fs.writeFile(path.join(home, '.codex/auth.json'), '{"token":"secret-token"}');
+    vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home); vi.stubEnv('CLAUDE_CONFIG_DIR', ''); vi.stubEnv('CODEX_HOME', '');
+    try {
+      const reply = await core('tools/call', { name: 'read', arguments: { paths: ['/user-skills/claude/skills/review/SKILL.md'] } });
+      expect(reply.body.result?.isError).toBeFalsy();
+      expect(JSON.stringify(reply.body.result?.content)).toContain('Read the whole diff first.');
+      const listing = await core('tools/call', { name: 'read', arguments: { paths: ['/user-skills/claude/skills'] } });
+      expect(JSON.stringify(listing.body.result?.content)).toContain('review');
+      const secret = await core('tools/call', { name: 'read', arguments: { paths: ['/user-skills/codex/auth.json'] } });
+      expect(JSON.stringify(secret.body.result?.content)).not.toContain('secret-token');
+      const patch = '*** Begin Patch\n*** Update File: /user-skills/claude/skills/review/SKILL.md\n@@\n-Read the whole diff first.\n+Skip the diff.\n*** End Patch';
+      const patched = await core('tools/call', { name: 'apply_patch', arguments: { patch } });
+      expect(patched.body.result?.isError).toBe(true);
+      expect(await fs.readFile(path.join(home, '.claude/skills/review/SKILL.md'), 'utf8')).toContain('Read the whole diff first.');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('saves a generated image only for a call it can tie to its chat (#889)', async () => {
+    everything();
+    const tool = toolList(await core('tools/list')).find((entry) => entry.name === 'save_image');
+    // No string that names an image: ChatGPT fills one with the generated picture's `file_…` id, and
+    // then fails the call internally before it reaches the app (measured live 2026-10-05, 3 of 3).
+    expect(Object.keys(tool?.inputSchema?.properties ?? {})).toEqual(['path', 'nth']);
+    expect(tool?.inputSchema?.properties?.nth).toMatchObject({ type: 'integer', minimum: 1 });
+    expect(tool?.inputSchema?.required).toEqual(['path']);
+    const reply = await core('tools/call', { name: 'save_image', arguments: { path: '/workspace/out.png' } });
+    expect(reply.body.result?.isError).toBe(true);
+    const refusal = JSON.stringify(reply.body.result?.content);
+    expect(refusal).toContain('could not tell which chat this save_image call came from');
+    // It names the Core that answered, so a call sent to another computer's Core says so (#1097).
+    expect(refusal).toContain('Chat On Steroids Core could not tell');
+    expect(refusal).toContain('If the chat belongs to another computer');
+  });
+
   it('keeps the worst-case no-query discovery of each surface small', async () => {
     everything();
     const coreTools = toolList(await core('tools/list'));
     const desktopTools = toolList(await desktop('tools/list'));
 
     // Each populated surface includes code mode; find and the shell exec pair remain exclusive.
-    expect(coreTools).toHaveLength(10);
+    expect(coreTools).toHaveLength(11);
     expect(desktopTools).toHaveLength(BROWSER_TOOLS.length + (IS_WINDOWS ? 16 : process.platform === 'darwin' ? 3 : 1));
 
     // And the size, which is what a discovery pull actually costs the model on every
@@ -912,8 +967,9 @@ describe('surface boundaries', () => {
           : tool.name === 'apply_patch'
             ? 5_000
             : tool.name === 'agents'
-              // Main's 3,400-byte guardrail plus the measured 148-byte target_run_id property.
-              ? 3_548
+              // Main's 3,400-byte guardrail plus the measured 148-byte target_run_id property and
+              // the measured 97-byte revival label (messages[].label).
+              ? 3_645
               : tool.name === 'exec_command'
                 // Windows carries `WINDOWS_SHELL_GUIDANCE` in the same description, and that text
                 // is quoted verbatim from Codex's own shell spec — it is not ours to trim to fit a
@@ -1024,7 +1080,32 @@ describe('2025-era clients', () => {
       'read-only=off; plans=off; workers=off.'
     );
     expect(instructions).not.toContain(approved);
-    expect(instructions.length).toBeLessThan(18_000);
+    // Budget the actual native-platform payload, including the full Skills catalogue.
+    // PowerShell 5.1 syntax guidance is already present in exec_command's own schema:
+    // duplicating it here used to add exactly 80 characters on 5.1-only hosts.
+    expect(instructions).toBe(serverInstructions(ctx, 'core', process.platform));
+    expect(instructions).toContain(skillCatalogInstructions());
+    expect(instructions.length).toBeLessThan(CORE_INSTRUCTIONS_BUDGET);
+    // The budget counts what a real install sends: every capability, plans, workers and the
+    // finish tool on (a fresh install's defaults), for each platform from every CI host.
+    // Windows carries the most shell guidance; this test's partial context once hid it crossing.
+    const everything = { ...ctx, caps: allCaps(), readOnly: false, sessionTools: true, agentTools: true, exposedFinishTool: true };
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      expect(serverInstructions(everything, 'core', platform).length, platform).toBeLessThan(CORE_INSTRUCTIONS_BUDGET);
+    }
+    if (LAUNCHES_WINDOWS_POWERSHELL_5) {
+      expect(instructions).not.toContain('This is Windows PowerShell 5.1, without && or ||.');
+      expect(EXEC_COMMAND_CMD_DESCRIPTION).toContain('This shell is Windows PowerShell 5.1, which has no && or ||');
+    }
+  });
+
+  it('keeps full Skills metadata in the platform-native instructions budget', () => {
+    const catalog = skillCatalogInstructions();
+    const extraCatalog = `${catalog}\n${'- test Skill metadata '.repeat(250)}`;
+    const native = serverInstructions(ctx, 'core', process.platform, catalog);
+    const expanded = serverInstructions(ctx, 'core', process.platform, extraCatalog);
+    expect(expanded.length - native.length).toBe(extraCatalog.length - catalog.length);
+    expect(expanded.length).toBeGreaterThan(CORE_INSTRUCTIONS_BUDGET);
   });
 
   it('points at the other connector rather than pretending the capability does not exist', async () => {
@@ -3631,6 +3712,9 @@ describe('agent-maintained plans over MCP', () => {
   });
 });
 
+/** Attempts of the recycled-process-id test, so a retry runs on fresh ids. */
+let execOwnRuns = 0;
+
 describe('exec sessions belong to the chat that opened them', () => {
   beforeEach(() => {
     ctx.readOnly = false;
@@ -3856,16 +3940,18 @@ describe('exec sessions belong to the chat that opened them', () => {
   });
 
   it('does not let a stale owner inherit a recycled process id during the new exec yield', async () => {
+    // Fresh ids per attempt: a CI retry must not meet the first attempt's stored proofs ('same').
+    const run = ++execOwnRuns;
     // Model the real lifetime split directly: the manager has released an exited process id,
     // but the separate ownership registry still carries the chat that used to own it. Force
     // the next allocator pick to reuse that number so the race is deterministic instead of a
     // 1-in-99k lottery.
     await unifiedExecManager.terminateAllProcesses();
     const recycledId = 1_000;
-    noteExecOwner(recycledId, 'session-conv-execown-old');
-    expect(execOwner(recycledId)).toBe('session-conv-execown-old');
-    expect(prove('wfr_execown_old_recycled', 'conv-execown-old')).toBe('stored');
-    expect(prove('wfr_execown_new_recycled', 'conv-execown-new')).toBe('stored');
+    noteExecOwner(recycledId, `session-conv-execown-old-${run}`);
+    expect(execOwner(recycledId)).toBe(`session-conv-execown-old-${run}`);
+    expect(prove(`wfr_execown_old_recycled_${run}`, `conv-execown-old-${run}`)).toBe('stored');
+    expect(prove(`wfr_execown_new_recycled_${run}`, `conv-execown-new-${run}`)).toBe('stored');
 
     const allocate = unifiedExecManager.allocateProcessId.bind(unifiedExecManager);
     const allocation = vi.spyOn(unifiedExecManager, 'allocateProcessId').mockImplementation(() => {
@@ -3899,7 +3985,7 @@ describe('exec sessions belong to the chat that opened them', () => {
 
       // Do not await. The process is registered while exec_command spends its initial yield
       // collecting output, which is the exact old authority window.
-      starting = asChat('wfr_execown_new_recycled', 'exec_command', {
+      starting = asChat(`wfr_execown_new_recycled_${run}`, 'exec_command', {
         cmd: holdOpen,
         workdir: '/workspace',
         tty: true,
@@ -3918,7 +4004,7 @@ describe('exec sessions belong to the chat that opened them', () => {
       // writable. The old chat knows this integer from its own previous session, but it no
       // longer has authority over what now happens to occupy that slot.
       expect(execOwner(recycledId)).toBeNull();
-      const stolen = await asChat('wfr_execown_old_recycled', 'write_stdin', {
+      const stolen = await asChat(`wfr_execown_old_recycled_${run}`, 'write_stdin', {
         session_id: recycledId,
         chars: 'stolen\r',
         yield_time_ms: 50
@@ -3930,13 +4016,13 @@ describe('exec sessions belong to the chat that opened them', () => {
       const started = await starting;
       expect(started.body.result?.isError, textOf(started)).not.toBe(true);
       expect(Number(textOf(started).match(/Process running with session ID (\d+)/)?.[1])).toBe(recycledId);
-      expect(execOwner(recycledId)).toBe('session-conv-execown-new');
+      expect(execOwner(recycledId)).toBe(`session-conv-execown-new-${run}`);
       expect(textOf(started)).not.toContain('got=');
 
       // Let the real owner release the shell normally. Besides proving the new principal did
       // receive authority, this keeps cleanup deterministic instead of spending the process
       // manager's kill grace period on an intentionally blocked test process.
-      const owner = await asChat('wfr_execown_new_recycled', 'write_stdin', {
+      const owner = await asChat(`wfr_execown_new_recycled_${run}`, 'write_stdin', {
         session_id: recycledId,
         chars: 'owner\r',
         yield_time_ms: 5_000
@@ -4165,6 +4251,44 @@ describe('exec sessions belong to the chat that opened them', () => {
       expect(textOf(after)).not.toContain(`Background session ${sessionId}`);
     } finally {
       await unifiedExecManager.terminateProcess(sessionId);
+    }
+  });
+
+  it('names a still-running identical command from the same chat, and still starts the new one', async () => {
+    expect(prove('wfr_duplicate_first', 'conv-duplicate')).toBe('stored');
+    expect(prove('wfr_duplicate_retry', 'conv-duplicate')).toBe('stored');
+    expect(prove('wfr_duplicate_stranger', 'conv-duplicate-stranger')).toBe('stored');
+    const cmd = IS_WINDOWS ? 'Start-Sleep -Seconds 30' : 'sleep 30';
+    const sessionOf = (result: Awaited<ReturnType<typeof asChat>>) =>
+      Number(textOf(result).match(/Process running with session ID (\d+)/)?.[1]);
+    const started: number[] = [];
+    try {
+      const first = await asChat('wfr_duplicate_first', 'exec_command', { cmd, workdir: '/workspace', yield_time_ms: 250 });
+      started.push(sessionOf(first));
+      expect(Number.isInteger(started[0]), textOf(first)).toBe(true);
+      expect(textOf(first)).not.toContain('still running from earlier');
+
+      // Another chat running the same command is its own business.
+      const stranger = await asChat('wfr_duplicate_stranger', 'exec_command', { cmd, workdir: '/workspace', yield_time_ms: 250 });
+      started.push(sessionOf(stranger));
+      expect(textOf(stranger)).not.toContain('still running from earlier');
+
+      // A different folder is a different command.
+      await fs.mkdir(path.join(approved, 'elsewhere'), { recursive: true });
+      const elsewhere = await asChat('wfr_duplicate_retry', 'exec_command', { cmd, workdir: '/workspace/elsewhere', yield_time_ms: 250 });
+      started.push(sessionOf(elsewhere));
+      expect(textOf(elsewhere)).not.toContain('still running from earlier');
+
+      // The retry in the same chat and folder is not refused: running twice can be deliberate.
+      const retry = await asChat('wfr_duplicate_retry', 'exec_command', { cmd, workdir: '/workspace', yield_time_ms: 250 });
+      started.push(sessionOf(retry));
+      expect(failed(retry), textOf(retry)).toBe(false);
+      expect(Number.isInteger(started[3]), textOf(retry)).toBe(true);
+      expect(started[3]).not.toBe(started[0]);
+      expect(textOf(retry)).toContain(`still running from earlier in this chat as session ${started[0]} `);
+      expect(textOf(retry)).toContain(`write_stdin(session_id=${started[0]}, chars="")`);
+    } finally {
+      for (const id of started) if (Number.isInteger(id)) await unifiedExecManager.terminateProcess(id);
     }
   });
 });

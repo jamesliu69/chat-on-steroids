@@ -1076,6 +1076,9 @@
   "content_goal_error_invalid_provider": {
     "message": "Пользовательский адрес продолжения недействителен. Проверьте URL в настройках; используйте HTTPS или локальный HTTP-адрес."
   },
+  "content_history_rate_limited": {
+    "message": "ChatGPT временно ограничил доступ к истории этого чата. Chat On Steroids приостанавливает автоматическое восстановление до окончания периода ожидания."
+  },
   "content_goal_error_rate_limited": {
     "message": "Провайдер продолжения ограничивает частоту запросов. Дождитесь указанного повторения или выберите другую модель продолжения."
   },
@@ -1147,6 +1150,21 @@
   },
   "content_goal_error_goal_objective_not_durable": {
     "message": "Не удалось сохранить задачу. Проверьте свободное место на диске и повторите сохранение."
+  },
+  "popup_sign_in_transfer": {
+    "message": "Перенести сеанс в CoS browser"
+  },
+  "popup_sign_in_permission": {
+    "message": "Доступ к cookie запрещён. Нажмите ещё раз."
+  },
+  "popup_sign_in_imported": {
+    "message": "Сеанс перенесён"
+  },
+  "popup_sign_in_imported_detail": {
+    "message": "Вы вошли в CoS browser."
+  },
+  "popup_sign_in_failed": {
+    "message": "Не удалось. Начните вход заново из CoS."
   },
   "popup_app_not_running_help": {
     "message": "Убедитесь, что Chat On Steroids открыт на этом компьютере. Расширение подключится само."

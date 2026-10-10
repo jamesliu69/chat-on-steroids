@@ -128,7 +128,8 @@ export interface TunnelSettings {
   binaryPath: string;
 }
 
-export const CHAT_BROWSERS = ['chrome', 'edge', 'brave'] as const;
+/** `cos` is the built-in CoS browser (src/main/cos-browser), which needs no installed browser. */
+export const CHAT_BROWSERS = ['chrome', 'edge', 'brave', 'cos'] as const;
 export type ChatBrowser = (typeof CHAT_BROWSERS)[number];
 
 export interface UiPrefs {
@@ -161,11 +162,15 @@ export interface UiPrefs {
   mentionCore?: boolean;
   /** The interface language the window last reported; the browser extension follows it. */
   language?: import('./ui-language.js').UiLanguage;
+  /** The version this install last started as; What's New shows once per real update (#1172). */
+  lastSeenVersion?: string;
   /**
    * The extension's own preferences as it last reported them stored. The app keeps them so a
    * reinstalled extension, which starts with empty storage under a new id, gets them back.
    */
   browserPreferences?: { overwrite: boolean; durations: boolean };
+  /** Set once the notice that the CoS browser hid to the tray, still running, was shown. */
+  cosBrowserTrayHint?: boolean;
   minimizeToTray: boolean;
   autoConnect: boolean;
   startAtLogin?: boolean;
@@ -449,6 +454,11 @@ export interface ConnectionStatus {
   /** The tunnel's own view of itself, or null when no tunnel is running. */
   health: TunnelHealth | null;
   /**
+   * Epoch ms until which a message for an existing chat is held while a new tunnel-client takes
+   * over that chat's route (#1220), or null when nothing is held.
+   */
+  routeSettlingUntil?: number | null;
+  /**
    * One entry per model-facing connector, in setup order.
    *
    * This app publishes more than one MCP server — a required coding connector and an
@@ -498,6 +508,11 @@ export interface SurfaceStatus {
    */
   lastRequestAt: number | null;
   lastToolCallAt: number | null;
+  /**
+   * The newest of the same evidence from earlier runs of the app, through the tunnel this
+   * connector uses now. Null when there is none, or when it came through another tunnel.
+   */
+  proof?: { requestAt: number | null; toolCallAt: number | null; installedAt?: number | null } | null;
 }
 
 export type SurfaceConnectionState =
@@ -552,6 +567,17 @@ export interface BridgeStatus {
    * this app process, which is why "no extension version" never means "outdated extension".
    */
   extensionVersion: string | null;
+  /**
+   * The extension in the person's own Chrome, Edge or Brave, apart from the CoS browser's copy.
+   * Null until one has spoken to this app process; Setup's first step waits for it.
+   */
+  externalExtension?: {
+    present: boolean; version: string | null; lastSeenAt: number | null; signedIn?: boolean | null;
+    /** Kept across restarts: the version last seen there, and whether ChatGPT last answered signed in. */
+    proof?: { version: string; signedIn: boolean | null } | null;
+  } | null;
+  /** The CoS browser's own copy of the extension, connected right now. */
+  cosExtension?: { present: boolean };
 }
 
 /**
@@ -718,6 +744,8 @@ export interface AppState {
    * local contract only; they are not evidence that ChatGPT has refreshed its cached tools.
    */
   connectorSchemas: Partial<Record<SurfaceId, string>>;
+  /** Per surface, the declaration ChatGPT confirmed after a plugin refresh (or found already current). */
+  confirmedConnectorSchemas?: Partial<Record<SurfaceId, string>>;
   platform: PlatformInfo;
   /** Only packaged Windows builds may change the login item. */
   loginStartupAvailable?: boolean;
@@ -733,9 +761,13 @@ export interface AppState {
   /** Version of the tunnel-client copy shipped inside the app, for diagnostics. */
   bundledTunnelVersion: string | null;
   bridge: BridgeStatus;
+  /** Whether the CoS browser holds a ChatGPT sign-in; null while it is not the running browser. */
+  cosBrowserSignedIn?: boolean | null;
   update: UpdateStatus;
   /** Present only on macOS once the in-process native backend has reported its live TCC state. */
   desktopAccess?: MacOSDesktopAccessStatus | null;
+  /** This run's settings file could not be read, so the app started read-only; cleared once read-only is off. */
+  settingsRecovered?: boolean;
 }
 
 export const DEFAULT_CAPABILITIES: Capabilities = {

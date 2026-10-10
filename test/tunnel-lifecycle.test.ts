@@ -60,7 +60,7 @@ const fixture = vi.hoisted(() => {
 
 vi.mock('node:child_process', () => ({ spawn: fixture.spawn }));
 vi.mock('../src/main/exec.js', () => ({
-  childEnv: () => ({}),
+  childEnv: (overrides?: Record<string, string>) => ({ ...overrides }),
   terminateProcessTree: fixture.terminate
 }));
 vi.mock('../src/main/tunnel/locate.js', () => ({ locateBinary: () => 'tunnel-client-test' }));
@@ -84,6 +84,7 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 
 const { startTunnel } = await import('../src/main/tunnel/index.js');
+const { ROUTE_SETTLE_MS, resetRouteSettleForTests, tunnelRouteSettling } = await import('../src/main/tunnel/route-settle.js');
 
 const settings = {
   kind: 'openai' as const,
@@ -104,6 +105,25 @@ beforeEach(() => {
 });
 
 describe('OpenAI tunnel process ownership', () => {
+  it('serves each run\'s fresh MCP path through the same tunnel id', async () => {
+    // ChatGPT's plugin names the tunnel, not a URL: tunnel-client is told this run's local URL,
+    // token path included, so the per-start token never reaches ChatGPT and a plugin created in an
+    // earlier run still reaches this one (which is why connector proof keeps across restarts).
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('missing', { status: 404 })));
+    const runs: Array<{ args: string[]; url: string }> = [];
+    for (const localUrl of ['http://127.0.0.1:1234/mcp/core/first-run-token', 'http://127.0.0.1:1234/mcp/core/second-run-token']) {
+      const handle = await startTunnel({ localUrl, settings, apiKey: 'test', report: () => {} });
+      const call = fixture.spawn.mock.calls.at(-1) as unknown as [string, string[], { env: Record<string, string> }];
+      runs.push({ args: call[1], url: call[2].env.MCP_SERVER_URL ?? '' });
+      await handle.stop();
+    }
+    expect(runs.map(run => run.url)).toEqual(['url=http://127.0.0.1:1234/mcp/core/first-run-token,channel=main',
+      'url=http://127.0.0.1:1234/mcp/core/second-run-token,channel=main']);
+    expect(runs[0]!.args).toEqual(runs[1]!.args);
+    expect(runs[0]!.args).toContain(settings.tunnelId);
+    expect(runs.flatMap(run => run.args).join(' ')).not.toMatch(/run-token/);
+  });
+
   it.each([
     { level: 'WARN', msg: 'poll failed; backing off', error: 'dial tcp: i/o timeout', retry_in_ms: 401 },
     { level: 'WARN', msg: 'poll failed; backing off', error: 'unexpected EOF', retry_in_ms: 403 },
@@ -240,6 +260,40 @@ describe('OpenAI tunnel process ownership', () => {
    * The same rule the offline caption already follows (see UNREACHABLE_CONFIRM_MS): one failed
    * poll is not a verdict. A genuinely dead client still gets replaced one pass later.
    */
+  it('holds existing chats for each new client process, not for every connected report (#1220)', async () => {
+    vi.useFakeTimers();
+    resetRouteSettleForTests();
+    let ready = true;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/readyz') return ready ? new Response('ok') : new Response('mcp probe failed', { status: 503 });
+      if (url.pathname === '/metrics') return new Response('commands_poll_last_successful_timestamp_seconds 0\ncommands_poll_errors_total 0\n');
+      if (url.pathname === '/api/status') return Response.json({ uptime_seconds: 50, channels: [] });
+      return new Response('missing', { status: 404 });
+    }));
+    const handle = await startTunnel({ localUrl: 'http://127.0.0.1:1234/secret', settings, apiKey: 'test', report: () => undefined });
+    try {
+      expect(tunnelRouteSettling()).toBe(false);
+      await vi.advanceTimersByTimeAsync(10);
+      fixture.health.url = 'http://127.0.0.1:34567';
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(tunnelRouteSettling(), 'the first connect starts the takeover').toBe(true);
+      await vi.advanceTimersByTimeAsync(ROUTE_SETTLE_MS);
+      expect(tunnelRouteSettling(), 'later connected reports of the same process do not extend it').toBe(false);
+
+      ready = false;
+      await vi.advanceTimersByTimeAsync(36_000);
+      expect(fixture.children).toHaveLength(2);
+      ready = true;
+      fixture.health.url = 'http://127.0.0.1:34568';
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(tunnelRouteSettling(), 'a replacement process is a new takeover').toBe(true);
+    } finally {
+      await handle.stop();
+      resetRouteSettleForTests();
+    }
+  });
+
   it('replaces the client only after a readiness failure survives a second pass', async () => {
     vi.useFakeTimers();
     let ready = true;
