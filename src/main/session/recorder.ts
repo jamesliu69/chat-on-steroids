@@ -66,7 +66,8 @@ import {
   upsertMessageEvent,
   upsertNativeImageEvent,
   writeAsset,
-  writeOverflowText
+  writeOverflowText,
+  writeTurnTrace
 } from './store.js';
 import {
   awaitRequestCorrelation,
@@ -1728,6 +1729,7 @@ export interface ChatObservation {
     | 'assistant_message'
     | 'native_image'
     | 'page_tool'
+    | 'turn_trace'
     | 'turn_start'
     | 'turn_end'
     | 'chat_error'
@@ -1770,6 +1772,8 @@ export interface ChatObservation {
   previewError?: 'not_loaded' | 'ambiguous' | 'tainted' | 'oversized' | 'invalid' | 'quota';
   previewDataUrl?: string;
   turnId?: string;
+  /** A `turn_trace` observation's round outline (shared/turn-trace.ts). */
+  trace?: import('../../shared/turn-trace.js').TurnTrace;
   final?: boolean;
   state?: 'streaming' | 'final';
   /** Internal React conversation id used only to cross-check the URL conversation id. */
@@ -1784,6 +1788,8 @@ export interface ChatObservation {
   recoverable?: boolean;
   /** chat_error only: the DOM classifier identified a provider access limit, in any language. */
   blocking?: boolean;
+  /** chat_error only: provider Retry-After deadline for loading this exact conversation history. */
+  retryAt?: number;
   /** tool_evidence only: the connector requests this turn's message model holds. */
   calls?: PageCallEvidence[];
 }
@@ -2310,6 +2316,11 @@ async function recordChatObservationsNow(
         stored += await recordNativeImage(sessionId, item, base);
         continue;
       }
+      case 'turn_trace': {
+        // Presentation beside the log: no event, no activity, no work or completion evidence.
+        if (item.turnId && item.trace && await writeTurnTrace(sessionId, item.turnId, item.trace)) notifyChanged(sessionId);
+        continue;
+      }
       case 'page_tool': {
         const newlyObserved = !!live && !!item.messageId && !live.pageTools.has(pageToolKey(item.messageId));
         const written = await recordPageTool(sessionId, live, item, base);
@@ -2594,7 +2605,8 @@ export async function recordHandoff(
   sessionId: string,
   handoffId: string,
   chars: number,
-  reason: string
+  reason: string,
+  continuation?: string
 ): Promise<void> {
   await appendEvent(sessionId, {
     time: Date.now(),
@@ -2602,7 +2614,8 @@ export async function recordHandoff(
     kind: 'handoff',
     handoffId,
     chars,
-    reason
+    reason,
+    ...(continuation ? { continuation } : {})
   });
   notifyChanged(sessionId);
 }
@@ -2620,11 +2633,12 @@ export async function ensureHandoffRecorded(
   sessionId: string,
   handoffId: string,
   chars: number,
-  reason: string
+  reason: string,
+  continuation?: string
 ): Promise<boolean> {
   const existing = await readEvents(sessionId, { kinds: ['handoff'] });
   if (existing.some((event) => event.kind === 'handoff' && event.handoffId === handoffId)) return false;
-  await recordHandoff(sessionId, handoffId, chars, reason);
+  await recordHandoff(sessionId, handoffId, chars, reason, continuation);
   return true;
 }
 

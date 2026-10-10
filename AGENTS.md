@@ -21,7 +21,7 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-05**. App/extension **2.1.27**,
+Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-11**. App/extension **2.1.33**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -244,7 +244,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Strict chat allowlist | Off. | When on, every model-facing tool call needs exact attribution. Existing/direct browser chats require explicit Trust from the chat list. A fresh chat opened by the CoS composer gains an explicit Trust entry only after its exact opening row authoritatively binds to the new conversation. Broker-owned workers follow their exact owning prime and a committed Compact & Resume successor follows its durable source lineage. Block still wins, revocation is dynamic, and unattributed calls are refused even when the ordinary unattributed allowance is on. |
 | Recover ordinary/agent tabs | Off. | Goal/Loop can independently justify recovery; history alone cannot. |
 | Automatic Continue | On. | Unfinished-response recovery also serves enabled Goal/Loop. This switch controls ordinary chats; explicit Off survives and malformed config disables it. See §14. |
-| Goal / Loop | Off, preferred mode Goal. Both decision backends default to ChatGPT, helper `gpt-5.6-sol` High. | API uses the configured OpenRouter/custom endpoint and stored model. These defaults are not account-availability proof. |
+| Goal / Loop | Off, preferred mode Goal. Both decision backends default to ChatGPT, helper `gpt-6` High (`DEFAULT_HELPER_CHAT_MODEL`); a config holding the superseded `gpt-5.6-sol` or `gpt-6-thinking` adopts it on load. | API uses the configured OpenRouter/custom endpoint and stored model. These defaults are not account-availability proof. |
 | Ordinary new-chat model | Automatic: no persisted model or reasoning override. | Optional `ui.defaultChatModel` / `ui.defaultChatReasoning` apply only to a fresh ordinary chat before it has a conversation selection. A recorded conversation or accepted opening input wins. Worker and Goal/Loop/Plan defaults remain separate. |
 | Desktop | Windows on; macOS retains its off default and separate native OS consent; Linux supports extension browser control. | Existing screen/control grants also govern browser tools; unsupported native clipboard remains masked. No new per-tab permission dialog. |
 | Shell/UI | Dark theme, minimize to tray, no automatic connector connection/login startup by default. | Optional browser/finish/plan choices are resolved by current config and their consumer, not invented from absent fields. |
@@ -305,6 +305,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Exact request ownership | `correlation.ts` / `state/request-correlations.json` plus recorded proof | First exact proof wins; retain local session epoch; new owners are written before browser ACK. Startup trusts a complete ledger and scans history only to migrate an older one. |
 | Running exec process | `UnifiedExecProcessManager` process memory plus `codex/ownership.ts` custody | The manager is the only live-process authority. A yielded child may start under temporary request custody; exact correlation promotes it to the durable session. IPC/preload/renderer only project that owner-scoped state and may request an ownership- and incarnation-checked stop. |
 | Authored message | `store.ts` / canonical message shard | Replace by stable identity, preserving origin chronology. |
+| Turn round outline | `recorder.ts` `turn_trace` → `store.ts::writeTurnTrace` / `sessions/<id>/traces/<turnId>.json` | Validated by `shared/turn-trace.ts`; the newest outline replaces the turn's; never an event or evidence. |
 | Agent progress plan | `request-plans.ts` → `store.ts::updateSessionPlan` / `sessions/<id>/plan.json` | Request-scoped storage before proof; exact session and invocation ordering on attachment; atomically replace the whole plan. |
 | Input and checkpoints | `input.ts` / `state/session-input.json` | Serialized acceptance, frozen payload, exclusive claim and receipt; stages belong here. |
 | Native upload originals | `input-attachments.ts` / `input-attachments/` | Immutable bytes, opaque ids; outbox owns membership and retention. |
@@ -352,6 +353,10 @@ waits up to 1.5 s for `keychain:noticeReady` (5 s for a window still loading; no
 All first callers share that one gate, because the first call of any kind (the availability check
 included) sets up the encryptor. The renderer shows `#keychainNotice` only if `keychain:waiting`
 false has not come within 600 ms. A successful call records the build; a refused one does not.
+`keychain()` also counts calls in flight (`keychainReadPending()`). While one is still waiting on
+the prompt, Chromium's teardown waits for it too and `app.exit()` never returns, so the shutdown
+sequence's exit hook ends the process with `process.reallyExit()` on macOS in that case, after
+every phase and the final log flush.
 
 Settings use validated current config and `effectiveCapabilities()`. Fresh-install defaults,
 legacy omitted fields and malformed-file recovery are three different cases. User choices must
@@ -621,6 +626,11 @@ QuickJS runs in a disposable Node Worker with no ambient Node, filesystem or net
 Children reuse the same registrar, validation, handler and dispatcher, inherit exact caller proof
 and recheck live permissions/roots. Each child records fresh evidence; only the outer response
 owns input, agent inbox and automatic terminal-result delivery. Finish signals remain direct.
+A script that calls `tools.<name>` for a name this surface does not offer (a feature check such
+as `typeof tools.x` does not count) gets one extra `UNKNOWN_TOOL_NAMES` text item at the end of
+its result. It names the connector that owns the tool and, when two connectors share a Secure
+Tunnel ID, says that ChatGPT can then send a script to the wrong connector (#1287). It changes
+neither `isError` nor what the script ran.
 
 Only explicitly emitted text/images enter the result, except Windows Desktop's `sky.get_window_state`
 adapter automatically forwards its native MCP image blocks. Its returned value contains only
@@ -681,7 +691,21 @@ Content requires the matching route and document epoch, retaining one-shot strea
 temporary ACK failures for at most 15 minutes using the existing observer/backoff. Missing stream
 metadata retains the Fiber path. Fetch reattachment at DOM readiness captures each downstream
 wrapper separately and deduplicates responses to avoid recursion through page instrumentation.
-The native `f/conversation/resume` stream uses the same complete-event reader. Observer version 2
+The same wrapper passively observes same-origin `GET /backend-api/conversation/<uuid>` and
+`GET /backend-api/conversations/<uuid>` responses that return HTTP 429. It reads no response
+body, request headers, cookies or credentials: only the exact conversation id and a bounded
+retry deadline are projected as
+`cos-history-rate-limit`. Content accepts that projection only for its current exact route and
+records one blocking, non-recoverable `chat_error` with `retryAt`. While the deadline is live,
+ChatGPT's native conversation-load Retry button and CoS browser recovery both defer to it; the
+bridge rechecks the deadline at repair claim, preserves it across reversible bridge stop/start,
+and never treats the limit itself as recovery authority. A deferred Goal/compaction cold-browser
+start reuses the existing single recovery scheduler when the deadline expires. A valid
+`Retry-After` or `x-oai-history-initial-retry-after` response header takes precedence;
+when neither is usable, a 60-second **local fallback** applies instead. This fallback is not
+a claim that ChatGPT supplied a retry deadline. The existing pending-repair and terminal
+pickup-stopped countdowns retain their prior precedence over the generic limit notice.
+The native `f/conversation/resume` stream uses the same complete-event reader. Observer version 5
 has an explicit refresh/disposal handle, also reached by existing MAIN-helper restoration.
 The same fetch wrapper observes exact same-origin POST `f/conversation/resume` HTTP 404s.
 Only `conversation_id` leaves a string JSON request body (bounded to 16 KiB); unsupported or
@@ -1175,6 +1199,12 @@ plain names. ChatGPT records a connector's calls under the exact name typed (cal
   `TobisComputer`), never a prefix, so one computer never records or attributes the other's calls.
 - `usage.js` reports every Core-like app from the page's system hints; the content script mentions
   the one with this install's exact name, and none when it is missing or ambiguous.
+- A fresh tab can send before its own system hints arrive. The extension remembers the app id a page
+  reported for this install's exact Core name (`ownCoreApp` in local storage, handed out with
+  `status`) and forgets it when a page's complete plugin list lacks the Core; until the page lists
+  its own apps, that sighting supplies the mention. Without it a worker's first message went out with
+  no mention, and in a shared workspace ChatGPT routed its calls to the other computer's plain Core
+  (seen live, 2026-10-07). Only the page's own list counts as the `core_plugin` report.
 - Plugin refresh treats any "Chat On Steroids Plugins (…)" as the Plugins kind for its action limits.
 - Worker protocol text (the brief and wake-up messages) names this install's exact Core when a
   suffix is set, and the "no run" refusal names the Core that answered: a worker told only "the
@@ -1186,7 +1216,7 @@ plain names. ChatGPT records a connector's calls under the exact name typed (cal
 
 | Delivery choice | Eligibility and behavior |
 | --- | --- |
-| Immediate / `auto` | In an exact active non-Pro turn before its first MCP call, **Send directly** claims that original turn, stops its native generation, then uses normal browser Send. **Inject now** is a separate choice, including before the first call: authored `delivery: tool` captures the exact turn, waits visibly in the existing outbox, and only enters that turn's eligible outer MCP result. It never falls back to browser Send and fails visibly if its turn ends before delivery. After the first MCP call, injection remains available; Pro (including Astra) keeps injection throughout. A new turn resets eligibility; old tool history does not count. For a proven idle chat/New Chat, elect the normal browser send. Unknown model/turn identity grants no interruption. |
+| Immediate / `auto` | In an exact active non-Pro turn, **Send directly** claims that original turn and uses ChatGPT's own Send while the turn works. ChatGPT folds the message into the turn: it ends the running part as interrupted and continues with the message, keeping the result of a call still running. Nothing is stopped first, and the running turn's model is kept. **Inject now** takes the same native path whenever the turn takes it, because text inside a tool result never reached the model (measured 2026-10-09, #1231: ChatGPT passes a command's output alone and treats any other result's text as untrusted). Tool injection remains for Pro (including Astra), for an unproven model, and for image injection: authored `delivery: tool` then captures the exact turn, waits visibly in the existing outbox, enters only that turn's eligible outer MCP result, and fails visibly if its turn ends before delivery. A new turn resets eligibility. For a proven idle chat/New Chat, elect the normal browser send. Unknown model/turn identity grants no interruption. |
 | After turn | Existing-session FIFO spends one distinct completion or confirmed failure/silence-refresh ticket per browser claim. Replays/restart cannot drain the next entry. Does not block an otherwise eligible immediate tool injection. |
 | Finish checkpoint | Waits for a successful finish-tool boundary; ordinary eligible chats can deliver after verified completion. Astra's separate after-turn opt-in remains explicit. Checkpoints inherit the current chat model. |
 | Native attachment | Browser upload/send only. A file-bearing active-chat input waits for the browser-safe boundary; it never becomes a tool-result file reference. |
@@ -1208,12 +1238,11 @@ rechecks composer and attachment nodes, crosses app authorization, then **rechec
 every await before Send**. Native stable user-message and conversation identity establish
 acceptance. Composer insertion, button disappearance and a local “sent” variable do not.
 
-Direct active-turn corrections freeze `directTurn` in the same outbox entry. The existing
-turn-start and last-tool evidence plus in-flight MCP custody decide eligibility; no separate
-tool-seen flag owns it. Recheck the exact claim before native interruption and before Send.
-Navigation, a newer question, an occupied draft or a first MCP call during preparation can
-revoke delivery. A claimed browser correction never also enters a tool result. After-turn
-entries retain their source-boundary policy and never acquire interruption authority.
+Direct active-turn corrections freeze `directTurn` in the same outbox entry. The exact turn
+start decides eligibility; earlier or running MCP calls do not revoke it. Recheck the exact claim
+before Send. Navigation, a newer question or an occupied draft during preparation can revoke
+delivery. A claimed browser correction never also enters a tool result. After-turn entries
+retain their source-boundary policy and never acquire interruption authority.
 
 Native **Thinking failed** is recognized only by its exact visible disclosure button inside the
 current assistant turn, excluding quoted Markdown, old turns and app UI. It immediately records
@@ -1387,6 +1416,12 @@ unproven, the page reports the fixed reason `Native Send receipt was not confirm
 input slot. `failBrowserInput` then retires the authorized row as the same uncertain send the
 outbox expiry produces (cancelled, never resent, a late exact receipt still confirms it), openings
 and Continue included, so later messages in that chat are claimable without a reload (#821).
+The one exception is proof of non-delivery: if, after that wait, ChatGPT still holds exactly the
+submitted text in its composer and shows no newer user row, the page clears that exact draft and
+reports `Native Send did not take the message.` instead. `failBrowserInput` then requeues a manual
+message once (`notTakenRetries`); a second refusal, or any opening, Continue, helper decision or
+temporary planner, ends as failed (`Not sent: ChatGPT did not accept the message.`). Seen when a
+message for the running turn was clicked in the second that turn ended.
 
 Confirmed terminal input receipts stop owning history retries after their exact local session
 directory is positively absent under an available history root. The outbox durably retires them
@@ -1572,6 +1607,7 @@ userData/sessions/<local-id>/
   meta.json             recoverable projection plus durable ownership/project facts
   meta.backup.json      last validated metadata checkpoint
   plan.json             current agent-maintained plan
+  traces/<turnId>.json  each turn's round outline as ChatGPT showed it (presentation only)
   assets/               bounded binary and overflow material
   handoffs/             exact captured briefs and provenance
 ```
@@ -2124,6 +2160,9 @@ opening authority; navigation and delayed adoption never fabricate another submi
 An exact terminal Fiber descriptor on the latest assistant turn also vetoes recovery of an
 unrecorded generation from a persistent Stop control. An older terminal before a newer user
 question grants no such veto; a presentation artifact must not mint another active turn.
+A recovered generation has no Send baseline. Its history is the finals Fiber reported before
+the generation was first seen plus those drawn above its question; a final that arrives inside
+the settle window for that question is its own and may end it.
 
 Native Send/Stop controls belong to the current composer's form and must be rendered outside
 transcript/extension surfaces. Hidden, inert or quoted controls grant no action; multiple Send
@@ -2154,11 +2193,12 @@ fresh New Chat scope with no per-conversation selection. Once a conversation or 
 input records a model/effort, that exact selection takes precedence. `multiAgent.default*` and
 `goal.helper*` continue to own worker and Goal/Loop/Plan helper defaults independently.
 
-Model names and recovery policy checked against native picker metadata on **2026-09-17**:
+Model names and recovery policy checked against native picker metadata on **2026-09-17**; GPT-6 lanes observed on **2026-10-07**:
 
 | Display family / compatible short name | Execution identity / selected effort | Silence refresh |
 | --- | --- | --- |
-| GPT-5.6 Sol / 5.6 Sol / Sol | `gpt-5-6`, `gpt-5-6-thinking`; Instant/Medium/High | 2 minutes, then 1 minute listening after confirmed refresh |
+| GPT-6 / 6 | `gpt-6` (Instant: ChatGPT's automatic lane, which decides per answer whether to reason), `gpt-6-thinking` (Medium/High) | 2 minutes, then 1 minute listening |
+| GPT-5.6 Sol / GPT-5.6 / 5.6 Sol / Sol | `gpt-5-6`, `gpt-5-6-instant`, `gpt-5-6-thinking`; Instant/Medium/High | 2 minutes, then 1 minute listening after confirmed refresh |
 | GPT-5.5 / 5.5 | `gpt-5-5-instant`, `gpt-5-5-thinking`; non-Pro efforts up to High | 2 minutes, then 1 minute listening |
 | Any non-Pro family at Extra high / Max / Ultra | selected `xhigh`, `max` or `ultra` effort | 20 minutes (Thinking failed: 2), then 1 minute listening |
 | GPT-5.6 Pro / 5.6 Pro; GPT-5.5 Pro / 5.5 Pro | `gpt-5-6-pro`, `gpt-5-5-pro`, or an explicitly selected `pro` effort | 10 minutes |
@@ -2193,9 +2233,19 @@ The alternate shell uses an id-less editable textbox under `form[data-chatgpt-co
 `data-model-picker-view` for its portal. Its evaluated `powerSelections`, current selection and
 version options normalize into the same bounded picker snapshot. Mixed-version powers retain
 their execution ids rather than merging unrelated models into a synthetic Latest family.
+Within one version, lanes under one name with distinct efforts (GPT-6's `gpt-6` Instant and
+`gpt-6-thinking` Medium/High) form one family keyed by their shared slug prefix, with each lane
+as an alias, so the composer offers Instant, Medium and High together and each effort still
+selects its own lane. A colliding effort keeps the lanes apart. A name given by number alone
+reads in full (5.6 is GPT-5.6), as in the September picker.
+GPT-6's Instant position is ChatGPT's automatic lane, not a fixed model (observed 2026-10-08): the
+picker sends `gpt-6` ("chooses how long to think"), and ChatGPT's server answers with `gpt-6` or
+switches to `gpt-6-thinking` without an effort, as it judges each request. The account also lists
+a fixed `gpt-6-instant` ("immediate answers"), but no picker view offers it and `?model=` does not
+select it; the app offers exactly what the native picker offers and never substitutes a hidden slug.
 Ambiguous triggers and unrecognized state remain unknown. MAIN helper replacement removes the
 previous listener across protocol versions, because the picker/plugin reply protocols are shared.
-The matched recorder/MAIN helper version is 21. Shell exchanges are read only under the native
+The matched recorder/MAIN helper version is 22. Shell exchanges are read only under the native
 main/thread anchors. Their `entry.turn.items` supply actual user/assistant ids, public text and
 per-call completion; DOM slot keys only join those exact items to the current scan. Missing ids
 do not become invented messages. Only a completed final item in a successfully completed turn
@@ -2316,6 +2366,11 @@ document, navigation epoch and conversation in the existing session-storage snap
 lifecycle event carries a non-manual departure through the close outbox; it does not create
 recovery authority. Main still requires eligible outstanding work. Failed removals and unknown
 origins remain conservative, and a later manual close supersedes a pending automatic departure.
+The same non-manual departure covers a chat leaving the exact document the extension borrowed
+for a new chat (#1180), or whose page reported ChatGPT's "could not be loaded" surface
+(`load_failure`, sent at most every 30 s while it shows): its Retry may take the tab to the home
+page without anyone deciding to close the chat (#1086). Both records (`tabReuses`) are spent on first
+use and trusted for two minutes.
 An unexpected lost/discarded page retains its existing recovery contract. A newer observation
 of the exact departed page clears the dismissal; unresolved work reuses its last exact MCP
 timestamp and normal deadline. A tab close never fabricates provider completion.
@@ -2334,6 +2389,12 @@ signed in to another account. An extension whose `/status` body says `canReveal:
 the chat in `reveals`, under the same holding rule, and focuses its tab or opens it (restoring a
 minimized window). When no such extension is connected, or none takes it within 4 s, the request
 is withdrawn and the app opens the URL through the OS as before.
+
+Selecting a chat in the app (`sessions:followTab`, preload `followSessionTab`) with Background
+chats on hands its conversation to the same extensions as `follow`: only the newest selection,
+only to a browser that already has the chat open, and it lapses after 10 s. The extension makes
+that tab the selected one in its Background chats window. That never focuses the window, opens a
+tab or touches the user's own windows (#1249).
 
 Core's `save_image` (created only with the create-files permission) saves the original file of an
 image ChatGPT generated in the calling chat (#889); the recording keeps only a preview. The call's
@@ -2512,6 +2573,13 @@ can then record a stopped page view, while a canonical final retains its stronge
 Exact app-correlated work started after Stop can withdraw the local veto only for the same active
 turn, with no pending app Stop or canonical final. Old results, foreign turns and finish-only
 calls cannot do so. Browser recovery still requires the main process's exact current authority.
+The page that ended the turn as stopped follows it again when the recorder reopens it, also when
+the live projection names no active turn but the feed holds that page's own stopped end beside
+the recorded turn; each reopening is followed once. Such a turn keeps the user's Stop: native
+idleness without a canonical final ends it as stopped again, and an app Stop for it while the
+page is idle is answered by that end instead of a click. The timeline keeps the app's Stop note
+where Stop was asked and closes the turn with a stopped line at the stopped end that is still the
+turn's last lifecycle boundary, so a reopening moves that line after the late work.
 Neither a click receipt nor a page-local stopped outcome claims provider-side cancellation.
 An already-earned MCP activity window remains visible through a stopped page observation:
 ten minutes for Pro, three otherwise. That retained display grants no input or reload while
@@ -2595,6 +2663,10 @@ tab: if the browser finds one by the time it acts (often the tab a worker wake j
 still loading or answers `clf-page-status`, it reports `repairAction=present` and never reloads it,
 which used to cut a wake off mid-send (#864). Only a silent tab is reloaded. “Recover agents” is not blanket
 permission to reopen the session list. A plain historical chat with no current work is unprotected.
+A bare open turn counts as current work for a closed tab and for automatic compaction for one hour
+after its start (`OPEN_TURN_RECOVERY_MS`, `liveTurnIsCurrent`); activity in the silence window counts
+however old the turn is. A turn left open by a page that went away days ago must not reopen its tab
+or file a compaction on a brief visit.
 An explicit `/closed` departure with `manual: true` persists `browserRecoveryDismissedAt` in the
 existing session metadata and withdraws every unexecuted browser repair. It revokes synthetic
 silence inputs while retaining authored input, continuation tickets, exact request ownership
@@ -2841,7 +2913,16 @@ awaiting-summary -> awaiting-chat -> claimed -> committing -> committed
    `turn_end`, exactly one nonempty final. That outranks the mounted Fiber shape, which can
    lose the terminal when ChatGPT remounts a long answer under another assistant id. A second
    generation for the same user message (Retry/regenerate) fails closed; never pick the
-   newest final. The user may edit the **content instructions** used to
+   newest final. After #1205 resolves the native GPT-6 `dil` reference to its
+   `fallbackMarkdown`, large stable finals can still have more than 120k of
+   rendered HTML. The page attaches a bounded (256k), escaped visible-text
+   rendering only with a unique, exact native/Fiber/selection message owner;
+   duplicate, foreign and positional-only DOM associations never authorize it.
+   Content and the `/events` parser preserve this larger final; the existing
+   recorder cap spills full HTML to an overflow asset. The handoff reader retrieves
+   the whole authored text (and any overflow) before the existing 96k-character
+   replacement-prompt budget retains its beginning and end. Ordinary streaming
+   markup keeps the 120k presentation cap. The user may edit the **content instructions** used to
    write that brief; continuation markers, send/provenance framing, tool-detail policy and the
    requirement that the compaction reply contain only the brief remain code-owned invariants.
    The shipped content prompt asks for a lossless, dense operational handoff: roughly
@@ -2871,6 +2952,18 @@ awaiting-summary -> awaiting-chat -> claimed -> committing -> committed
    needed. Move the objective and chat switch, retire A's execution authority, then retire
    its browser document only with fresh safe-close proof. B's first answer belongs to the
    exact resumed input, not to an old final from A.
+
+**Reopening from a saved summary (#1215).** A run abandoned after step 3 keeps its handoff on
+disk. `sessions:resumeFromHandoff` (preload `resumeFromHandoff(id, handoffId)`, bridge
+`resumeFromSavedSummary`) starts a new run from it through `reopenWithHandoffNow`: only when that
+handoff is still the session's `lastHandoffId`, no continuation is open, and its provenance
+source is the session's current chat. The new run is an ordinary transaction: it reserves A
+again with the abandoned run's project, records the source request as already sent (nothing is
+asked of ChatGPT), and `attachSummary` writes a fresh handoff with the same text bound to the
+new token. Claim, commit, restart recovery and provenance then work unchanged; a failed attach
+aborts the new run. Timeline `handoff` events carry an optional `continuation` token so the
+reopened run's row owns its handoff; the reuse button is shown only on the newest Compact &
+Resume row.
 
 Restart restoration must converge on that same committed projection. A persisted send attempt
 can outlive a transport command; expiration releases transport, not permission for another
@@ -3086,11 +3179,26 @@ undelivered messages, page absence, manual departure, Stop and current recovery 
 Only a live broker slot grants or refuses worker recovery; parked prime history cannot veto
 a later ordinary turn. Tests: `bridge.test.ts`, including cancellation during the storage read.
 
-Revival reserves the new assignment with its current inbox task preview, a neutral worker-id
-label and no completion result. The previous spawn label/result must not describe new work.
+Revival reserves the new assignment with its current inbox task preview and no completion
+result. An omitted message label preserves the worker name. The prime can explicitly supply
+`messages[].label` (1–60 characters, ideally 1–3 words) when messaging a sleeping worker with a
+new job; the single to+text form has none, which keeps the agents schema inside its measured
+byte budget (`mcp.test.ts`) without trimming existing guidance. Labels cannot rename active workers or primes; conflicting
+names in one batch are rejected before mutation. The app does not infer task identity from prose.
 Rejected acceptance restores that prior metadata; accepted work keeps its new metadata even
 if browser wake fails. Historical reports remain in the prime inbox and recorded history.
 A worker proving it never stopped clears its obsolete result while retaining the same task.
+The local UI swarm projection also includes dormant workers in `retainedWorkers`, so parking
+a family preserves its displayed name and task. The panel matches the exact worker conversation;
+caller/model status remains scoped separately.
+After a critical broker snapshot is written, its bounded name/task presentation is projected into
+the exact worker session's `workerAssignment`, in the background: neither the acceptance barrier
+nor startup waits on it, and unchanged workers skip the store. Startup projects the saved snapshot
+itself, so families its restore prunes as expired keep their names. The session archive supplies historical labels/tasks after broker eviction;
+it never grants slots, routing or revival authority, and a failed broker write projects nothing.
+Legacy plain-text briefs with multiple `Your task:` boundaries remain intact rather than guessing
+which authored section to discard. The panel shows tool activity only when its recorded timestamp
+is newer than the last finish report and turn end, and belongs at or after the current turn start.
 
 After a worker reaches its own 400k estimated-context ceiling, its next stop becomes terminal
 and it is no longer reusable. Do not interrupt its current useful work merely for that ceiling.
@@ -3436,6 +3544,16 @@ scheduled refresh rereads the selected transcript only when it is named, all tra
 invalidated, or its refreshed summary's `updatedAt`/`events` differ from those its last live-tail
 read was requested against; manual/visible refreshes still reread. Losing the selected row from the catalog clears its transcript.
 
+Setup's Access step (after Folder) offers Full access, Files and terminal, and Read only, and
+under them, folded, the Workspace permission surface itself: `placePermissions` moves that one
+DOM surface into Setup while Setup is shown, so there is never a second permission control or
+store. Any choice completes the step; read-only or a mix without create/edit/command still ends
+on all set, but Ready marks the access row and says how to change it. A recovered (unreadable)
+settings file reports `settingsRecovered` until read-only is switched off. The unavailable
+Desktop card links to the same step. Automatic plugin refresh defaults off for fresh, legacy
+and recovered configs; explicit saved choices remain authoritative. `scripts/verify-setup-access.cjs` checks the shared
+surface, the saves and Ready in the production renderer.
+
 First-run Setup keeps the six-step flow, with reviewed screenshots in `renderer/setup-images/`
 and translated numbered highlights in `renderer/setup-guide.ts`. Sensitive identifiers must
 be removed from asset pixels before inclusion; an HTML overlay is never a privacy boundary.
@@ -3497,11 +3615,31 @@ paged transcript. Main owns durable mutation acknowledgements; renderer optimism
 receipt. Native edit context menus respect the focused editable control and selection.
 The timeline retains each exact tool row. It folds five or more consecutive successful agent
 status checks or waits on the same process inside the existing activity disclosure, preserving
-each row on expansion; a failed call breaks the fold. An immediately preceding recorded progress
-line may title that disclosure as the observed activity phase. Tool diff counts and shell/result
+each row on expansion; a failed call breaks the fold. Tool diff counts and shell/result
 headers are projections of recorded data, not new execution or completion evidence.
-A working turn's timeline ends with one live row: the call this app is running for the chat,
-else a step ChatGPT's page names in the progressive, else Thinking. `sessions:runningTools`
+A turn's work reads in rounds, as ChatGPT draws it (`renderer/timeline-rounds.ts`, pure). A round
+is what the model said before a step, the step's activity (this app's calls, ChatGPT's own steps,
+agent messages) and the recap ChatGPT closes it with. The sentences stand as prose in the interim
+style; the activity folds under one disclosure titled with the recap and a check once the round is
+done, else with its latest action; a lone action without a recap stays its own row. The rounds come
+from the turn's outline when one was recorded (`shared/turn-trace.ts`): its sentences, recaps and
+answer id in ChatGPT's order. Recorded calls are aligned with the outline's calls as the longest
+order-preserving match on tool name, preferring calls that started within 90 s of when the page
+first showed them; ChatGPT can show calls that never reached this app (a 22-minute turn on
+2026-10-07 showed 106 and recorded 92), so unmatched outline calls stay unmatched. A recorded call
+the outline does not show joins ChatGPT's code-mode `exec` between its aligned neighbours, the
+newest round once the outline has moved on, else its predecessor's round. Other rows follow the row
+recorded before them; a recorded interim message the outline shows is used in its place, and a
+native step whose label equals an outlined recap is not repeated (late recaps were recorded after the
+answer). Without an outline, each interim message or ChatGPT caption opens a round and a native step
+ending a finished round titles it, by position. Disclosures are keyed by turn and round, reuse the
+node their rows already sit in when paging moves a round's start, and rounds drawn after a chat's
+first paint enter with a short fade (none under reduced motion).
+A working turn's timeline ends with one live row: ChatGPT's own words for what the turn is doing
+(the outline's `now`, in the page's language), wearing the icon and clock of a call this app runs
+meanwhile; else that running call by its own caption; else a step ChatGPT's page names in the
+progressive; else Thinking. ChatGPT shows only a generic Thinking during a turn's first stretch of
+reasoning too (observed 2026-10-08); its words appear once a round is under way. `sessions:runningTools`
 answers it from `mcp/call-context.ts` `runningToolActivity`, whose caption the kernel builds
 from the call's arguments when it starts. It shares one ownership rule, `exactOwner`, with
 `runningToolProgress`: a call counts for a chat by its placed conversation or, while it still
@@ -3510,17 +3648,32 @@ runs, by the page's exact proof of its request id (`requestCorrelation`, install
 a second while the chat works. The row is presentation only: it records nothing and is not
 completion evidence. Page step labels are recognised by English wording; in other languages
 the row says Thinking.
-Between the running call and the page step, the row shows the running turn's newest
-unpublished sentence (#942). In a new chat's first turn ChatGPT draws the model's preambles from
-id-less view items and keeps their messages out of every mapping until history is fetched again.
-fiber.js reports the newest such preamble as the turn descriptor's optional `preview` (at most
-300 characters, only while the turn has no end message and only when no readable source message
-matches it). content.js forwards it as `live_preview` for the generation it owns and clears it
-at `finishGeneration`. background.js relays it to `POST /live-preview`, and `/closed` also clears
-it. `src/main/live-preview.ts` holds it in memory, dropping it after ten minutes without a
-refresh. `sessions:livePreview` (preload `livePreview`) returns it beside `sessions:runningTools`.
-It is a caption only: it is never recorded and never becomes a message id, so the sentence is
-recorded once, in its place, when ChatGPT publishes it.
+The live row never shows the model's prose; its sentences belong to the timeline (#942). In a new
+chat's first turn ChatGPT keeps them, and each round's recap, out of every message mapping until
+history is fetched again, so fiber.js reads the turn's outline from the shell's `entry.turn.items`
+(`shellTurnTrace`): `say` (GPT-5.x id-less `reasoning` preambles, or GPT-6 `assistant-message`
+items inside a reasoning group with their own id), `call` (this app's connectors, with ChatGPT's
+call id and tool), `exec` (ChatGPT's code mode), `recap` (a public `thought`), the top-level
+`answer` id, and, only while the turn runs, `now`: the newest group's open `activeReasoning`
+thought, which ChatGPT shows as the turn's status line and later closes into that round's recap.
+Hidden groups and transient reasoning stay out. Bounds: 400 items, 8,000 characters a
+sentence, 300 a recap, 128 KiB in all. content.js revalidates it (`turnTraceOf`), stamps each call
+with when this document first showed it (`at`, only for the generation it runs live), and sends
+`turn_trace` for an owned local turn whenever it changes, coalescing unsent ones; a settled turn
+read after a reload sends its outline too, which is how recaps that arrived late find their rounds.
+The bridge validates it (`shared/turn-trace.ts`), and the recorder stores it per turn in
+`sessions/<id>/traces/<turnId>.json`, replacing the turn's previous outline. It is presentation
+beside the log, never an event, message, call, work or completion evidence. `sessions:traces`
+(preload `turnTraces`) returns the outlines of up to 64 turns a timeline shows. A DIL reply whose
+`content` is only `::chatgpt-content-reference{…}` naming itself is read as the `fallbackMarkdown`
+of that one `dil` reference (`shellItemText`), so its recorded text is the reply rather than the
+directive. In that Markdown the timeline shows an `entity` widget as its name in bold and drops
+widgets it cannot draw (`image_group`). Formulas render with KaTeX (`renderer/math.ts`): `\( … \)`
+inline and `\[ … \]` or `$$ … $$` as a block, the shapes ChatGPT writes; a lone `$` stays text. The
+Markdown pass leaves only a placeholder, the message is sanitised as usual, and each placeholder
+then becomes KaTeX's rendering of the original source with `trust` off, so a formula cannot add
+links, classes or styles. Source KaTeX cannot parse, or longer than 8,000 characters, shows as
+written; a wide block formula scrolls on its own.
 Setup's Show/Hide guide button stays available even while setup is incomplete. Manual collapse
 survives status pushes. Profile management stays out of first-run Setup: a compact row below
 Language in Appearance has a dropdown, a plus button with a name dialog and a delete button
@@ -3534,7 +3687,9 @@ status updates preserve the user's current disclosure state.
 
 The recovery row above Goal/Loop shows read-only countdowns from `bridge.ts::sessionControlsFor`:
 activity-based silence and confirmed reload listening, an outbox/Goal native-busy deferral, and each unresolved
-attribution incident's exact candidate deadline. `renderer/recovery.ts` updates only the seconds
+attribution incident's exact candidate deadline. A live conversation-history 429 cooldown projects
+a `provider-limit` row that says when retry is allowed and never promises a reload.
+`renderer/recovery.ts` updates only the seconds
 using the existing visible-chat clock; zero says checking/pending, never sent/reloaded. Fresh
 work or attribution removes the relevant countdown, and native busy projects the same owner's
 extended deadline. Pro silence becomes visible after five minutes without work and counts
@@ -3726,12 +3881,16 @@ production renderer in isolated Electron with color, queue/push, theme, reset, r
 layout checks. It does not operate the installed app or a provider conversation.
 
 `renderer/plugin-refresh-reminder.ts` owns the chat-header reminder to refresh plugins
-in ChatGPT. Its X stores only the acknowledged running `state.update.current` version in
-`cos.plugins.refreshReminder.dismissedVersion`; downloading a newer version does not rearm
-it. No acknowledgement shows the reminder, including the first version with this feature.
-It survives restart until dismissed, returns for a different running version and is hidden
-in Settings. It stacks with update/extension notices and never marks an actual connector
-refresh complete or starts a browser action.
+in ChatGPT. It compares `AppState.connectorSchemas` (the declaration fingerprints the local
+MCP server publishes per surface) with the ones acknowledged in
+`cos.plugins.refreshReminder.acknowledgedSchemas`. The first schema seen per surface is a
+silent baseline; a different one shows the reminder until its X is clicked.
+`AppState.confirmedConnectorSchemas` carries, per surface, the schema ChatGPT confirmed after a
+refresh click or found already current (`confirmedPluginSchemas()`, an in-memory copy of
+`completedSchemaId` from `state/plugin-refresh.json`, kept current on every read and write); a current schema confirmed there counts as acknowledged, so
+the reminder disappears once automatic plugin refresh lands. The reminder is hidden in
+Settings, stacks with update/extension notices and never marks a refresh complete or starts a
+browser action.
 
 ### Project Files workspace
 
@@ -3757,12 +3916,29 @@ The bottom dock has no generic shortcut screen or second tool tab strip; Termina
 tabs and `+` menu there. Both `+` controls follow the last tab, not the far edge of the bar.
 Hiding Files retires its watches without discarding an unsaved draft. Hiding the bottom dock
 does not retire its PTYs; closing a terminal tab does. Closing the last bottom tab hides that
-dock. The top-right control group orders right expansion (shown only while right is open),
-bottom, then right; the latter two buttons toggle their panels. There is no separate right-dock
-close button. Layout controls grant no new file, terminal or worker authority.
+dock. The layout control group sits at the right end of the title bar (`.app-topbar`) and orders
+right expansion (shown only while right is open), bottom, then right; the latter two buttons toggle
+their panels. Where the system's caption buttons share that end (Windows), the bar's resolved right
+padding marks the group `.is-beside-caption` and a divider separates the two. There is no separate
+right-dock close button. Layout controls grant no new file, terminal or worker authority.
+The chat's header (title, project, Install update) is the first row of the chat column
+(`.chat-head` in `.card.is-session`), not a row above the workspace, so the right dock runs from
+the title bar to the bottom with one unbroken edge and needs no compensation. Expanded, the dock
+covers the column, header included, and takes the sidebar's rounded corner while it rests there
+or moves to or from it.
 The sub-agent overview starts directly with Active and History, without a heading or close X.
 History appends the failed-worker count only when it is nonzero; the existing group counts remain unchanged.
-Each worker row also projects its recorded tool-call count and the newest bounded tool activity
+Each worker is one plain row, not a boxed card: its tinted identity avatar carries the state (a
+presence dot; while working, the connection capsule's traveling light around it), then name and
+elapsed time, the task, and one line of facts: state, the model as the composer names it (no
+thinking reads Instant, never "none"), the action count once there is one, and Degraded only when
+it is (a failed worker already says so). The name is the label the prime gave the worker (the
+agents tool asks for 1-3 words), else "Worker 2"; the id stays in the avatar and the row's
+tooltip, since the prime and the chat address workers by it. The task is the worker's own: the
+run's shared context, which opens every brief alike (`src/shared/worker-brief.ts`), is left out
+there and in a worker chat's title. The
+newest tool activity shows, in the turn's sheen, only while the worker works. Each worker row
+also projects its recorded tool-call count and the newest bounded tool activity
 from the session summary. The store owns that compact latest-activity projection and preserves
 event-time order when late attribution repairs append older calls, so the overview never loads
 every worker transcript just to paint one line. These fields are read-only telemetry; lifecycle,
@@ -3770,7 +3946,8 @@ scheduling, messaging and execution authority remain with the existing broker/to
 Its tab close or Escape closes the pane; a selected worker retains its title and Back button.
 Each collapsed activity round that used workers shows one Phosphor Sub-agents icon and the
 number of distinct workers. Its keyboard-reachable button labels that count accessibly and
-opens the existing Sub-agents dock with those exact workers highlighted; it does not expand
+opens the existing Sub-agents dock with those exact workers highlighted (one glow as the dock
+opens, which settles into the plain row; focus moves to the first only from the keyboard); it does not expand
 the round, load worker transcripts or move the timeline reader. Inspection releases the existing
 follow-output/send hold; Jump to latest resumes following. Membership and selection generations
 fence activation, and parent changes clear highlights. Participation derives from recorded
@@ -3861,10 +4038,18 @@ Refused calls classify the current admission fact: a name absent from every reta
 unknown/stale/wrong-connector; an exact exposure conflict or schema-limit issue is not exposed;
 only a uniquely known disabled integration/tool is disabled. Sign-in, authentication in progress,
 server error, residual unavailability and shutdown keep their separate diagnoses. Connector refresh
-cannot repair those states. Retained declarations and exposure issues explain refusal only; they
-never route a call, select a conflicting owner, start sign-in or reconnect. Every pre-dispatch
-refusal records `tool_rejected` and says the requested tool call was not dispatched. An admitted
-upstream error remains `tool_execution_error`; its arbitrary text cannot redefine admission.
+cannot repair those states. When that absent name is an exact member of `SURFACES.core.tools` and
+Plugins does not also declare it (shared `exec` stays generic), the same `UNKNOWN_TOOL` refusal
+names this installation's Core connector from `surfaceDefinition('core').connectorName` and tells
+the caller to discover or select that connector. Static membership identifies ownership only: the
+text does not report Core as enabled or connected, and it does not treat an earlier launch as
+already run. Case-mismatched names and every other unclaimed name keep the generic unknown-tool
+wording. A retained external declaration, including a tool literally named `exec_command`, still
+uses its conflict, disabled, authentication, startup or shutdown diagnosis and is not redirected.
+Retained declarations and exposure issues explain refusal only; they never route a call, select a
+conflicting owner, start sign-in or reconnect. Every pre-dispatch refusal records `tool_rejected`
+and says the requested tool call was not dispatched. An admitted upstream error remains
+`tool_execution_error`; its arbitrary text cannot redefine admission.
 Refresh observations allow the registrar's one additional code-mode tool. Legacy 64-tool
 snapshots (plus optional code mode) can enroll only as an exact declaration subset of the
 current Plugins publication; refresh completion still requires the complete current catalog.
@@ -3927,6 +4112,18 @@ opens the app on click. A skipped or failed notice is not retried; notification 
 tunnel state or recovery. No raw tunnel detail or secret identifier enters the notice.
 `test/connection.test.ts` and `test/connection-notice.test.ts` cover grace/recovery, sleep,
 intentional retirement and notification presentation.
+
+For a few seconds after a new OpenAI tunnel-client process connects (app start, update, or a
+client the supervisor replaced), OpenAI still routes an existing chat's tool calls to the previous
+process, and a call sent then waits about 128 s for that lease (#1220; a new chat is not affected,
+and a reconnect of the same process after an outage changes nothing). `tunnel/route-settle.ts`
+holds such messages for `ROUTE_SETTLE_MS` (12 s) after each new process's first connected report:
+`/status` does not offer, and `/input/claim` refuses, an input whose page is an existing
+conversation; `wakeBrowserWork()` runs when the hold ends. `ConnectionStatus.routeSettlingUntil`
+lets the chat say the message is about to go. Measured on Windows: sent at once, 15 of 18 calls
+waited; held 12 s, 12 of 14 arrived in under 20 s (one still waited, one failed fast without reaching
+the app, back to back, so the takeover can occasionally outlast the hold). `test/tunnel-route-settle.test.ts`, the
+`tunnel-lifecycle` and `input-delivery-integration` cases cover it.
 
 The local control API (`control-api.ts`, Settings → General → For developers, off by default) serves
 `/v1/health` (which also lists the routes this build serves), `/v1/status` and the read routes
@@ -4011,7 +4208,7 @@ supplies only `id`, `sessionId`, `text` up to 64,000 characters, and `interrupt`
 send from the composer does. The message can therefore reach ChatGPT, and a model that reads it
 can act under the capabilities the user has granted. A row sent this way is `automatic:false`,
 like one typed in the app. Worker and helper chats and chats with no ChatGPT chat yet are refused,
-and a send that would stop the answer being written needs `interrupt:true`; because the outbox
+and a send into an answer being written needs `interrupt:true`; because the outbox
 decides that itself when it admits the row, a row it marked as interrupting after the caller's check
 is withdrawn and refused. The caller's lowercase UUID is the outbox id: a repeat returns the
 existing row (200, `replayed:true`) and never reaches `enqueueInput`, and the same id with a
@@ -4065,8 +4262,12 @@ is missing; in every other state a click opens the popover, and a right click al
 confirmed connection pulses the dot once as the capsule closes; state changes are announced
 politely (`#connectionAnnounce`). Reduced
 motion drops the transitions; a sidebar narrower than 200px keeps the dot alone. Setup stays
-reachable from Settings and from the capsule when configuration is incomplete. The View menu has its own foreground
-stacking layer; Appearance rows align controls at a shared minimum height and Setup uses a stable
+reachable from Settings and from the capsule when configuration is incomplete. The View menu is
+one icon button (≡) in the title bar opening the row menus' menu (`row-menu.ts`, `view-menu.ts`):
+each action with its icon and this keyboard's shortcut (not the sidebar toggle, which sits beside it), a
+pets label that says what it will do (Show/Hide pets), zoom steps that keep it open with Actual size's value updating
+(a zoom's resize repositions it instead of closing it), and Show browser (the CoS browser) only while the
+built-in browser is the ChatGPT browser. Appearance rows align controls at a shared minimum height and Setup uses a stable
 responsive title/language grid across locales.
 The companion sends a bounded snapshot on the authenticated `/diagnostics` route, outside the
 authority-bearing `/status` response. One pending diagnostic page read is shared; current

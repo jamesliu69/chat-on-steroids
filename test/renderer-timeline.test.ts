@@ -11,7 +11,7 @@ vi.mock('../src/renderer/workspace-terminal.js', () => ({ createWorkspaceTermina
   update: vi.fn(), show: vi.fn(), hide: vi.fn(), hasTabs: () => false,
   tabs: () => [], newTab: () => null, selectTab: vi.fn(), closeTab: vi.fn()
 }) }));
-vi.mock('../src/renderer/pet.js', () => ({ initPet: () => () => {} }));
+vi.mock('../src/renderer/pet.js', () => ({ initPet: () => Object.assign(() => {}, { toggle: () => {}, isVisible: () => false }) }));
 vi.mock('../src/renderer/file-code-editor.js', () => ({
   createProjectDiffViewer: async ({ parent, baseText, currentText }: { parent: HTMLElement; baseText: string; currentText: string }) => {
     const view = parent.ownerDocument.createElement('pre');
@@ -233,6 +233,7 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
       setSessionAutomation: (id: string, action: string) => { live.controlCalls.push({ id, action }); live.automation = action; return ok({}); },
       compactSession: (id: string) => { live.controlCalls.push({ id, action: 'compact' }); live.compacting = true; return ok({}); },
       cancelSessionCompaction: (id: string) => { live.controlCalls.push({ id, action: 'cancel' }); live.compacting = false; return ok({}); },
+      resumeFromHandoff: (id: string, handoffId: string) => { live.controlCalls.push({ id, action: `resume:${handoffId}` }); return ok({}); },
       getLog: () => ok([]),
       getSwarm: () => ok({ running: false, runId: null, agents: [], maxWorkers: 2, pendingReports: 0 }),
       onStateChanged: () => () => undefined,
@@ -277,7 +278,7 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
         backgroundProcessListener = listener;
         return () => undefined;
       },
-      livePreview: () => ok(null), listPausedHelpers: () => ok(pausedHelpers),
+      turnTraces: () => ok({}), listPausedHelpers: () => ok(pausedHelpers),
       retryHelper: (id: string, sourceSessionId: string) => {
         live.controlCalls.push({ id: sourceSessionId, action: `retry:${id}` });
         pausedHelpers = pausedHelpers.filter(row => row.id !== id);
@@ -353,6 +354,13 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
     }
   };
 }
+
+it('ignores a pointer release when the timeline owns no pointer press', async () => {
+  const { w } = await boot([]);
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  w.dispatchEvent(new w.MouseEvent('pointerup'));
+  expect(error).not.toHaveBeenCalled();
+});
 
 it('makes parent and worker session selectors keyboard-focusable and activates them with Enter/Space', async () => {
   const parent: SessionSummary = { ...summary([]), id: 'parent-session', title: 'Parent', conversationId: 'parent-chat', chatIds: ['parent-chat'] };
@@ -575,6 +583,19 @@ it.each(['compaction', 'blocked', 'worker'])('retires %s control status when lea
   expect(status.textContent).toBe('');
   release({ ok: true, data: controls }); await settle();
   expect(status.textContent).not.toBe('');
+});
+
+it('asks for the selected chat\'s background tab once per switch (#1249)', async () => {
+  const first = summary([]), second = { ...summary([]), id: '2026-09-02-test0002', title: 'Other session' };
+  const { w } = await boot([], true, [], [], { sessions: [first, second] });
+  const api = (w as any).api;
+  const followed: string[] = [];
+  api.followSessionTab = async (id: string) => { followed.push(id); return { ok: true, data: true }; };
+  const row = (id: string) => w.document.querySelector<HTMLElement>(`#sessionList [data-id="${id}"]`)!;
+  row(second.id).click();
+  row(second.id).click();
+  row(first.id).click();
+  expect(followed).toEqual([second.id, first.id]);
 });
 
 it('clears control projections on an existing-session switch and fences A to B to A responses', async () => {
@@ -1041,6 +1062,41 @@ it.each([false, true])('keeps retained image previews at the canonical row acros
   (w.document.querySelector('#sessionList [data-id]') as HTMLElement).click(); await settle();
   expect(w.document.querySelector('#timeline')!.textContent).not.toContain(row.text);
   expect(w.document.querySelector('#inputQueue')!.textContent).not.toContain(row.text);
+});
+
+it('says why a queued message waits: no extension, or a running tool call', async () => {
+  const asked = Date.now() - 12_000;
+  const { w, live, append } = await boot([
+    { seq: 1, time: asked - 100, source: 'extension', kind: 'turn_start', turnId: 'held-turn' },
+    { kind: 'user_message', seq: 2, origin: 2, time: asked, source: 'extension', turnId: 'held-turn', messageId: 'q-now', message: text('Run the tests') }
+  ]);
+  const api = (w as any).api;
+  const chat = await import('../src/renderer/chat.js');
+  const state = (await api.getState()).data;
+  const present = (on: boolean) => chat.chatApply({ ...state, bridge: { ...state.bridge, present: on } });
+  const queued: InputEntry = { id: 'queued-one', sessionId: summary(live.events).id, state: 'queued', owner: 'page', text: 'After the tests',
+    mode: 'auto', model: null, reasoningEffort: null, dueAt: T0, createdAt: T0, conversationId: 'chat-a' };
+  const status = () => w.document.querySelector('#inputQueue .pending-message')!.textContent ?? '';
+  live.inputs.push(queued);
+  // No extension connected: nothing can leave yet.
+  present(false); await append([]);
+  expect(status()).toContain('Waiting for the browser extension to connect');
+  expect(w.document.querySelector('#inputQueue .pending-message')!.classList.contains('is-waiting')).toBe(true);
+  // Connected, with one of this chat's tool calls running: the message waits for it (#1231).
+  api.runningTools = () => Promise.resolve({ ok: true, data: [{ title: 'Running npm test', kind: 'run', since: Date.now() - 5_000 }] });
+  present(true); await append([]); await append([]);
+  expect(status()).toContain('Waiting for the running tool call to finish');
+  // A mid-turn send does not wait for calls, so it claims no such reason.
+  live.inputs[0] = { ...queued, directTurn: { id: 'held-turn', startedAt: asked } };
+  await append([]); await append([]);
+  expect(status()).not.toContain('Waiting for the running tool call');
+  // The call ended: back to the plain clock, with Queued as its label.
+  live.inputs[0] = queued;
+  api.runningTools = () => Promise.resolve({ ok: true, data: [] });
+  await append([]); await append([]);
+  expect(status()).not.toContain('Waiting for');
+  expect(w.document.querySelector('#inputQueue .pending-message-status')!.getAttribute('aria-label')).toBe('Queued');
+  expect(w.document.querySelector('#inputQueue .pending-message')!.classList.contains('is-waiting')).toBe(false);
 });
 
 it.each([false, true])('hands a delivered bubble to exact native history without a blank or duplicate (historyFirst=%s)', async historyFirst => {
@@ -1521,7 +1577,7 @@ it.each([false, true])('removes a project group in one click, keeps its chats an
   const api = (w as any).api;
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
   (w.document.querySelector('.worker-toggle') as HTMLButtonElement).click();
-  projectMenu(w, project.id); (w.document.querySelector(`.row-menu [data-new-project="${project.id}"]`) as HTMLButtonElement).click();
+  (w.document.querySelector(`.project-heading > [data-new-project="${project.id}"]`) as HTMLButtonElement).click();
   input.value = 'Keep my draft';
   input.dispatchEvent(new w.Event('input', { bubbles: true }));
   if (selectedSkill) {
@@ -1581,21 +1637,23 @@ it('keeps the project visible when its removal fails, and lets the removal be tr
   expect((w as any).api.removeProject).toHaveBeenCalledTimes(2);
 });
 
-it('offers a project\'s actions in one menu: a new chat, its color as a submenu, and removal', async () => {
+it('offers a new chat beside a project\'s menu, and its color as a submenu and removal inside it', async () => {
   const project = { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', name: 'Workspace', path: 'C:\\workspace\\primary', createdAt: 1 };
   const { w } = await boot([], false, [], [project]);
   const group = w.document.querySelector<HTMLElement>(`.project-group[data-project-id="${project.id}"]`)!;
-  // No loose buttons on the row: one "⋯", and a right click opens the same menu.
-  expect(group.querySelector('.project-heading')!.querySelectorAll('button').length).toBe(1);
+  // Two buttons on the row: the primary new chat, then one "⋯"; a right click opens the same menu.
+  expect([...group.querySelector('.project-heading')!.querySelectorAll('button')].map(b => b.className)).toEqual(['btn row-menu-button project-new', 'btn row-menu-button project-menu']);
   const button = projectMenu(w, project.id);
   expect(button.getAttribute('aria-expanded')).toBe('true');
   const menu = w.document.querySelector<HTMLElement>('.row-menu')!;
   expect(menu.getAttribute('role')).toBe('menu');
-  expect([...menu.querySelectorAll<HTMLElement>('.row-menu-item')].map(item => item.dataset.rowAction)).toEqual(['new-chat', 'color', 'remove']);
+  expect([...menu.querySelectorAll<HTMLElement>('.row-menu-item')].map(item => item.dataset.rowAction)).toEqual(['color', 'remove']);
   expect(menuItem(w, 'remove').classList.contains('is-danger')).toBe(true);
-  expect(w.document.activeElement).toBe(menuItem(w, 'new-chat'));
-  // Keyboard: Down moves, Right opens the color submenu on the current choice, Left comes back.
+  expect(w.document.activeElement).toBe(menuItem(w, 'color'));
+  // Keyboard: Down and Up move, Right opens the color submenu on the current choice, Left comes back.
   menu.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  expect(w.document.activeElement).toBe(menuItem(w, 'remove'));
+  menu.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
   expect(w.document.activeElement).toBe(menuItem(w, 'color'));
   menu.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   expect(w.document.querySelectorAll('.row-menu').length).toBe(2);
@@ -1614,8 +1672,10 @@ it('offers a project\'s actions in one menu: a new chat, its color as a submenu,
   expect(menuItem(w, 'color')).not.toBeNull();
   w.document.body.dispatchEvent(new w.Event('pointerdown', { bubbles: true }));
   expect(w.document.querySelector('.row-menu')).toBeNull();
-  // New chat in this project.
-  projectMenu(w, project.id); menuItem(w, 'new-chat').click(); await settle();
+  // New chat in this project: the row's own button, no longer a menu item.
+  expect(projectMenu(w, project.id) && menuItem(w, 'new-chat')).toBeNull();
+  w.document.body.dispatchEvent(new w.Event('pointerdown', { bubbles: true }));
+  (w.document.querySelector(`.project-heading > [data-new-project="${project.id}"]`) as HTMLButtonElement).click(); await settle();
   expect((w.document.getElementById('chatInput') as HTMLTextAreaElement).placeholder).toBe('Message in Workspace…');
 });
 
@@ -1795,7 +1855,7 @@ it('groups project chats and restores each project composer with its selected id
   expect([...groups].map(group => group.open)).toEqual([false, false]);
   expect(groups[0]!.querySelector('[data-id]')?.getAttribute('data-id')).toBe(summary([]).id);
   const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
-  const choose = (id: string) => { projectMenu(w, id); (w.document.querySelector(`.row-menu [data-new-project="${id}"]`) as HTMLButtonElement).click(); };
+  const choose = (id: string) => { (w.document.querySelector(`.project-heading > [data-new-project="${id}"]`) as HTMLButtonElement).click(); };
   choose(projects[0]!.id); expect(w.document.querySelector<HTMLDetailsElement>(`[data-project-id="${projects[0]!.id}"]`)!.open).toBe(true); input.value = 'Alpha draft';
   choose(projects[1]!.id); expect(w.document.querySelector<HTMLDetailsElement>(`[data-project-id="${projects[1]!.id}"]`)!.open).toBe(true); expect(input.value).toBe(''); input.value = 'Beta draft';
   (w.document.getElementById('newChat') as HTMLButtonElement).click();
@@ -2420,6 +2480,62 @@ it('says why a compaction died when the app abandoned it', async () => {
   expect(card.textContent).toContain('abandoned');
 });
 
+it('offers to open a new chat with the summary an abandoned compaction already saved (#1215)', async () => {
+  const [request, start, brief, end, handoff] = compaction(2);
+  const abandoned = { seq: 9, time: T0 + 9000, source: 'app', kind: 'note', continuation: TOKEN,
+    message: text('Compact & Resume abandoned — the new chat could not be opened') } as SessionEvent;
+  const { w, live } = await boot([request!, start!, brief!, end!, handoff!, abandoned]);
+  const card = w.document.querySelector<HTMLDetailsElement>('details.compaction')!;
+  expect(card.className).toContain('tone-bad');
+  const reuse = card.querySelector<HTMLButtonElement>('.compaction-reuse')!;
+  expect(reuse.textContent).toBe('Open a new chat with this summary');
+  reuse.click();
+  await vi.waitFor(() => expect(live.controlCalls).toContainEqual(
+    expect.objectContaining({ action: `resume:${(handoff as Extract<SessionEvent, { kind: 'handoff' }>).handoffId}` })));
+});
+
+it('offers no summary reuse when the abandoned run never saved a summary', async () => {
+  const [request, start, brief, end] = compaction(2);
+  const abandoned = { seq: 9, time: T0 + 9000, source: 'app', kind: 'note', continuation: TOKEN,
+    message: text('Compact & Resume abandoned — the summary was not written') } as SessionEvent;
+  const { w } = await boot([request!, start!, brief!, end!, abandoned]);
+  expect(w.document.querySelector('details.compaction')).not.toBeNull();
+  expect(w.document.querySelector('.compaction-reuse')).toBeNull();
+});
+
+it('takes the summary reuse off an abandoned run once a later Compact & Resume started (#1215)', async () => {
+  const [request, start, brief, end, handoff] = compaction(2);
+  const abandoned = { seq: 9, time: T0 + 9000, source: 'app', kind: 'note', continuation: TOKEN,
+    message: text('Compact & Resume abandoned — cancelled') } as SessionEvent;
+  const later = { seq: 10, time: T0 + 10000, source: 'extension', kind: 'user_message', messageId: 'm-later-bootstrap',
+    message: text('[[CLF-RESUME:tok_fedcba9876543210]] Continue from this brief: keep the loop running.') } as SessionEvent;
+  const { w } = await boot([request!, start!, brief!, end!, handoff!, abandoned, later]);
+  expect(w.document.querySelectorAll('details.compaction')).toHaveLength(2);
+  expect(w.document.querySelector('.compaction-reuse')).toBeNull();
+});
+
+it('puts a reopened run\'s saved summary in its own row (#1215)', async () => {
+  const [request, start, brief, end, handoff] = compaction(2);
+  const abandoned = { seq: 9, time: T0 + 9000, source: 'app', kind: 'note', continuation: TOKEN,
+    message: text('Compact & Resume abandoned — cancelled') } as SessionEvent;
+  const again = { seq: 10, time: T0 + 10000, source: 'app', kind: 'handoff', handoffId: 'h-2', chars: 26_333,
+    reason: 'compact and resume', continuation: 'tok_fedcba9876543210' } as SessionEvent;
+  const bootstrap = { seq: 11, time: T0 + 11000, source: 'extension', kind: 'user_message', messageId: 'm-again',
+    message: text('[[CLF-RESUME:tok_fedcba9876543210]] Continue from this brief: keep the loop running.') } as SessionEvent;
+  const { w } = await boot([request!, start!, brief!, end!, handoff!, abandoned, again, bootstrap]);
+  const timeline = w.document.getElementById('timeline')!;
+  expect([...timeline.children].map((row) => row.className)).toEqual(['ev ev-compaction', 'ev ev-compaction']);
+  const rows = [...timeline.querySelectorAll('details.compaction')];
+  expect(rows[1]!.querySelector('summary .state')!.textContent).toContain('26k characters');
+});
+
+it('offers no summary reuse once the new chat opened', async () => {
+  const [request, start, brief, end, handoff, resume] = compaction(2);
+  const { w } = await boot([request!, start!, brief!, end!, handoff!, resume!]);
+  expect(w.document.querySelector('details.compaction')).not.toBeNull();
+  expect(w.document.querySelector('.compaction-reuse')).toBeNull();
+});
+
 it('retains the open compaction disclosure and brief request while the summary streams and completes', async () => {
   const [request, start, original, , handoff, resume] = compaction(2);
   const brief = { ...original, origin: original!.seq, state: 'streaming', final: false } as Extract<SessionEvent, { kind: 'assistant_message' }>;
@@ -2493,7 +2609,8 @@ it('keeps an unfolded tool row as the same open node while the chat keeps append
   expect(detached.some(node => node === group || node === before || (node as Element).contains?.(before))).toBe(false);
   expect(timeline.querySelector('details.tool-group')).toBe(group);
   expect(group.open).toBe(false);
-  expect(group.querySelector('summary')!.textContent).toBe('Read README.md');
+  expect(group.querySelector('.activity-title')!.textContent).toBe('Read README.md');
+  expect(group.querySelector('.activity-count')!.textContent).toBe('4');
   expect(group.querySelector('summary')!.title).toContain('4 actions');
 });
 
@@ -2534,7 +2651,7 @@ it('colors removed lines separately from added lines without changing other tool
   expect(rows[1]!.querySelector('.edit-card .metric-removed')?.textContent).toBe('−7');
 });
 
-it('keeps mixed tool and agent activity in one latest-action disclosure between authored messages', async () => {
+it('opens a round with the ChatGPT caption and keeps its mixed tool and agent activity in one latest-action disclosure', async () => {
   const { w, append } = await boot([
     { seq: 1, time: T0, source: 'extension', kind: 'progress', message: text('Checking the implementation') },
     toolCall(2, 'first'),
@@ -2544,7 +2661,10 @@ it('keeps mixed tool and agent activity in one latest-action disclosure between 
   const timeline = w.document.getElementById('timeline')!;
   const group = timeline.querySelector<HTMLDetailsElement>('.tool-group')!;
   expect(group.open).toBe(false);
-  expect(group.querySelector('.activity-title')!.textContent).toBe('Checking the implementation');
+  // The caption is what ChatGPT said before the step: it stands as the round's opening line.
+  expect(timeline.children[0]!.className).toContain('ev-progress');
+  expect(timeline.children[0]!.textContent).toContain('Checking the implementation');
+  expect(group.querySelector('.activity-title')!.textContent).toBe(group.querySelector('.ev-tool_call:last-of-type .tool > summary b')!.textContent);
   expect(group.querySelector('.agent-communication summary')!.textContent).toContain('Message from worker-2');
   expect(group.querySelector('.agent-avatar')).not.toBeNull();
   expect(group.querySelectorAll('.ev')).toHaveLength(3);
@@ -2570,9 +2690,39 @@ it('never titles a tool group with the app\'s own recovery note', async () => {
   const title = group.querySelector('.activity-title')!.textContent;
   expect(title).not.toContain('Reloaded chat');
   expect(title).toBe(group.querySelector('.ev-tool_call:last-of-type .tool > summary b')?.textContent ?? title);
-  expect(group.classList.contains('has-activity-phase')).toBe(false);
   // The note itself stays in the transcript, in front of the group.
   expect(timeline.children[0]!.textContent).toContain('Reloaded chat to recover an interrupted response.');
+});
+
+it('closes a stopped turn with a line saying it stopped, after any late work, and keeps the request line', async () => {
+  // 2026-10-09: "ChatGPT has not yet confirmed that generation stopped" was the last word on a
+  // turn the page had already ended as stopped. The request stays where it was made; the end of
+  // the turn says it stopped once nothing runs any more.
+  const request = 'Stop requested. The finish hold was released; ChatGPT has not yet confirmed that generation stopped.';
+  const stoppedLine = 'Stopped. ChatGPT no longer shows this turn running.';
+  const { w, append } = await boot([
+    { seq: 1, time: T0, source: 'extension', kind: 'turn_start', turnId: 'g-stop' },
+    { ...toolCall(2, 'before-stop'), turnId: 'g-stop' } as SessionEvent,
+    { seq: 3, time: T0 + 3000, source: 'app', kind: 'progress', turnId: 'g-stop', progressId: 'finish-release:g-stop', message: text(request) }
+  ]);
+  const timeline = w.document.getElementById('timeline')!;
+  const lines = () => [...timeline.querySelectorAll('.ev')].map(row => row.textContent ?? '');
+  const last = () => lines().at(-1)!;
+  expect(lines().some(line => line.includes(stoppedLine))).toBe(false);
+  await append([{ seq: 4, time: T0 + 3200, source: 'extension', kind: 'turn_end', turnId: 'g-stop', outcome: 'stopped' }]);
+  expect(last()).toContain(stoppedLine);
+  expect(lines().filter(line => line.includes(request))).toHaveLength(1);
+  // A call ChatGPT dispatched before it obeyed reopens the turn: nothing says it stopped yet.
+  await append([
+    { ...toolCall(5, 'late'), time: T0 + 4000, turnId: 'g-stop' } as SessionEvent,
+    { seq: 6, time: T0 + 4000, source: 'app', kind: 'turn_start', turnId: 'g-stop' }
+  ]);
+  expect(lines().some(line => line.includes(stoppedLine))).toBe(false);
+  // The page ends it again: the line closes the turn, after the late call.
+  await append([{ seq: 7, time: T0 + 9000, source: 'extension', kind: 'turn_end', turnId: 'g-stop', outcome: 'stopped' }]);
+  expect(lines().filter(line => line.includes(stoppedLine))).toHaveLength(1);
+  expect(last()).toContain(stoppedLine);
+  expect(lines().filter(line => line.includes(request))).toHaveLength(1);
 });
 
 it('folds five consecutive status polls while retaining each exact tool row', async () => {
@@ -2708,23 +2858,28 @@ it('shows injection only for an exact active turn, never merely recent chat acti
   expect((w.document.getElementById('sendMode') as HTMLSelectElement).value).toBe('auto');
 });
 
-it('shows Send directly before MCP, keeps After this turn selected, and changes the visible menu after MCP', async () => {
+// A text for the running turn goes through ChatGPT's composer (#1231), so a running turn offers
+// Send directly alone; Inject now stays for a Pro turn, which keeps tool injection.
+it('shows Send directly alone for a running turn, keeps After this turn selected, and offers Inject now on a Pro turn', async () => {
   const { w, append } = await boot([]);
   const api = (w as any).api;
   const original = api.getSessionControls;
-  let tools = false;
+  let pro = false;
   api.getSessionControls = async (id: string) => ({ ok: true, data: { ...(await original(id)).data,
-    activeTurnId: 'plain-turn', canInject: tools, canSendDirectly: !tools, queueAtFinish: false } });
+    activeTurnId: 'plain-turn', canInject: pro, canSendDirectly: !pro, queueAtFinish: false } });
   await append([]);
   const options = w.document.getElementById('sendOptions')!;
   expect(options.hidden).toBe(false);
   expect(options.querySelector('[data-delivery="auto"]')!.textContent).toBe('Send directly');
-  expect((options.querySelector('[data-delivery="tool"]') as HTMLElement).hidden).toBe(false);
+  expect((options.querySelector('[data-delivery="tool"]') as HTMLElement).hidden).toBe(true);
+  await append([toolCall(1, 'first-mcp-call')]);
+  expect(options.querySelector('[data-delivery="auto"]')!.textContent).toBe('Send directly');
   (options.querySelector('[data-delivery="after-turn"]') as HTMLButtonElement).click();
   await append([]);
   expect((w.document.getElementById('sendMode') as HTMLSelectElement).value).toBe('after-turn');
-  tools = true;
-  await append([toolCall(1, 'first-mcp-call')]);
+  pro = true;
+  await append([toolCall(2, 'second-mcp-call')]);
+  expect((options.querySelector('[data-delivery="tool"]') as HTMLElement).hidden).toBe(false);
   expect(options.querySelector('[data-delivery="auto"]')!.textContent).toBe('Inject now');
   expect((w.document.getElementById('sendMode') as HTMLSelectElement).value).toBe('after-turn');
 });
@@ -4560,7 +4715,7 @@ it('ends the running turn with a row saying what it is doing now', async () => {
   expect(shown()?.[0]).toBe('Thinking');
 });
 
-it('says what a new chat\'s first turn is writing before ChatGPT publishes it (#942)', async () => {
+it('shows a new chat\'s first sentences in the timeline and keeps the live row for what happens now (#942)', async () => {
   const asked = Date.now() - 12_000;
   const { w, append } = await boot([
     { seq: 1, time: asked - 100, source: 'extension', kind: 'turn_start', turnId: 'held-turn' },
@@ -4569,23 +4724,35 @@ it('says what a new chat\'s first turn is writing before ChatGPT publishes it (#
   const now = () => w.document.querySelector<HTMLElement>('#timeline .turn-now')!;
   const shown = () => now().hidden ? null : now().querySelector('.turn-now-text')!.textContent;
   const asks: string[][] = [];
-  (w as any).api.livePreview = (ids: string[]) => {
+  // ChatGPT shows the sentence long before it publishes a message for it; the turn's outline holds it.
+  (w as any).api.turnTraces = (_id: string, ids: string[]) => {
     asks.push(ids);
-    return Promise.resolve({ ok: true, data: 'First command printed one; now running the second.' });
+    return Promise.resolve({ ok: true, data: { 'held-turn': [{ kind: 'say', text: 'First command printed one; now running the second.', done: true },
+      ...(status ? [{ kind: 'now', text: status }] : [])] } });
   };
+  let status = '';
   await append([]); await append([]);
-  expect(asks.at(-1)).toEqual(['chat-b', 'chat-a']);
-  expect(shown()).toBe('First command printed one; now running the second.');
+  expect(asks.at(-1)).toEqual(['held-turn']);
+  const sentence = w.document.querySelector<HTMLElement>('#timeline .ev.is-interim')!;
+  expect(sentence.textContent).toContain('First command printed one; now running the second.');
+  // The sentence is the turn's own words, before the row that says what it does right now.
+  expect(sentence.compareDocumentPosition(now()) & w.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(shown()).toBe('Thinking');
+  // ChatGPT's own phrase for what the turn is doing takes Thinking's place, with Thinking's sign.
+  status = 'Comparando três estruturas de projeto';
+  await append([]); await append([]);
+  expect(shown()).toBe('Comparando três estruturas de projeto');
   expect(now().classList.contains('is-thinking')).toBe(true);
-  // A call of this app that runs right now is what the turn is doing.
+  // A call of this app running meanwhile keeps ChatGPT's words and lends them its icon.
+  (w as any).api.runningTools = () => Promise.resolve({ ok: true, data: [{ title: 'Running echo one', kind: 'run', since: Date.now() }] });
+  await append([]); await append([]);
+  expect(shown()).toBe('Comparando três estruturas de projeto');
+  expect(now().classList.contains('is-thinking')).toBe(false);
+  status = '';
   (w as any).api.runningTools = () => Promise.resolve({ ok: true, data: [{ title: 'Running echo two', kind: 'run', since: Date.now() }] });
   await append([]); await append([]);
   expect(shown()).toBe('Running echo two');
-  // Once the page clears it, the row is back to its ordinary state.
-  (w as any).api.runningTools = () => Promise.resolve({ ok: true, data: [] });
-  (w as any).api.livePreview = () => Promise.resolve({ ok: true, data: null });
-  await append([]); await append([]);
-  expect(shown()).toBe('Thinking');
+  expect(w.document.querySelectorAll('#timeline .ev.is-interim')).toHaveLength(1);
 });
 
 it('shows a just-started turn working right after your message, never in the header first', async () => {
@@ -4717,6 +4884,7 @@ it('opens round participants in the existing dock without moving the prime reade
   expect(w.document.getElementById('inlineAgents')).toBeNull();
   expect(w.document.querySelectorAll('#chatBody .agent-panel')).toHaveLength(0);
   const indicators = [...w.document.querySelectorAll<HTMLButtonElement>('#timeline .activity-workers')];
+  // One pill per round, whatever the count: the team icon and how many workers it involved.
   expect(indicators.map(button => button.textContent)).toEqual(['2', '1']);
   expect(indicators[0]!.getAttribute('aria-label')).toBe('2 sub-agents in this round');
   // One worker reads as one, not "1 sub-agents" (seen on the 2.1.27 canary).

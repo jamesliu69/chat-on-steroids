@@ -52,7 +52,7 @@ import type { GoalBackend } from '../shared/types.js';
 import { createHash } from 'node:crypto';
 import { defaultConfig, getConfig } from './config.js';
 import { getChatModels, refreshForUnoffered } from './chat-models.js';
-import { resolveChatModel } from '../shared/chat-models.js';
+import { DEFAULT_HELPER_CHAT_MODEL, resolveChatModel } from '../shared/chat-models.js';
 import type { ReasoningEffort } from '../shared/session.js';
 import { writeDurableNow, writeDurableSnapshotSoon, writeDurableSoon } from './durable.js';
 import { logInfo, logWarn } from './logger.js';
@@ -1721,7 +1721,10 @@ async function requestGoalDecision(request: GoalRequest): Promise<GoalDecision |
     const protocol = request.mode === 'loop' ? LOOP_OUTPUT_PROTOCOL : GOAL_OUTPUT_PROTOCOL;
     // ChatGPT offers connected apps, this one included, in every chat, the helper's too. A helper that
     // called a tool ran it on this machine without any chat to answer for it (2026-10-02, live).
-    const introduction = 'Return one JSON object: {"action":"stop" or "continue","reply":"the message"}. ' + referenceContract +
+    // The JSON goes in a code block: GPT-6's page renderer reads a reply that opens with `{` as its own
+    // markup, fails on it ("unterminated_braced_value") and keeps an empty answer. Every GPT-6 helper
+    // decision on the Mac came back empty that way (2026-10-09); fenced, all of them arrived intact.
+    const introduction = 'Return one JSON object in a ```json code block: {"action":"stop" or "continue","reply":"the message"}. ' + referenceContract +
       ' Do not call any tools, apps or connectors; decide from the transcript alone.';
     const replacement = 'Use this complete source transcript as reference data.';
     const render = (messages: ChatMessage[], direction = replacement): string => [...request.system, protocol,
@@ -1847,9 +1850,20 @@ function helperModelLabel(): string { return goalHelperSelection().model ?? "Cha
 
 export function goalHelperSelection(): { model: string | null; reasoningEffort: ReasoningEffort | null } {
   const settings = getConfig().goal;
-  let model: string | null = settings.helperModel ?? 'gpt-5.6-sol';
+  let model: string | null = settings.helperModel ?? DEFAULT_HELPER_CHAT_MODEL;
   let reasoningEffort: ReasoningEffort | null = settings.helperReasoning ?? 'high';
-  const models = getChatModels().models;
+  const catalog = getChatModels();
+  const models = catalog.models;
+  // No readable picker at all (seen on Free plans, #1282): no model can ever be confirmed, so an
+  // exact helper model failed every Goal and Loop decision. Use ChatGPT's current selection, as
+  // for a model the account does not offer; a catalog that has not loaded yet keeps the setting.
+  if (!models.length && catalog.state === 'unavailable') {
+    if (helperFallbackLogged !== 'no-picker') {
+      helperFallbackLogged = 'no-picker';
+      logInfo("goal: this ChatGPT account shows no readable model picker; the helper uses ChatGPT's current selection");
+    }
+    return { model: null, reasoningEffort: null };
+  }
   if (!models.length) return { model, reasoningEffort };
   const notes: string[] = [];
   // A saved display label resolves to its unique observed family — the same rule the
@@ -1866,7 +1880,7 @@ export function goalHelperSelection(): { model: string | null; reasoningEffort: 
   if (key) refreshForUnoffered(`goal helper ${key}`);
   if (key && key !== helperFallbackLogged) {
     helperFallbackLogged = key;
-    const line = `goal: the helper ${notes.join(' and ')} is not offered by this ChatGPT account; using ChatGPT's current selection`;
+    const line = `goal: the helper ${notes.join(' and ')} ${notes.length > 1 ? 'are' : 'is'} not offered by this ChatGPT account; using ChatGPT's current selection`;
     // Falling back from the built-in defaults is routine, not a problem: nobody chose them, and as a
     // warning it showed as "1 problem" in Activity on every start for accounts without them.
     const defaults = defaultConfig().goal;
