@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { readDurable, writeDurableNow } from './durable.js';
 import { wakeBrowserWork } from './browser-wake.js';
 import { logInfo, logWarn } from './logger.js';
+import { notePluginInstalled } from './connector-proof.js';
 import { surfaceDefinition } from './mcp/surfaces.js';
 import { APP_VERSION } from './version.js';
 import { PLUGIN_MAX_TOOLS } from './plugins/exposure.js';
@@ -37,6 +38,14 @@ let tunnelGraceMs = PLUGIN_REFRESH_TUNNEL_GRACE_MS;
 export const PLUGIN_REFRESH_FAILURE_LIMIT = 3;
 let chain: Promise<unknown> = Promise.resolve();
 function serial<T>(work: () => Promise<T>): Promise<T> { const result = chain.then(work, work); chain = result.catch(() => undefined); return result; }
+/** The schema ChatGPT confirmed per surface, as last read or written; state pushes read it without I/O. */
+let confirmed: Partial<Record<PluginSurface, string>> = {};
+let confirmedLoaded = false;
+function remember(current: Row[]): void {
+  confirmed = Object.fromEntries(current.flatMap(row => row.completedSchemaId ? [[row.surface, row.completedSchemaId]] : []));
+  confirmedLoaded = true;
+}
+async function save(current: Row[]): Promise<void> { await writeDurableNow('plugin-refresh', current); remember(current); }
 async function rows(): Promise<Row[]> {
   const result = z.array(rowSchema).max(3).parse(await readDurable('plugin-refresh') ?? []);
   if (new Set(result.map(row => row.surface)).size !== result.length) throw new Error('Duplicate plugin surface mapping');
@@ -53,7 +62,8 @@ async function rows(): Promise<Row[]> {
     row.id = randomUUID(); delete row.parked; delete row.parkedBy; delete row.failures; delete row.error; repaired = true;
     logInfo(`plugin refresh unparked surface=${row.surface} for app ${APP_VERSION}`);
   }
-  if (repaired) await writeDurableNow('plugin-refresh', result);
+  if (repaired) await save(result);
+  remember(result);
   return result;
 }
 function canonical(value: unknown): string {
@@ -133,6 +143,11 @@ export function publishPluginSurface(surface: PluginSurface, connectorName: stri
   }
 }
 export function unpublishPluginSurface(surface: PluginSurface): void { publications.delete(surface); }
+/** The connectors whose plugin ChatGPT's own plugin page showed this app: they exist in ChatGPT. */
+export async function enrolledPluginSurfaces(): Promise<PluginSurface[]> {
+  try { return (await rows()).filter(row => row.appId !== null).map(row => row.surface); }
+  catch { return []; }
+}
 export function pluginRefreshPublications(): PluginPublication[] { return structuredClone([...publications.values()]); }
 /** One fresh browser attempt after an explicit Restart, only before any Refresh claim. */
 export function rearmPluginRefresh(surface: PluginSurface): Promise<boolean> {
@@ -146,10 +161,18 @@ export function rearmPluginRefresh(surface: PluginSurface): Promise<boolean> {
     delete row.failures;
     delete row.parked;
     delete row.parkedBy;
-    await writeDurableNow('plugin-refresh', current);
+    await save(current);
     wakeBrowserWork();
     return true;
   });
+}
+/**
+ * Per surface, the declaration ChatGPT confirmed after a refresh click or found already current.
+ * Synchronous for state pushes; the first call loads the records once in the background.
+ */
+export function confirmedPluginSchemas(): Partial<Record<PluginSurface, string>> {
+  if (!confirmedLoaded) { confirmedLoaded = true; void serial(rows).catch(() => { confirmedLoaded = false; }); }
+  return { ...confirmed };
 }
 /** App IDs are stable connector identities. The browser must prove current installation. */
 export function pendingPluginRefreshes(): Promise<PluginRefreshRequest[]> {
@@ -169,7 +192,7 @@ export function pendingPluginRefreshes(): Promise<PluginRefreshRequest[]> {
       changed = true;
     }
     if (changed) {
-      await writeDurableNow('plugin-refresh', current);
+      await save(current);
       logInfo(`plugin refresh pending observed ${current.filter(row => !row.manual && row.completedSchemaId !== row.schemaId).map(row => `surface=${row.surface} schema=${row.schemaId.slice(0, 12)} dueInMs=${Math.max(0, (settling.get(row.surface)?.readyAt ?? 0) - Date.now())}`).join(' ')}`);
     }
     return current.flatMap(row => {
@@ -213,10 +236,11 @@ export function claimPluginRefresh(input: Identity & Enrollment & { alreadyCurre
     if (input.alreadyCurrent === true ? !isCurrent : isCurrent) return false;
     row.appId = input.appId; row.attempted = true;
     delete row.error;
+    notePluginInstalled(row.surface);
     // Enrollment/migration may find the installed declaration already current. Record
     // that observation without clicking Refresh or manufacturing a new plugin version.
     if (input.alreadyCurrent) row.completedSchemaId = row.schemaId;
-    await writeDurableNow('plugin-refresh', current); return true;
+    await save(current); return true;
   });
 }
 /**
@@ -236,8 +260,9 @@ export function requireManualPluginRefresh(input: Identity & Enrollment & { erro
     if (current.some(other => other !== row && other.appId === input.appId) || matches(input.tools, publication.tools, row.surface)) return false;
     row.appId = input.appId;
     row.manual = true;
+    notePluginInstalled(row.surface);
     row.error = input.error.slice(0, 200);
-    await writeDurableNow('plugin-refresh', current);
+    await save(current);
     logWarn(`plugin refresh requires manual action surface=${row.surface}: ${row.error}`);
     return true;
   });
@@ -248,7 +273,7 @@ export function completePluginRefresh(input: Identity & { tools: unknown; versio
     if (!row || row.manual || !row.attempted || row.appId !== input.appId || !matches(input.tools, publications.get(row.surface)!.tools, row.surface)) return false;
     row.completedSchemaId = row.schemaId; delete row.error;
     if (input.versionId) row.versionId = input.versionId.slice(0, 200);
-    await writeDurableNow('plugin-refresh', current); return true;
+    await save(current); return true;
   });
 }
 export function failPluginRefresh(input: { id: string; error: string }): Promise<boolean> {
@@ -264,9 +289,9 @@ export function failPluginRefresh(input: { id: string; error: string }): Promise
       row.parked = true; row.parkedBy = APP_VERSION;
       logWarn(`plugin refresh parked surface=${row.surface} after ${row.failures} failed attempts: ${row.error}`);
     }
-    await writeDurableNow('plugin-refresh', current); return true;
+    await save(current); return true;
   });
 }
 /** Tests that are not about tunnel timing publish surfaces as if their tunnel were long live. */
 export function setPluginRefreshTunnelGraceForTests(ms: number): void { tunnelGraceMs = ms; }
-export function resetPluginRefreshForTests(): void { for (const row of settling.values()) if (row.timer) clearTimeout(row.timer); settling.clear(); publications.clear(); chain = Promise.resolve(); }
+export function resetPluginRefreshForTests(): void { confirmed = {}; confirmedLoaded = false; for (const row of settling.values()) if (row.timer) clearTimeout(row.timer); settling.clear(); publications.clear(); chain = Promise.resolve(); }

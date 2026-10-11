@@ -17,6 +17,7 @@
  * protected-resource metadata request properly and never emits a non-JSON body.
  */
 
+import { noteConnectorUse } from '../connector-proof.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createInboundTiming, formatInboundTiming, requestIdFromHeader, withInboundRequestId } from './inbound.js';
 import http from 'node:http';
@@ -26,7 +27,12 @@ import { localhostHostValidation, localhostOriginValidation, toNodeHandler } fro
 import { getConfig } from '../config.js';
 import { logError, logInfo, logWarn } from '../logger.js';
 import { buildServer, resetToolClock, type ToolContext } from './tools.js';
-import { SURFACE_IDS, scopedServerName, surfaceDefinition, type SurfaceId } from './surfaces.js';
+import {
+  SURFACE_IDS,
+  configuredConnectorName,
+  scopedServerName,
+  type SurfaceId
+} from './surfaces.js';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -399,7 +405,7 @@ export async function startMcpServer(getContext: () => ToolContext, options: { s
     if (prmRoute) {
       if (!checkHost(req, res)) return;
       if (!checkOrigin(req, res)) return;
-      const body = protectedResourceMetadata(prmRoute.url, surfaceDefinition(prmRoute.id).connectorName);
+      const body = protectedResourceMetadata(prmRoute.url, configuredConnectorName(prmRoute.id));
       res.writeHead(200, {
         'content-type': 'application/json',
         'cache-control': 'no-store',
@@ -422,6 +428,7 @@ export async function startMcpServer(getContext: () => ToolContext, options: { s
     if (!selfTest && !tunnelProbe) {
       requestSeenAt = Date.now();
       surfaceRequestAt.set(route.id, requestSeenAt);
+      noteConnectorUse(route.id, 'request', requestSeenAt);
     }
 
     const declaredHeader = req.headers['content-length'];

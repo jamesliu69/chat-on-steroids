@@ -1076,6 +1076,9 @@
   "content_goal_error_invalid_provider": {
     "message": "El endpoint de continuación personalizado no es válido. Revisa su URL en Ajustes; usa HTTPS o un endpoint HTTP local."
   },
+  "content_history_rate_limited": {
+    "message": "ChatGPT ha limitado temporalmente el acceso al historial de este chat. Chat On Steroids pausa la recuperación automática hasta que termine la espera."
+  },
   "content_goal_error_rate_limited": {
     "message": "El proveedor de continuación está limitando la frecuencia de las solicitudes. Espera al reintento indicado o elige otro modelo de continuación."
   },
@@ -1147,6 +1150,21 @@
   },
   "content_goal_error_goal_objective_not_durable": {
     "message": "La aplicación no pudo guardar la tarea. Comprueba el espacio libre en disco e intenta guardarla de nuevo."
+  },
+  "popup_sign_in_transfer": {
+    "message": "Llevar sesión al CoS browser"
+  },
+  "popup_sign_in_permission": {
+    "message": "Acceso a cookies denegado. Haz clic de nuevo."
+  },
+  "popup_sign_in_imported": {
+    "message": "Sesión transferida"
+  },
+  "popup_sign_in_imported_detail": {
+    "message": "Has iniciado sesión en CoS browser."
+  },
+  "popup_sign_in_failed": {
+    "message": "Falló. Vuelve a iniciar sesión desde CoS."
   },
   "popup_app_not_running_help": {
     "message": "Asegúrate de que Chat On Steroids esté abierto en este ordenador. La extensión se conecta sola."

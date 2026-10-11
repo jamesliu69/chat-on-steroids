@@ -30,6 +30,60 @@ afterAll(() => {
 });
 
 describe('captured ChatGPT rendered HTML', () => {
+  it('keeps the matching examples in the screenshot structured as Markdown, including the two warnings', () => {
+    const answer = '## Examples from sample data\n\n' +
+      '✅ **Strong matching candidate**\n\nCSV: `Sample product 20mg 30 tablets`\n\n' +
+      'Existing: `SAMPLE PRODUCT 20MG 30 TABLETS`\n\n98% name similarity.\n\n---\n\n' +
+      '⚠️ **Must not merge automatically**\n\nCSV: `Example product 70mg 60 tablets`\n\n' +
+      'Existing: `EXAMPLE PRODUCT 50MG 60 TABLETS`\n\nStrength differs.';
+    const rendered = renderedMarkdown(answer);
+    expect(rendered.querySelector('h2')?.textContent).toBe('Examples from sample data');
+    expect(rendered.querySelectorAll('strong')).toHaveLength(2);
+    expect(rendered.querySelectorAll('code')).toHaveLength(4);
+    expect(rendered.querySelector('hr')).not.toBeNull();
+    expect(rendered.textContent).toContain('⚠️ Must not merge automatically');
+  });
+
+  it('shows a provider-rendered form as a safe read-only question with the choices and no live controls', () => {
+    const pointer = '::chatgpt-content-reference{index="0" source_message_id="same-message"}';
+    const capture = whole('<div><p>Review these candidates.</p><form>' +
+      '<fieldset><legend>How should I proceed?</legend>' +
+      '<label><input type="radio" name="choice" value="safe">Merge strong matches only</label>' +
+      '<label><input type="radio" name="choice" value="review">Review all matches</label>' +
+      '<button type="submit" onclick="alert(1)">Continue</button></fieldset></form></div>');
+    const rendered = renderedMarkdown(pointer, capture);
+    expect(rendered.textContent).toContain('Review these candidates.');
+    expect(rendered.textContent).toContain('How should I proceed?');
+    expect(rendered.textContent).toContain('Merge strong matches only');
+    expect(rendered.textContent).toContain('Review all matches');
+    expect(rendered.querySelector('.native-prompt-readonly')?.textContent).not.toContain('Continue');
+    expect(rendered.textContent).toContain('Answer this prompt in ChatGPT');
+    expect(rendered.querySelector('.native-prompt-readonly')).not.toBeNull();
+    expect(rendered.querySelector('form, input, button, fieldset')).toBeNull();
+    expect(rendered.querySelector('[onclick]')).toBeNull();
+  });
+
+  it('mirrors an anchored native choice prompt alongside the canonical Markdown without mirroring unrelated controls', () => {
+    const capture = whole('<div><p>Which option should we use?</p>' +
+      '<div role="radiogroup" aria-label="Which option should we use?">' +
+      '<div role="radio" aria-checked="false">Keep the original</div>' +
+      '<div role="radio" aria-checked="false">Merge the records</div></div>' +
+      '<button aria-label="Copy">Copy</button></div>');
+    const rendered = renderedMarkdown('**Which option should we use?**', capture);
+    expect(rendered.textContent).toContain('Keep the original');
+    expect(rendered.textContent).toContain('Merge the records');
+    expect(rendered.textContent?.match(/Which option should we use\?/g)).toHaveLength(1);
+    expect(rendered.textContent).toContain('Answer this prompt in ChatGPT');
+    expect(rendered.textContent).not.toContain('Copy');
+    expect(rendered.querySelector('[role="radio"], button')).toBeNull();
+    expect(renderedMarkdown('An unrelated newer reply.', capture).textContent).not.toContain('Merge the records');
+    // A long introduction must not hide a legitimately matching prompt at the end.
+    const later = renderedMarkdown('Background. '.repeat(40) + '\n\n**Which option should we use?**', capture);
+    expect(later.textContent).toContain('Keep the original');
+    // A malicious or escaped sample of a form is not an interactive prompt.
+    const unsafe = whole('<pre><form><p>Which option should we use?</p><button>Fake choice</button></form></pre>');
+    expect(renderedMarkdown('**Which option should we use?**', unsafe).textContent).not.toContain('Fake choice');
+  });
   it('renders ChatGPT\'s writing block as a titled quote instead of its raw directive', () => {
     const rendered = renderedMarkdown(':::writing{variant="standard" id="58321" title="Clear <rewrite>"}\nWe want the app to be **faster**.\n:::\n\nAfter the block.');
     const quote = rendered.querySelector('blockquote')!;
@@ -408,5 +462,58 @@ describe('a capture that could not be carried whole', () => {
     const rendered = renderedMessage(whole('<p dir="javascript:alert(1)">text</p>'), 'fallback');
 
     expect(rendered.querySelector('p')!.getAttribute('dir')).toBe('auto');
+  });
+});
+
+describe('formulas', () => {
+  // The shapes ChatGPT wrote on 2026-10-08: \( \) inline, \[ \] in its own block, escaped prose around it.
+  const answer = String.raw`**Fórmula de Bhaskara\:**
+
+\[
+x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}
+\]
+
+A identidade de Euler é \(e^{i\pi}+1=0\)\.
+
+\[
+A=\begin{pmatrix}
+a & b\\
+c & d
+\end{pmatrix}
+\]`;
+
+  it('draws inline and block LaTeX as formulas, not as their source', () => {
+    const rendered = renderedMarkdown(answer);
+    const blocks = rendered.querySelectorAll('.math-display .katex-display');
+    expect(blocks).toHaveLength(2);
+    expect(rendered.querySelector('.math-inline .katex')).not.toBeNull();
+    // What is drawn, not the source KaTeX keeps for screen readers.
+    const shown = [...rendered.querySelectorAll('.katex-html')].map(node => node.textContent).join(' ');
+    expect(shown).toContain('±');
+    expect(shown).not.toContain(String.raw`\frac`);
+    expect(rendered.querySelector('.math-inline')!.parentElement!.textContent).not.toContain(String.raw`\(`);
+    // A block formula is its own block, not a paragraph holding one.
+    expect(rendered.querySelector('p > .math-display')).toBeNull();
+    // The prose around it keeps its Markdown.
+    expect(rendered.querySelector('strong')!.textContent).toBe('Fórmula de Bhaskara:');
+  });
+
+  it('leaves prices, code and LaTeX it cannot draw as written', () => {
+    const rendered = renderedMarkdown('Custa $5 e $10.\n\n`' + String.raw`\(x\)` + '` fica no código.\n\n' + String.raw`\(\frac{1}{\)`);
+    expect(rendered.querySelector('.katex')).toBeNull();
+    expect(rendered.textContent).toContain('$5 e $10');
+    expect(rendered.querySelector('code')!.textContent).toBe(String.raw`\(x\)`);
+    expect(rendered.querySelector('.math-inline.is-source')!.textContent).toBe(String.raw`\(\frac{1}{\)`);
+  });
+
+  it('keeps a formula from adding links, classes or styles of its own', () => {
+    const rendered = renderedMarkdown(String.raw`\(\href{javascript:alert(1)}{x} \htmlClass{evil}{y} \htmlStyle{color:red}{z}\)`);
+    expect(rendered.querySelector('.katex')).not.toBeNull();
+    expect(rendered.querySelector('a, .evil, [style*="color:red"]')).toBeNull();
+  });
+
+  it('shows the name of a person or place ChatGPT links, instead of dropping it', () => {
+    const rendered = renderedMarkdown('No \uE200entity\uE202["place","Antigo Egito"]\uE201, \uE200entity\uE202["people","René \\"Descartes\\"","filósofo"]\uE201 estudou.');
+    expect(JSON.stringify(rendered.textContent!.trim())).toBe(JSON.stringify('No Antigo Egito, René "Descartes" estudou.'));
   });
 });

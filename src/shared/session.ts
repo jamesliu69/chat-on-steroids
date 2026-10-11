@@ -5,6 +5,7 @@
  * No runtime logic here beyond a couple of pure helpers the UI and the recorder must
  * agree on exactly.
  */
+import { workerOwnTask } from './worker-brief.js';
 
 /** Where an event came from. The extension is untrusted UI observation; mcp is ours. */
 export type EventSource = 'extension' | 'mcp' | 'app';
@@ -514,6 +515,8 @@ export type SessionEvent =
       chars: number;
       /** What triggered it: manual compaction, resume, or an automatic suggestion. */
       reason: string;
+      /** The Compact & Resume run that saved it, so its timeline row can claim it (#1215). */
+      continuation?: string;
     });
 
 export type SessionEventKind = SessionEvent['kind'];
@@ -582,6 +585,15 @@ export interface SessionOrigin {
   task: string;
 }
 
+/** Historical presentation projected from an accepted broker snapshot; grants no worker authority. */
+export interface WorkerAssignmentSummary {
+  conversationId: string;
+  agentId: string;
+  label: string;
+  task: string;
+  recordedAt: number;
+}
+
 const RESUMED_PREFIX = 'Resumed · ';
 
 function clip(text: string, max: number): string {
@@ -604,7 +616,8 @@ export function originTitle(origin: SessionOrigin, source: string | null): strin
   if (origin.kind === 'helper') return 'Task helper';
   if (origin.kind === 'worker') {
     const who = origin.agentId ?? 'worker';
-    const task = clip(origin.task, 60);
+    // Its own task: the run's shared context opens every worker's brief alike.
+    const task = clip(workerOwnTask(origin.task), 60);
     return task ? `${who} · ${task}` : who;
   }
   // A resumed chat is itself resumable, and often is. Stacking the prefix each time
@@ -622,6 +635,11 @@ export interface SessionSummary {
   nativeQuestion?: { messageId: string; origin: number } | null;
   /** Durable naming authority; absent only on legacy recordings. */
   titleSource?: 'fallback' | 'provider' | 'manual';
+  /**
+   * While the user's own name is shown (`titleSource: 'manual'`), the title the app would show
+   * otherwise, kept current, so clearing the name brings back ChatGPT's present title (#1107).
+   */
+  autoTitle?: { title: string; source: 'fallback' | 'provider' };
   /** Latest proven native picker selection; scoped to its frontend, never worker creation intent. */
   selectedModel?: { conversationId: string; model: string; observedAt: number; reasoningEffort?: ReasoningEffort };
   /** Explicit local project; durable across frontend conversation replacement. */
@@ -665,6 +683,7 @@ export interface SessionSummary {
    * useful worker activity without loading each worker transcript.
    */
   lastToolActivity?: Pick<ActivitySummary, 'kind' | 'title'> | null;
+  workerAssignment?: WorkerAssignmentSummary;
   /** Observation time of the newest stable final assistant message. */
   lastAssistantFinalAt?: number | null;
   /**
@@ -879,7 +898,7 @@ export interface AgentInfo {
   primeConversationId?: string;
   id: string;
   role: AgentRole;
-  /** Spawn label; reused assignments fall back to the stable worker id. */
+  /** Current job name; preserved on reuse unless the prime explicitly renames it. */
   label: string;
   /** Spawn brief, or a bounded inbox preview for the current reused assignment. */
   task: string;
@@ -1061,6 +1080,8 @@ export interface SwarmState {
    * Caller/model status remains scoped separately and never uses this to reveal another owner.
    */
   retainedHistory?: boolean;
+  /** Local UI projection of dormant workers; never grants caller/model access. */
+  retainedWorkers?: AgentInfo[];
   agents: AgentInfo[];
 }
 
@@ -1206,4 +1227,32 @@ export function tokenPressure(estimated: number, advisory: number, limit: number
     limit,
     level: estimated >= limit ? 'huge' : estimated >= advisory ? 'large' : 'ok'
   };
+}
+
+/** One chat found by `sessions:search` (#1107). */
+export interface SessionSearchResult {
+  id: string;
+  title: string;
+  projectId: string | null;
+  /** Where the query's words are in `title`, as ranges into it; absent when none are. */
+  titleMatches?: Array<[number, number]>;
+  /** A line of the chat around the first match, with match ranges into `text`; absent for a title match. */
+  snippet?: { text: string; matches: Array<[number, number]> };
+}
+/** The message a text match was found in, to open the chat there (`sessions:locate-match`). */
+export interface SessionSearchLocation {
+  /** The message's event, as the timeline holds it. */
+  seq: number;
+  kind: 'user_message' | 'assistant_message';
+  messageId: string | null;
+  /** Where the message first appeared, in the timeline's paging order (origin, else seq). */
+  position: number;
+}
+export interface SessionSearchReply {
+  results: SessionSearchResult[];
+  /** Chats whose words are indexed so far, out of all chats; equal once indexing is done. */
+  indexed: number;
+  total: number;
+  /** More chats match than `results` holds. */
+  limited?: true;
 }

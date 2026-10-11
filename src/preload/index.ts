@@ -12,7 +12,8 @@ import type { ProjectDirectoryListing, ProjectFileMutationResult, ProjectFilePre
 import type { ProjectGitChanged, ProjectGitDiff, ProjectGitSnapshot } from '../shared/project-git.js';
 import type { PetLibraryState, PetOverlayControlState, PetRuntimeAsset } from '../shared/pets.js';
 import type { SkillSummary, ManagedSkill, GitHubSkillUpdateCheck, SkillLibrary, SkillsDraftScope } from '../shared/skills.js';
-import type { RunningToolActivity, SessionChange, ToolEditReview } from '../shared/session.js';
+import type { RunningToolActivity, SessionChange, SessionSearchReply, SessionSearchLocation, ToolEditReview } from '../shared/session.js';
+import type { TurnTrace } from '../shared/turn-trace.js';
 import type { RunningExecProcess } from '../shared/background-exec.js';
 import type { PluginSnapshot, PluginInstallRequest, PluginConfigPatch } from '../shared/plugins.js';
 /**
@@ -129,6 +130,7 @@ const api = {
   setMainTexts: (texts: Record<string, string>) => call<void>('ui:mainTexts', texts),
   /** The interface language, kept by the app for the browser extension. */
   setUiLanguage: (language: string) => call<void>('ui:language', language),
+  markWhatsNewSeen: () => call<void>('ui:whatsNewSeen'),
   petsImport: () => call<PetLibraryState | null>('pets:import'),
   petsSetEnabled: (id: string, enabled: boolean) => call<PetLibraryState>('pets:enabled', { id, enabled }),
   petsSetFavorite: (id: string, favorite: boolean) => call<PetLibraryState>('pets:favorite', { id, favorite }),
@@ -224,12 +226,19 @@ const api = {
   writeClipboard: (text: string) => call<boolean>('clipboard:write', { text }),
   exportMarkdown: (request: { id: string; scope: 'answer' | 'session'; turnId?: string; target: 'clipboard' | 'file' }) =>
     call<{ done: 'copied' } | { done: 'saved'; name: string } | { done: 'cancelled' }>('sessions:exportMarkdown', request),
-  openLink: (url: string) => call<boolean>('link:open', { url }),
+  // `external`: the system's own browser even for a page the CoS browser would open.
+  openLink: (url: string, options: { external?: boolean } = {}) => call<boolean>('link:open', { url, ...(options.external ? { external: true } : {}) }),
+  showCosBrowser: () => call<boolean>('cosBrowser:show'),
+  openChatGpt: () => call<boolean>('chatgpt:open'),
+  signOutChatGpt: () => call<boolean>('chatgpt:signOut'),
+  openSetupBrowser: (browser: 'chrome' | 'edge' | 'brave', page: 'extensions' | 'chatgpt') => call<boolean>('browser:setupOpen', { browser, page }),
   // Applies the update this app has already downloaded and verified: the app quits, the
   // installer runs, and the app comes back as the new version. It takes no argument because
   // there is nothing here to choose - the main process knows what is staged.
   installUpdate: () => call<boolean>('update:install'),
   downloadUpdate: () => call<boolean>('update:download'),
+  /** Settings opened: re-check for an update if the last answer is older than ten minutes. */
+  refreshUpdate: () => call<boolean>('update:refresh'),
 
   // Sessions, compaction and the browser bridge. Everything here is read-only or a
   // named action; there is still no channel that takes a path or a command.
@@ -293,6 +302,7 @@ const api = {
   setSessionAutomation: (id: string, automation: SessionControlsView['automation'], afterTurn?: boolean) => call<SessionControlsView>('sessions:automation', { id, automation, afterTurn }),
   setSessionObjective: (id: string, text: string, mode: 'goal' | 'loop') => call<SessionControlsView>('sessions:objective', { id, text, mode }),
   compactSession: (id: string) => call<SessionControlsView>('sessions:compact', { id }),
+  resumeFromHandoff: (id: string, handoffId: string) => call<SessionControlsView>('sessions:resumeFromHandoff', { id, handoffId }),
   cancelSessionCompaction: (id: string) => call<SessionControlsView>('sessions:cancelCompaction', { id }),
   draftTaskPlan: (text: string, backend: 'api' | 'chatgpt', requestId?: string) => call<string[]>('sessions:plan', { text, backend, requestId }),
   sendInput: (input: InputArgs) => call<InputEntry>('sessions:send', input),
@@ -300,6 +310,7 @@ const api = {
   listInputs: () => call<InputEntry[]>('sessions:outbox'),
   listPausedHelpers: () => call<Array<{ id: string; sourceSessionId: string }>>('sessions:pausedHelpers'),
   runningTools: (conversationIds: string[]) => call<RunningToolActivity[]>('sessions:runningTools', { conversationIds }),
+  turnTraces: (id: string, turnIds: string[]) => call<Record<string, TurnTrace>>('sessions:traces', { id, turnIds }),
   runningProcesses: (sessionId: string) => call<RunningExecProcess[]>('sessions:runningProcesses', { sessionId }),
   stopProcess: (sessionId: string, processId: number, incarnation: number) =>
     call<boolean>('sessions:stopProcess', { sessionId, processId, incarnation }),
@@ -308,7 +319,6 @@ const api = {
     ipcRenderer.on('sessions:backgroundExecChanged', wrapped);
     return () => ipcRenderer.removeListener('sessions:backgroundExecChanged', wrapped);
   },
-  livePreview: (conversationIds: string[]) => call<string | null>('sessions:livePreview', { conversationIds }),
   retryHelper: (id: string, sourceSessionId: string) => call<boolean>('sessions:retryHelper', { id, sourceSessionId }),
   editQueuedInput: (id: string, text: string, afterTurn?: boolean) => call<boolean>('sessions:editInput', { id, text, afterTurn }),
   reorderQueuedInputs: (sessionId: string, ids: string[]) => call<boolean>('sessions:reorderInputs', { sessionId, ids }),
@@ -317,6 +327,7 @@ const api = {
   setZoom: (factor: number) => call<number>('window:zoom', { factor }),
   getZoom: () => call<number>('window:getZoom'),
   openSessionChat: (id: string) => call<boolean>('sessions:openChat', { id }),
+  followSessionTab: (id: string) => call<boolean>('sessions:followTab', { id }),
   // Stops a chat this app cannot stop in the page: every tool call it has already been proved
   // to own is refused until it is released. Returns the whole blocked set, so one press
   // repaints without a second read.
@@ -324,6 +335,11 @@ const api = {
   setSessionTrusted: (id: string, expectedConversationId: string, trusted: boolean) =>
     call<string[]>('sessions:trust', { id, expectedConversationId, trusted }),
   deleteSession: (id: string) => call<boolean>('sessions:delete', { id }),
+  /** Chats matching every word of `query`, by title first, then by what was said in them. */
+  searchSessions: (query: string) => call<SessionSearchReply>('sessions:search', { query }),
+  locateSearchMatch: (id: string, query: string) => call<SessionSearchLocation | null>('sessions:locate-match', { id, query }),
+  /** The chat's own name in the app; null clears it and ChatGPT's title shows again. */
+  renameSession: (id: string, title: string | null) => call<boolean>('sessions:rename', { id, title }),
   getHandoff: (id: string, handoffId?: string) => call<Handoff | null>('handoff:get', { id, handoffId }),
 
   unpairExtension: () => call<AppState>('bridge:unpair'),

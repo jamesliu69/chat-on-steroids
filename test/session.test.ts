@@ -33,6 +33,7 @@ import {
   appendEvent,
   autoCompactionReady,
   observeSessionModel,
+  recordWorkerAssignment,
   createSession,
   deleteSession,
   endSession,
@@ -55,6 +56,7 @@ import {
   readHandoff,
   rebindSession,
   renameSession,
+  clearSessionName,
   reopenSession,
   resetSessionStoreForTests,
   rewriteUnattributedToolCalls,
@@ -108,6 +110,38 @@ const evidence = (patch: Partial<ReturnType<typeof emptyEvidence>> = {}) => ({ .
 // ------------------------------------------------------------------- store
 
 describe('session store', () => {
+  it('reports the same unreadable recent event only once until the journal recovers or worsens (#1269)', async () => {
+    const session = await createSession({ title: 'damaged recent journal', conversationId: 'recent-warning-test' });
+    await appendEvent(session.id, { time: 100, source: 'extension', kind: 'turn_start', turnId: 'known-good' });
+    await flushSessions();
+    const file = path.join(sessionsRoot(), session.id, 'events.jsonl');
+    const good = await fs.readFile(file, 'utf8');
+    const warnings = () => getLog().filter(entry => entry.message.includes(`session ${session.id}: skipped`) &&
+      entry.message.includes('unreadable recent event line(s)'));
+
+    await fs.appendFile(file, '{unreadable one}\n');
+    expect(await readRecentEvents(session.id, 10)).toHaveLength(1);
+    expect(await readRecentEvents(session.id, 10)).toHaveLength(1);
+    expect(warnings()).toHaveLength(1);
+
+    // A second damaged line is new information, not a reason to suppress all warnings.
+    await fs.appendFile(file, '{unreadable two}\n');
+    expect(await readRecentEvents(session.id, 10)).toHaveLength(1);
+    expect(warnings()).toHaveLength(2);
+
+    // Once the journal is readable, a later new corruption must be reported again.
+    await fs.writeFile(file, good);
+    expect(await readRecentEvents(session.id, 10)).toHaveLength(1);
+    await fs.appendFile(file, '{unreadable again}\n');
+    expect(await readRecentEvents(session.id, 10)).toHaveLength(1);
+    expect(warnings()).toHaveLength(3);
+    // Ordinary new activity must not turn one old malformed line into new warnings.
+    await fs.appendFile(file, `${JSON.stringify({ seq: 2, time: 101, source: 'extension',
+      kind: 'turn_end', turnId: 'known-good', outcome: 'completed' })}\n`);
+    expect(await readRecentEvents(session.id, 10)).toHaveLength(2);
+    expect(warnings()).toHaveLength(3);
+  });
+
   it('keeps an exact tool edit review after later edits, but never invents one for failed or oversized calls', async () => {
     const conversationId = 'conv-exact-edit-review';
     const sessionId = await sessionForConversation(conversationId);
@@ -3309,6 +3343,57 @@ describe('naming the chats this app opened', () => {
     expect((await getSession(opened.sessionId!))?.title).toBe('My own name');
   });
 
+  it('clears a name back to ChatGPT\'s newest title, also after a restart (#1107)', async () => {
+    const conversationId = 'named-then-cleared';
+    const opened = await recordChatObservations(conversationId, [
+      { kind: 'conversation_title', time: Date.now(), text: 'First provider title' }
+    ]);
+    await renameSession(opened.sessionId!, 'My name');
+    await recordChatObservations(conversationId, [{ kind: 'conversation_title', time: Date.now(), text: 'Newer provider title' }]);
+    let summary = await getSession(opened.sessionId!);
+    expect(summary).toMatchObject({ title: 'My name', titleSource: 'manual', autoTitle: { title: 'Newer provider title', source: 'provider' } });
+    await flushSessions(); resetRecorderForTests(); resetSessionStoreForTests();
+    expect(await getSession(opened.sessionId!)).toMatchObject({ title: 'My name', autoTitle: { title: 'Newer provider title' } });
+    await clearSessionName(opened.sessionId!);
+    summary = await getSession(opened.sessionId!);
+    expect(summary).toMatchObject({ title: 'Newer provider title', titleSource: 'provider' });
+    expect(summary?.autoTitle).toBeUndefined();
+    // ChatGPT names it again from here on.
+    await recordChatObservations(conversationId, [{ kind: 'conversation_title', time: Date.now(), text: 'Latest provider title' }]);
+    expect((await getSession(opened.sessionId!))?.title).toBe('Latest provider title');
+  });
+
+  it('clears a name to the title the chat had by its own rules: request, first message or worker task (#1107)', async () => {
+    // A chat this app opened: named by its request, and ChatGPT's instructions title never wins.
+    const desktop = 'named-desktop';
+    await noteChatOrigin(desktop, { kind: 'desktop', fromSessionId: null, agentId: null, task: '' });
+    const opened = await recordChatObservations(desktop, [{ kind: 'conversation_title', time: Date.now(), text: 'Coding Agent Instructions' }]);
+    await upsertMessageEvent(opened.sessionId!, { kind: 'user_message', source: 'app', time: Date.now(),
+      messageId: 'named-desktop-opening', authoredText: 'Fix the flaky bridge test', message: { text: '[[COS_CONTEXT:10]]\nwire', chars: 23, truncated: false } });
+    await renameSession(opened.sessionId!, 'Bridge work');
+    await recordChatObservations(desktop, [{ kind: 'conversation_title', time: Date.now(), text: 'Coding Agent Anleitung' }]);
+    await clearSessionName(opened.sessionId!);
+    expect((await getSession(opened.sessionId!))?.title).toBe('Fix the flaky bridge test');
+
+    // A chat with no title from ChatGPT yet: its first message.
+    const plain = await recordChatObservations('named-plain', [
+      { kind: 'user_message', time: Date.now(), text: 'why is the bridge flaky', messageId: 'named-plain-1' }
+    ]);
+    await renameSession(plain.sessionId!, 'Flaky bridge');
+    await clearSessionName(plain.sessionId!);
+    expect(await getSession(plain.sessionId!)).toMatchObject({ title: 'why is the bridge flaky', titleSource: 'fallback' });
+
+    // A worker: its task title, also when the origin is stamped while it carries a name.
+    const work = await recordChatObservations('named-worker', [
+      { kind: 'user_message', time: Date.now(), text: 'bootstrap', messageId: 'named-worker-boot' }
+    ]);
+    await renameSession(work.sessionId!, 'My worker');
+    await noteChatOrigin('named-worker', worker);
+    expect((await getSession(work.sessionId!))?.title).toBe('My worker');
+    await clearSessionName(work.sessionId!);
+    expect((await getSession(work.sessionId!))?.title).toBe('worker-1 · Port the recorder tests to the new fixture');
+  });
+
   it('repairs a stored instructions title of an app-opened chat on cold read', async () => {
     const session = await createSession({ conversationId: 'desktop-stored-provider', title: 'Temporary' });
     await upsertMessageEvent(session.id, { kind: 'user_message', source: 'app', time: Date.now(),
@@ -4130,4 +4215,18 @@ it('ships the long-standing handoff brief rules as the editable default, unchang
     'FAILED / UNRESOLVED —', 'FILES —', 'VERIFICATION —', 'ENVIRONMENT —', 'NEXT —', 'DO NOT —']) {
     expect(DEFAULT_HANDOFF_PROMPT, heading).toContain(heading);
   }
+});
+
+it('persists worker presentation independently of broker retention and rejects stale or foreign projections', async () => {
+  const session = await createSession({ conversationId: 'archive-worker', title: 'Original',
+    origin: { kind: 'worker', fromSessionId: null, agentId: 'worker-1', task: 'Original task' } });
+  const assignment = { conversationId: 'archive-worker', agentId: 'worker-1', label: 'Review', task: 'New task', recordedAt: 20 };
+  await recordWorkerAssignment(assignment);
+  await recordWorkerAssignment({ ...assignment, label: 'Stale', recordedAt: 10 });
+  await recordWorkerAssignment({ ...assignment, agentId: 'worker-2', label: 'Foreign', recordedAt: 30 });
+  await flushSessions(); resetSessionStoreForTests();
+  const restored = await getSession(session.id);
+  expect(restored?.workerAssignment).toEqual(assignment);
+  expect(restored?.origin?.task).toBe('Original task');
+  expect(restored?.title).toBe('Original');
 });

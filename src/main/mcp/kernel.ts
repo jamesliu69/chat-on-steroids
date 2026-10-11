@@ -1,4 +1,5 @@
 import { offerToolInput, acknowledgeToolInput, TOOL_INPUT_HEADER } from '../session/input.js';
+import { noteConnectorUse } from '../connector-proof.js';
 import { pluginManager } from '../plugins/manager.js';
 import { WINDOWS_COMPUTER_STATE_INPUT_METHODS } from '../../shared/windows-computer.js';
 /**
@@ -42,6 +43,7 @@ import {
 import { currentWorkspace, forgetMissingWorkspace, learnWorkspace, setCurrentWorkspace } from '../workspace.js';
 import { getSessionProject } from '../projects.js';
 import { firstTaskRoot, resolveLinkedSkillAlias } from '../skill-access.js';
+import { isUserSkillVirtualPath, resolveUserSkillPath } from '../user-skills.js';
 import { ExecError } from '../exec.js';
 import { ComputerError } from '../computer/index.js';
 import { getConfig } from '../config.js';
@@ -77,6 +79,7 @@ import {
   swarmRunning
 } from '../agents.js';
 import type { SurfaceId } from './surfaces.js';
+import { noteServedRequest } from '../connector-identity.js';
 import {
   currentCall,
   emptyEvidence,
@@ -698,6 +701,9 @@ async function dispatchTracked(
   // answered, and "was this connector ever actually used from ChatGPT" is a per-connector
   // question the setup screen has to answer honestly.
   surfaceToolCallAt.set(surface, Date.now());
+  noteConnectorUse(surface, 'tool');
+  // Proof for connector identity: this exact request reached this surface's own endpoint.
+  if (!nested) noteServedRequest(requestId, surface);
   const isFinish = isFinishCall(name, args);
   const startedAt = context.startedAt;
   const allowUnattributed = context.allowUnattributed === true;
@@ -1153,7 +1159,11 @@ async function dispatchTracked(
     const supplemental = delivered.content.slice(baseResult.content.length)
       .filter((part): part is Extract<ToolContent, { type: 'text' }> => part.type === 'text')
       .map(part => part.text).join('\n');
-    if (supplemental) delivered = { ...delivered, structuredContent: { ...delivered.structuredContent, supplemental_context: supplemental } };
+    // A handler may already have put its own app context there (exec_command's notes); keep it
+    // ahead of what delivery appended rather than replacing it.
+    const own = delivered.structuredContent['supplemental_context'];
+    const merged = [typeof own === 'string' ? own : '', supplemental].filter(Boolean).join('\n');
+    if (supplemental) delivered = { ...delivered, structuredContent: { ...delivered.structuredContent, supplemental_context: merged } };
   }
   const recorderStartedAt = Date.now();
   // Event duration includes identity/handler/delivery work. Recorder and local HTTP finish
@@ -1302,8 +1312,13 @@ async function liveWorkspace(): Promise<{ workspace: { virtual: string; real: st
 export async function resolveIn(
   roots: Parameters<typeof resolvePath>[0],
   requested: string,
-  options: { allowMissing?: boolean; base?: string | null } = {}
+  options: { allowMissing?: boolean; base?: string | null; access?: 'read' } = {}
 ): Promise<Resolved> {
+  // The user's own Skill folders are served only to read tools, and never become a workspace.
+  if (isUserSkillVirtualPath(requested)) {
+    if (options.access !== 'read') throw new SandboxError(`${requested} is a read-only Skill folder. Copy the Skill into an approved folder to change it.`);
+    return (await resolveUserSkillPath(requested))!;
+  }
   // An explicit adapter-supplied base beats the workspace; otherwise the workspace is the base.
   // Either way the joining happens inside `resolvePath`, ahead of validation,
   // so a `..` in the caller's text still meets `checkSegment` instead of being normalised

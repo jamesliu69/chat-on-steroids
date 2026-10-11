@@ -98,6 +98,17 @@ it('names the pending error action without presenting it as a second silence cou
   expect(host.textContent).toContain('Reload in 0:30');
 });
 
+it('shows the history throttle as a wait without claiming a header was provided or promising a reload', () => {
+  renderRecoveryCountdowns(host, [{ kind: 'provider-limit', deadline: 31_000 }], 0);
+  expect(host.textContent).toContain('ChatGPT history temporarily rate-limited');
+  expect(host.textContent).toContain('Retry check in 0:31');
+  expect(host.textContent).not.toContain('Reload');
+  expect(host.querySelector('.recovery-notice')?.getAttribute('title')).toContain('history rate-limit wait');
+  expect(host.querySelector('.recovery-notice')?.getAttribute('title')).not.toContain('Retry-After');
+  renderRecoveryCountdowns(host, [{ kind: 'provider-limit', deadline: 31_000 }], 31_000);
+  expect(host.textContent).toContain('Retry window ended');
+});
+
 it('reveals Pro silence at five minutes using the UI clock and hides again when activity renews it', () => {
   const countdown = { kind: 'silence' as const, deadline: 600_000, visibleAt: 300_000 };
   expect(renderRecoveryCountdowns(host, [countdown], 299_999)).toBe(true);
@@ -137,6 +148,15 @@ it('shows the existing ticket pickup deadline after the native busy wait', () =>
   renderRecoveryCountdowns(host, [countdown], 120_000);
   expect(host.textContent).toContain('Reload pending…');
   expect(host.textContent).not.toContain('sent');
+});
+
+it('shows a stopped pickup persistently with its attempt count and recovery reason', () => {
+  renderRecoveryCountdowns(host, [{ kind: 'pickup-stopped', deadline: 120_000, attempts: 3, next: 'queue' }], 0);
+  expect(host.hidden).toBe(false);
+  expect(host.textContent).toContain('Recovery stopped · next: Queued message');
+  expect(host.textContent).toContain('Stopped after 3 attempts');
+  expect(host.querySelector('.recovery-notice')?.getAttribute('title')).toContain('original queued input or Goal obligation remains saved');
+  expect(host.querySelector('[role="timer"]')?.getAttribute('aria-live')).toBe('off');
 });
 
 it('offers an action only where the caller supplies one, and explains what the interrupted-response reload does (#1032)', () => {
