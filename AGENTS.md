@@ -21,7 +21,8 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-05**. App/extension **2.1.27**,
+Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-12** (upstream `495848f4`,
+merged as `ef055e8b`). App/extension **2.1.34**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
