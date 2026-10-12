@@ -192,9 +192,8 @@ describe('settings migration', () => {
     await saveConfig({ ...defaultConfig(), controlApi: { enabled: false, allowActions: true } });
     expect((await loadConfig()).controlApi).toEqual({ enabled: false, allowActions: false });
   });
-  it('refreshes plugins automatically on a fresh install, keeps legacy settings off and preserves explicit choices', async () => {
-    // A permission chosen in Setup changes the tool list; a new user has nothing else telling them to refresh.
-    expect(defaultConfig().ui.autoRefreshPlugins).toBe(true);
+  it('keeps fork plugin auto-refresh off on fresh and legacy installs and preserves explicit choices', async () => {
+    expect(defaultConfig().ui.autoRefreshPlugins).toBe(false);
     const legacy = defaultConfig(); delete legacy.ui.autoRefreshPlugins;
     await saveConfig(legacy);
     expect((await loadConfig()).ui.autoRefreshPlugins).toBe(false);
@@ -571,6 +570,7 @@ describe('shipped defaults', () => {
     // Waiting for a run's own workers is a workflow preference, not a first-launch exposure
     // decision, so it starts off even where unattributed calls start on.
     expect(loaded.multiAgent.waitForSubAgents).toBe(false);
+    expect(loaded.multiAgent.autoWorktrees).toBe(false);
     expect(loaded.multiAgent.endSleepingWorkerProcesses).toBe(false);
   });
 
@@ -589,6 +589,7 @@ describe('shipped defaults', () => {
       expect(config.multiAgent.strictChatAllowlist).toBe(false);
       expect(config.multiAgent.recoverAgentTabs).toBe(false);
       expect(config.multiAgent.waitForSubAgents).toBe(false);
+      expect(config.multiAgent.autoWorktrees).toBe(false);
       expect(config.multiAgent.endSleepingWorkerProcesses).toBe(false);
     }
   );
@@ -611,6 +612,7 @@ describe('shipped defaults', () => {
     expect(loaded.multiAgent.strictChatAllowlist).toBe(false);
     expect(loaded.multiAgent.recoverAgentTabs).toBe(false);
     expect(loaded.multiAgent.waitForSubAgents).toBe(false);
+    expect(loaded.multiAgent.autoWorktrees).toBe(false);
     expect(loaded.multiAgent.endSleepingWorkerProcesses).toBe(false);
     expect(loaded.readOnly).toBe(true);
   });
@@ -644,6 +646,21 @@ describe('shipped defaults', () => {
       multiAgent: { ...config.multiAgent, globalMaxWorkers: 5 }
     });
     expect((await loadConfig()).multiAgent.globalMaxWorkers).toBe(5);
+  });
+
+  it('requires an explicit opt-in for new worker Git worktrees and persists either choice', async () => {
+    const original = defaultConfig();
+    expect(original.multiAgent.autoWorktrees).toBe(false);
+    await saveConfig({ ...original, multiAgent: { ...original.multiAgent, autoWorktrees: true } });
+    expect((await loadConfig()).multiAgent.autoWorktrees).toBe(true);
+    await saveConfig({ ...original, multiAgent: { ...original.multiAgent, autoWorktrees: false } });
+    expect((await loadConfig()).multiAgent.autoWorktrees).toBe(false);
+
+    // Existing settings written before this opt-in existed must not gain worktree creation.
+    const stored = JSON.parse(await fs.readFile(path.join(dir, 'config.json'), 'utf8'));
+    delete stored.multiAgent.autoWorktrees;
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(stored), 'utf8');
+    expect((await loadConfig()).multiAgent.autoWorktrees).toBe(false);
   });
 
   it('preserves explicit recording-off and age-retention choices', async () => {

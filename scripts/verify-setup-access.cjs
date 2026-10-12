@@ -79,7 +79,7 @@ app.whenReady().then(async () => {
     // One set of switches, now in Setup: Workspace's own surface, not a copy.
     assert.deepEqual(await js(`(() => ({switches:document.querySelectorAll('[data-cap]').length,
       inSetup:!!document.querySelector('#accessFineSlot > .settings-surface #groups'),
-      inWorkspace:!!document.querySelector('.workspace-permissions #groups')}))()`),{switches:13,inSetup:true,inWorkspace:false});
+      inWorkspace:!!document.querySelector('.workspace-permissions #groups')}))()`),{switches:14,inSetup:true,inWorkspace:false});
     await capture('read-only-dark');
 
     // Read-only still finishes the step, and Ready says what is limited and leads back to change it.
@@ -120,7 +120,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(await js(`(() => ({switches:document.querySelectorAll('[data-cap]').length,
       inWorkspace:!!document.querySelector('.workspace-permissions > .settings-surface #groups'),
       deleteFile:document.querySelector('[data-cap="deleteFile"]').checked,
-      screen:document.querySelector('[data-cap="screen"]').checked}))()`),{switches:13,inWorkspace:true,deleteFile:false,screen:false});
+      screen:document.querySelector('[data-cap="screen"]').checked}))()`),{switches:14,inWorkspace:true,deleteFile:false,screen:false});
     await capture('workspace-after');
 
     // Other widths and languages over the read-only state the step exists for.

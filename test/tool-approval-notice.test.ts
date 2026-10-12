@@ -44,5 +44,5 @@ it('does not require local storage and never uses a browser or approval action',
   initToolApprovalNotice(listener => { opening = listener; return () => {}; });
   opening(); const dialog = document.querySelector('.tool-approval-dialog') as HTMLDialogElement;
   expect(dialog.open).toBe(true); dialog.close(); opening(); expect(dialog.open).toBe(false);
-  expect(dialog.textContent).toContain(t('Separate from Plugins → Allow all actions. This reminder does not approve a tool call.'));
+  expect(dialog.textContent).toContain(t('Separate from Plugins → Allow all tools. This reminder does not approve a tool call.'));
 });
