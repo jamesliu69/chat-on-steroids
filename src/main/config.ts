@@ -178,6 +178,8 @@ const DEFAULT_MULTI_AGENT: MultiAgentSettings = {
   // Off: waiting for a run's own workers before its next automatic step is a deliberate choice.
   // A chat that delegated nothing, and a chat with no run, never wait either way.
   waitForSubAgents: false,
+  // Off by default on both fresh and migrated installs: Git workspace creation is opt-in.
+  autoWorktrees: false,
   // Off: ending an OS process is a real side effect even though the worker identity survives.
   // The user must opt in before sleeping-worker runtime maintenance can terminate anything.
   endSleepingWorkerProcesses: false
@@ -415,6 +417,7 @@ const configSchema = z.object({
       strictChatAllowlist: z.boolean().optional().default(DEFAULT_MULTI_AGENT.strictChatAllowlist ?? false),
       recoverAgentTabs: z.boolean().optional().default(DEFAULT_MULTI_AGENT.recoverAgentTabs),
       waitForSubAgents: z.boolean().optional().default(DEFAULT_MULTI_AGENT.waitForSubAgents ?? false),
+      autoWorktrees: z.boolean().optional().default(DEFAULT_MULTI_AGENT.autoWorktrees ?? false),
       endSleepingWorkerProcesses: z.boolean().optional().default(DEFAULT_MULTI_AGENT.endSleepingWorkerProcesses ?? false)
     })
     .optional()
@@ -426,6 +429,7 @@ const configSchema = z.object({
       strictChatAllowlist: DEFAULT_MULTI_AGENT.strictChatAllowlist ?? false,
       recoverAgentTabs: DEFAULT_MULTI_AGENT.recoverAgentTabs,
       waitForSubAgents: DEFAULT_MULTI_AGENT.waitForSubAgents ?? false,
+      autoWorktrees: DEFAULT_MULTI_AGENT.autoWorktrees ?? false,
       endSleepingWorkerProcesses: DEFAULT_MULTI_AGENT.endSleepingWorkerProcesses ?? false
     }),
   artifacts: z
@@ -568,10 +572,9 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     readOnly: false,
     commandAllowlist: { ...DEFAULT_COMMAND_ALLOWLIST, rules: [] },
     tunnel: { kind: 'openai', tunnelId: '', desktopTunnelId: '', binaryPath: '' },
-    // Fresh installs refresh changed connector tools on their own: a permission chosen in Setup
-    // changes the tool list, and nothing else tells a new user to refresh the plugin in ChatGPT.
-    // Older configs keep the schema default (off).
-    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: true, autoSelectSkills: false, backgroundChats: true, backgroundPlacement: 'window', browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true,
+    // The fork requires explicit opt-in to automatic connector refresh. Fresh and legacy
+    // installs start Off; a saved explicit choice remains authoritative.
+    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, autoSelectSkills: false, backgroundChats: true, backgroundPlacement: 'window', browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true,
       // The built-in browser is opt-in: Chrome with the companion stays the default for new and
       // existing installs alike, and the built-in one runs only once someone chooses it.
       chatBrowser: 'chrome' },
