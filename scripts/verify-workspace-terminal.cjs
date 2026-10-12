@@ -99,10 +99,18 @@ app.whenReady().then(async () => {
     try {
       await Promise.race([
         js(`(async()=>{
+          // Hidden-start Windows launchers can stop scheduling animation completion
+          // notifications between input events. Keep real frames advancing while
+          // waiting; do not finish animations or bypass the native hit-target check.
+          let painting=true;
+          const paint=()=>{if(painting)requestAnimationFrame(paint)};
+          requestAnimationFrame(paint);
+          try {
           await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
           await Promise.all(document.getAnimations()
             .filter(animation=>Number.isFinite(animation.effect.getComputedTiming().endTime))
             .map(animation=>animation.finished.catch(()=>undefined)));
+          } finally { painting=false; }
         })()`),
         new Promise((_, reject) => {
           timeout = setTimeout(() => reject(new Error('Timeout waiting for terminal layout animations')), 15_000);
@@ -129,6 +137,9 @@ app.whenReady().then(async () => {
   const until = async expression => { const end = Date.now() + 15_000; while (Date.now() < end) { if (await js(expression)) return; await new Promise(resolve => setTimeout(resolve, 40)); } throw new Error('Timeout: ' + expression + ' ' + JSON.stringify(await js('({errors,outputs})'))); };
   try {
     await server.listen(); await win.loadURL(server.resolvedUrls.local[0] + 'fixture.html'); await until('window.ready');
+    // windowsHide may suppress the constructor's first show. Native Return input
+    // needs a visible focused window, even when Chromium reports document focus.
+    if (WINDOWS) { win.show(); win.focus(); assert.ok(win.isVisible()); }
     await js("window.setTerminalProject(null);document.getElementById('terminalToggle').click()");
     await until(`ids.length===1 && document.querySelector("#workspaceTerminal .terminal-tab").textContent${TAB_LABEL}`);
     const homeId = await js('ids[0]');

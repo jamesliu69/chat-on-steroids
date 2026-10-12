@@ -4205,6 +4205,10 @@ describe('exec sessions belong to the chat that opened them', () => {
     expect(textOf(blocked)).toMatch(/Background session \d+ completed/);
     expect(textOf(blocked)).toContain('owed-');
 
+    // Receipt requires a call that starts strictly after publication. Fast loopback
+    // requests can otherwise share the response's millisecond on macOS runners.
+    const receivedAt = Date.now();
+    await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(receivedAt), { timeout: 1000, interval: 1 });
     const admitted = await asChat(blockedRequest, 'exec_command', {
       cmd: IS_WINDOWS ? "Write-Output 'admitted-after-drain'" : "printf '%s\\n' admitted-after-drain",
       workdir: '/workspace',
