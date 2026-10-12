@@ -22,7 +22,7 @@ the code currently does it. Known implementation gaps are collected in §21 inst
 mixed into the happy path as features.
 
 Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-12** (upstream through
-`c8a050fa06b2983876292a1600ef9f27a7a5986b`). App/extension **2.1.34**,
+`e005d1c5d96744ac0e565912dd0ad25ee0e4dba8`). App/extension **2.1.35**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -951,6 +951,9 @@ Explicit session project binding takes precedence at kernel entry. Workers inher
 exact prime's project/workspace. Different primes may each own `worker-1` in different folders.
 With `multiAgent.autoWorktrees` enabled, eligible new Git-project workers receive an approved
 isolated worktree and branch tied to the broker's exact allocation run and worker identity.
+Managed checkouts live beside the repository inside an approved parent folder. If only the
+repository itself is approved, spawn refuses with `WORKTREE_STORAGE_UNAVAILABLE` and a path-free
+hint to approve the containing folder or disable automatic worktrees; it never expands approval.
 The worker's first bootstrap must name its **allocated worktree**, not the Prime's checkout,
 as the default working directory; source-project AGENTS/Skill instructions may still be read
 from the selected Prime project, but that source folder is never the managed worker's cwd.
@@ -3847,7 +3850,10 @@ inline and `\[ … \]` or `$$ … $$` as a block, the shapes ChatGPT writes; a l
 Markdown pass leaves only a placeholder, the message is sanitised as usual, and each placeholder
 then becomes KaTeX's rendering of the original source with `trust` off, so a formula cannot add
 links, classes or styles. Source KaTeX cannot parse, or longer than 8,000 characters, shows as
-written; a wide block formula scrolls on its own.
+written; a wide block formula scrolls on its own. `separateDisplayMath()` puts an opening display
+line after prose on its own Markdown block, including list items, without splitting closing
+lines or changing fenced code. This keeps a lone formula `=` line from becoming a heading and
+leaves the original source available for copying.
 Setup's Show/Hide guide button stays available even while setup is incomplete. Manual collapse
 survives status pushes. Profile management stays out of first-run Setup: a compact row below
 Language in Appearance has a dropdown, a plus button with a name dialog and a delete button
