@@ -4062,9 +4062,12 @@ silent baseline; a different one shows the reminder until its X is clicked.
 `AppState.confirmedConnectorSchemas` carries, per surface, the schema ChatGPT confirmed after a
 refresh click or found already current (`confirmedPluginSchemas()`, an in-memory copy of
 `completedSchemaId` from `state/plugin-refresh.json`, kept current on every read and write); a current schema confirmed there counts as acknowledged, so
-the reminder disappears once automatic plugin refresh lands. The reminder is hidden in
-Settings, stacks with update/extension notices and never marks a refresh complete or starts a
-browser action.
+the reminder disappears once automatic plugin refresh lands. It names only changed, unconfirmed
+surfaces, using their proven ChatGPT names before configured names, and explains how to select
+them and choose Refresh tools. Its explicit Open ChatGPT plugins button uses the fixed link
+opener to visit `https://chatgpt.com/settings/plugins-settings`; opening the page does not
+acknowledge the reminder or claim the tools were refreshed. The reminder is hidden in Settings,
+stacks with update/extension notices and never starts a browser action without a user click.
 
 ### Project Files workspace
 

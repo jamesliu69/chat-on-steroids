@@ -1197,7 +1197,19 @@ main {
   min-width: 0;
 }
 
-#dismissPluginRefreshReminder { flex: none; }
+.plugin-refresh-reminder-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+#pluginRefreshReminderTargets { color: var(--soft); }
+#openPluginRefreshReminder { max-width: 100%; white-space: normal; text-align: start; }
+#dismissPluginRefreshReminder { flex: none; align-self: flex-start; }
 
 /* A state that blocks sending, not a tip: stated in weight, as `.hint.is-warn` does. */
 .notice.is-warn span { font-weight: 600; }

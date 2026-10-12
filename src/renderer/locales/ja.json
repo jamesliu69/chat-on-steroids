@@ -1,4 +1,5 @@
 {
+  "In ChatGPT Plugins, select {0}, then choose Refresh tools.": "ChatGPT の「プラグイン」で {0} を選び、「ツールを更新」を押してください。",
   "Dictation unavailable": "音声入力を利用できません",
   "Cancel dictation": "音声入力をキャンセル",
   "Stop dictation": "音声入力を停止",
