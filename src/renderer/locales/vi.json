@@ -1817,7 +1817,7 @@
   "Local control API": "API điều khiển cục bộ",
   "Let agents on this computer read app status and chats.": "Cho phép tác nhân trên máy này đọc trạng thái ứng dụng và các cuộc trò chuyện.",
   "Allow actions": "Cho phép thao tác",
-  "Let those agents also send and cancel messages. Needs the local control API.": "Các tác nhân đó cũng có thể gửi và hủy tin nhắn. Cần API điều khiển cục bộ.",
+  "Let those agents also send messages, start new chats and cancel messages. Needs the local control API.": "Các tác nhân đó cũng có thể gửi tin nhắn, bắt đầu cuộc trò chuyện mới và hủy tin nhắn. Cần API điều khiển cục bộ.",
   "macOS asks for your password once after each update, so this version can open its saved keys. Enter your Mac login password and choose “Always Allow”. Chats and the browser connection continue as soon as you answer.": "Sau mỗi lần cập nhật, macOS sẽ hỏi mật khẩu một lần để phiên bản này mở được các khóa đã lưu. Hãy nhập mật khẩu đăng nhập máy Mac và chọn “Luôn cho phép”. Các cuộc trò chuyện và kết nối trình duyệt sẽ tiếp tục ngay khi bạn trả lời.",
   "Handoff length": "Độ dài bàn giao",
   "How much a Compact & Resume brief keeps. Longer briefs carry more detail into the new chat; shorter ones leave it more room.": "Lượng nội dung một bản tóm tắt Compact & Resume giữ lại. Bản dài mang nhiều chi tiết hơn sang cuộc trò chuyện mới; bản ngắn chừa cho nó nhiều chỗ hơn.",
@@ -2173,5 +2173,18 @@
   "This chat was deleted in ChatGPT. Start a new chat to continue.": "Cuộc trò chuyện này đã bị xóa trong ChatGPT. Hãy bắt đầu cuộc trò chuyện mới để tiếp tục.",
   "Chat deleted in ChatGPT": "Cuộc trò chuyện đã bị xóa trong ChatGPT",
   "ChatGPT no longer has this chat, so nothing more can be sent to it.": "ChatGPT không còn cuộc trò chuyện này nên không thể gửi thêm gì vào đó.",
-  "Start a new chat to continue. This history stays in the app.": "Hãy bắt đầu cuộc trò chuyện mới để tiếp tục. Lịch sử này vẫn được giữ trong ứng dụng."
+  "Start a new chat to continue. This history stays in the app.": "Hãy bắt đầu cuộc trò chuyện mới để tiếp tục. Lịch sử này vẫn được giữ trong ứng dụng.",
+  "ChatGPT Projects for your projects, workers in their own Git copy, and steadier long runs.": "Dự án ChatGPT cho các dự án của bạn, worker trong bản sao Git riêng và các lượt chạy dài ổn định hơn.",
+  "Projects in ChatGPT": "Dự án trong ChatGPT",
+  "New projects get their own ChatGPT Project, and their new chats open inside it.": "Dự án mới có Dự án ChatGPT riêng, và các cuộc trò chuyện mới của nó mở bên trong đó.",
+  "Background chats in a tab group": "Trò chuyện nền trong một nhóm tab",
+  "Background chats can stay in one collapsed tab group in your browser window instead of their own window.": "Trò chuyện nền có thể nằm trong một nhóm tab thu gọn trong cửa sổ trình duyệt thay vì một cửa sổ riêng.",
+  "Workers in their own Git copy": "Worker trong bản sao Git riêng",
+  "When you turn it on, each new worker gets its own Git worktree and branch, away from your checkout.": "Khi bật, mỗi worker mới có worktree và nhánh Git riêng, tách khỏi bản checkout của bạn.",
+  "Dictation on Windows": "Đọc chính tả trên Windows",
+  "The microphone button turns your speech into text in the message box, and you send it when you're ready.": "Nút micrô chuyển lời nói của bạn thành văn bản trong ô tin nhắn, và bạn gửi khi đã sẵn sàng.",
+  "Rename your connectors": "Đổi tên connector",
+  "Chat On Steroids apps you rename in ChatGPT keep working.": "Các ứng dụng Chat On Steroids bạn đổi tên trong ChatGPT vẫn tiếp tục hoạt động.",
+  "This tunnel ID is also set for {0}. Each connector needs its own tunnel; otherwise ChatGPT sends some calls to the wrong connector and they fail with UNKNOWN_TOOL.": "ID tunnel này cũng được đặt cho {0}. Mỗi connector cần tunnel riêng; nếu không, ChatGPT sẽ gửi một số lệnh gọi đến sai connector và chúng thất bại với UNKNOWN_TOOL.",
+  "ChatGPT asked to wait until at least {0}. After that the app continues by itself. Reloading cannot remove this limit.": "ChatGPT yêu cầu chờ ít nhất đến {0}. Sau đó ứng dụng sẽ tự tiếp tục. Tải lại không gỡ được giới hạn này."
 }

@@ -1817,7 +1817,7 @@
   "Local control API": "API de control local",
   "Let agents on this computer read app status and chats.": "Permitir que los agentes de este equipo lean el estado de la app y los chats.",
   "Allow actions": "Permitir acciones",
-  "Let those agents also send and cancel messages. Needs the local control API.": "Esos agentes también pueden enviar y cancelar mensajes. Requiere la API de control local.",
+  "Let those agents also send messages, start new chats and cancel messages. Needs the local control API.": "Esos agentes también pueden enviar mensajes, iniciar chats nuevos y cancelar mensajes. Requiere la API de control local.",
   "macOS asks for your password once after each update, so this version can open its saved keys. Enter your Mac login password and choose “Always Allow”. Chats and the browser connection continue as soon as you answer.": "macOS pide tu contraseña una vez después de cada actualización para que esta versión pueda abrir sus claves guardadas. Introduce la contraseña de inicio de sesión de tu Mac y elige «Permitir siempre». Los chats y la conexión con el navegador continúan en cuanto respondas.",
   "Handoff length": "Longitud del traspaso",
   "How much a Compact & Resume brief keeps. Longer briefs carry more detail into the new chat; shorter ones leave it more room.": "Cuánto conserva un resumen de Compact & Resume. Los más largos llevan más detalle al chat nuevo; los más cortos le dejan más espacio.",
@@ -2173,5 +2173,18 @@
   "This chat was deleted in ChatGPT. Start a new chat to continue.": "Este chat se eliminó en ChatGPT. Inicia un chat nuevo para continuar.",
   "Chat deleted in ChatGPT": "Chat eliminado en ChatGPT",
   "ChatGPT no longer has this chat, so nothing more can be sent to it.": "ChatGPT ya no tiene este chat, así que no se le puede enviar nada más.",
-  "Start a new chat to continue. This history stays in the app.": "Inicia un chat nuevo para continuar. Este historial se queda en la app."
+  "Start a new chat to continue. This history stays in the app.": "Inicia un chat nuevo para continuar. Este historial se queda en la app.",
+  "ChatGPT Projects for your projects, workers in their own Git copy, and steadier long runs.": "Proyectos de ChatGPT para tus proyectos, workers en su propia copia de Git y ejecuciones largas más estables.",
+  "Projects in ChatGPT": "Proyectos en ChatGPT",
+  "New projects get their own ChatGPT Project, and their new chats open inside it.": "Los proyectos nuevos tienen su propio proyecto de ChatGPT, y sus chats nuevos se abren dentro de él.",
+  "Background chats in a tab group": "Chats en segundo plano en un grupo de pestañas",
+  "Background chats can stay in one collapsed tab group in your browser window instead of their own window.": "Los chats en segundo plano pueden quedarse en un grupo de pestañas contraído en la ventana de tu navegador en lugar de en su propia ventana.",
+  "Workers in their own Git copy": "Workers en su propia copia de Git",
+  "When you turn it on, each new worker gets its own Git worktree and branch, away from your checkout.": "Si lo activas, cada worker nuevo recibe su propio worktree y rama de Git, separado de tu copia de trabajo.",
+  "Dictation on Windows": "Dictado en Windows",
+  "The microphone button turns your speech into text in the message box, and you send it when you're ready.": "El botón del micrófono convierte tu voz en texto en el cuadro de mensaje, y lo envías cuando estés listo.",
+  "Rename your connectors": "Cambia el nombre de tus conectores",
+  "Chat On Steroids apps you rename in ChatGPT keep working.": "Las apps de Chat On Steroids a las que cambias el nombre en ChatGPT siguen funcionando.",
+  "This tunnel ID is also set for {0}. Each connector needs its own tunnel; otherwise ChatGPT sends some calls to the wrong connector and they fail with UNKNOWN_TOOL.": "Este ID de túnel también está configurado para {0}. Cada conector necesita su propio túnel; si no, ChatGPT envía algunas llamadas al conector equivocado y fallan con UNKNOWN_TOOL.",
+  "ChatGPT asked to wait until at least {0}. After that the app continues by itself. Reloading cannot remove this limit.": "ChatGPT pidió esperar al menos hasta las {0}. Después, la app continúa por sí sola. Recargar no elimina este límite."
 }

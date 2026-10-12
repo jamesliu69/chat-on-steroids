@@ -1817,7 +1817,7 @@
   "Local control API": "本機控制 API",
   "Let agents on this computer read app status and chats.": "允許這台電腦上的代理讀取應用程式狀態與聊天。",
   "Allow actions": "允許操作",
-  "Let those agents also send and cancel messages. Needs the local control API.": "這些代理也可以傳送和取消訊息。需要開啟本機控制 API。",
+  "Let those agents also send messages, start new chats and cancel messages. Needs the local control API.": "這些代理也可以傳送訊息、開始新聊天和取消訊息。需要開啟本機控制 API。",
   "macOS asks for your password once after each update, so this version can open its saved keys. Enter your Mac login password and choose “Always Allow”. Chats and the browser connection continue as soon as you answer.": "每次更新後，macOS 會詢問一次你的密碼，讓此版本開啟已儲存的金鑰。請輸入 Mac 登入密碼並選擇「永遠允許」。你回應後，聊天和瀏覽器連線會立即繼續。",
   "Handoff length": "交接長度",
   "How much a Compact & Resume brief keeps. Longer briefs carry more detail into the new chat; shorter ones leave it more room.": "Compact & Resume 交接摘要保留多少內容。越長，帶入新聊天的細節越多；越短，給新聊天留的空間越多。",
@@ -2173,5 +2173,18 @@
   "This chat was deleted in ChatGPT. Start a new chat to continue.": "此聊天已在 ChatGPT 中刪除。請新增聊天以繼續。",
   "Chat deleted in ChatGPT": "已在 ChatGPT 中刪除的聊天",
   "ChatGPT no longer has this chat, so nothing more can be sent to it.": "ChatGPT 中已沒有此聊天，因此無法再傳送任何內容給它。",
-  "Start a new chat to continue. This history stays in the app.": "請新增聊天以繼續。此歷史記錄會保留在應用程式中。"
+  "Start a new chat to continue. This history stays in the app.": "請新增聊天以繼續。此歷史記錄會保留在應用程式中。",
+  "ChatGPT Projects for your projects, workers in their own Git copy, and steadier long runs.": "為專案建立 ChatGPT 專案、子代理使用各自的 Git 副本，長時間執行更穩定。",
+  "Projects in ChatGPT": "ChatGPT 中的專案",
+  "New projects get their own ChatGPT Project, and their new chats open inside it.": "新專案會取得自己的 ChatGPT 專案，其新對話會在其中開啟。",
+  "Background chats in a tab group": "分頁群組中的背景對話",
+  "Background chats can stay in one collapsed tab group in your browser window instead of their own window.": "背景對話可以留在瀏覽器視窗中一個收合的分頁群組裡，而不是獨立的視窗。",
+  "Workers in their own Git copy": "子代理使用各自的 Git 副本",
+  "When you turn it on, each new worker gets its own Git worktree and branch, away from your checkout.": "開啟後，每個新的子代理都會取得自己的 Git worktree 和分支，與你的簽出分開。",
+  "Dictation on Windows": "Windows 上的語音輸入",
+  "The microphone button turns your speech into text in the message box, and you send it when you're ready.": "麥克風按鈕會把你的語音轉成訊息框中的文字，準備好後由你傳送。",
+  "Rename your connectors": "重新命名連接器",
+  "Chat On Steroids apps you rename in ChatGPT keep working.": "在 ChatGPT 中重新命名的 Chat On Steroids 應用程式會繼續正常運作。",
+  "This tunnel ID is also set for {0}. Each connector needs its own tunnel; otherwise ChatGPT sends some calls to the wrong connector and they fail with UNKNOWN_TOOL.": "此通道 ID 也設定給了 {0}。每個連接器都需要自己的通道；否則 ChatGPT 會把部分呼叫送到錯誤的連接器，並以 UNKNOWN_TOOL 失敗。",
+  "ChatGPT asked to wait until at least {0}. After that the app continues by itself. Reloading cannot remove this limit.": "ChatGPT 要求至少等到 {0}。之後應用程式會自行繼續。重新載入無法解除此限制。"
 }

@@ -483,7 +483,11 @@ export type SessionEvent =
   | (BaseEvent & { kind: 'turn_end'; outcome: TurnOutcome; detail?: string; reason?: 'thinking_failed'; providerMessageId?: string;
       /** The user sent a message into this running answer and ChatGPT carried the response on into the next turn (#1301). */
       continued?: true })
-  | (BaseEvent & { kind: 'chat_error'; message: StoredText; recoverable?: boolean; blocking?: boolean; reason?: 'thinking_failed' | 'stream_gone' })
+  /**
+   * `retryAt` is the first time ChatGPT said a blocking history limit may be retried, kept for the
+   * timeline to show. The live hold follows each newer deadline; this one is never an authority.
+   */
+  | (BaseEvent & { kind: 'chat_error'; message: StoredText; recoverable?: boolean; blocking?: boolean; retryAt?: number; reason?: 'thinking_failed' | 'stream_gone' })
   | (BaseEvent & { kind: 'tool_call'; call: ToolCallRecord; origin?: number })
   /**
    * An app-authored line. `continuation` names the Compact & Resume it is about, so the
@@ -910,6 +914,8 @@ export interface AgentInfo {
   label: string;
   /** Spawn brief, or a bounded inbox preview for the current reused assignment. */
   task: string;
+  /** The job's name from the spawn brief, kept when a wake replaces `task`; display only. */
+  jobTitle?: string;
   /**
    * Requested reasoning level for this worker's chat, or null to inherit the default.
    *

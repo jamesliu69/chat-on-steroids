@@ -1817,7 +1817,7 @@
   "Local control API": "Yerel kontrol API'si",
   "Let agents on this computer read app status and chats.": "Bu bilgisayardaki ajanların uygulama durumunu ve sohbetleri okumasına izin ver.",
   "Allow actions": "Eylemlere izin ver",
-  "Let those agents also send and cancel messages. Needs the local control API.": "Bu ajanlar mesaj da gönderebilir ve iptal edebilir. Yerel kontrol API'si gerekir.",
+  "Let those agents also send messages, start new chats and cancel messages. Needs the local control API.": "Bu ajanlar ayrıca mesaj gönderebilir, yeni sohbet başlatabilir ve mesajları iptal edebilir. Yerel kontrol API'si gerekir.",
   "macOS asks for your password once after each update, so this version can open its saved keys. Enter your Mac login password and choose “Always Allow”. Chats and the browser connection continue as soon as you answer.": "macOS her güncellemeden sonra bir kez parolanızı ister; böylece bu sürüm kayıtlı anahtarlarını açabilir. Mac giriş parolanızı girin ve “Her Zaman İzin Ver”i seçin. Yanıt verdiğiniz anda sohbetler ve tarayıcı bağlantısı devam eder.",
   "Handoff length": "Devir uzunluğu",
   "How much a Compact & Resume brief keeps. Longer briefs carry more detail into the new chat; shorter ones leave it more room.": "Bir Compact & Resume özetinin ne kadarını koruyacağı. Uzun özetler yeni sohbete daha fazla ayrıntı taşır; kısa olanlar ona daha fazla yer bırakır.",
@@ -2173,5 +2173,18 @@
   "This chat was deleted in ChatGPT. Start a new chat to continue.": "Bu sohbet ChatGPT'de silindi. Devam etmek için yeni bir sohbet başlatın.",
   "Chat deleted in ChatGPT": "Sohbet ChatGPT'de silindi",
   "ChatGPT no longer has this chat, so nothing more can be sent to it.": "ChatGPT'de bu sohbet artık yok, bu yüzden ona başka bir şey gönderilemez.",
-  "Start a new chat to continue. This history stays in the app.": "Devam etmek için yeni bir sohbet başlatın. Bu geçmiş uygulamada kalır."
+  "Start a new chat to continue. This history stays in the app.": "Devam etmek için yeni bir sohbet başlatın. Bu geçmiş uygulamada kalır.",
+  "ChatGPT Projects for your projects, workers in their own Git copy, and steadier long runs.": "Projeleriniz için ChatGPT projeleri, kendi Git kopyasında çalışan ajanlar ve daha kararlı uzun çalışmalar.",
+  "Projects in ChatGPT": "ChatGPT'de projeler",
+  "New projects get their own ChatGPT Project, and their new chats open inside it.": "Yeni projeler kendi ChatGPT projesini alır ve yeni sohbetleri onun içinde açılır.",
+  "Background chats in a tab group": "Sekme grubunda arka plan sohbetleri",
+  "Background chats can stay in one collapsed tab group in your browser window instead of their own window.": "Arka plan sohbetleri ayrı bir pencere yerine tarayıcı pencerenizde daraltılmış tek bir sekme grubunda kalabilir.",
+  "Workers in their own Git copy": "Kendi Git kopyasında ajanlar",
+  "When you turn it on, each new worker gets its own Git worktree and branch, away from your checkout.": "Açtığınızda her yeni ajan, sizin çalışma kopyanızdan ayrı, kendi Git worktree'sini ve dalını alır.",
+  "Dictation on Windows": "Windows'ta dikte",
+  "The microphone button turns your speech into text in the message box, and you send it when you're ready.": "Mikrofon düğmesi konuşmanızı mesaj kutusunda metne çevirir; hazır olduğunuzda gönderirsiniz.",
+  "Rename your connectors": "Bağlayıcılarınızı yeniden adlandırın",
+  "Chat On Steroids apps you rename in ChatGPT keep working.": "ChatGPT'de yeniden adlandırdığınız Chat On Steroids uygulamaları çalışmaya devam eder.",
+  "This tunnel ID is also set for {0}. Each connector needs its own tunnel; otherwise ChatGPT sends some calls to the wrong connector and they fail with UNKNOWN_TOOL.": "Bu tünel kimliği {0} için de ayarlı. Her bağlayıcının kendi tüneli olmalı; aksi halde ChatGPT bazı çağrıları yanlış bağlayıcıya gönderir ve bunlar UNKNOWN_TOOL ile başarısız olur.",
+  "ChatGPT asked to wait until at least {0}. After that the app continues by itself. Reloading cannot remove this limit.": "ChatGPT en az {0} saatine kadar beklenmesini istedi. Sonrasında uygulama kendiliğinden devam eder. Yeniden yüklemek bu sınırı kaldırmaz."
 }

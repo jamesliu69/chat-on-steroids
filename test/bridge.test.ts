@@ -9832,10 +9832,12 @@ describe('unattributed activity recovery', () => {
         await gate.entered;
         if (scenario === 'manual-close') await request('POST', '/closed', { body: { conversationId: WORKER, manual: true } });
         else if (scenario === 'wake-finished') {
-          // A wake can finish only after fresh work proves the worker resumed. A repeat
-          // finish from its previous turn must leave the pending wake intact.
-          await events(WORKER, [openTurn(`wake-started-${scenario}`)]);
+          // The woken worker's own turn ends the wake (finishing a worker that is still waking is
+          // ignored), and it then finishes the follow-up.
+          expect(noteAgentAlive(WORKER, 'turn', Date.now() + 1)?.revived).toBe(true);
           finishAgent({ conversationId: WORKER }, 'No follow-up remains');
+          // The read must outlive a wake that really ended, not one that is still pending.
+          expect(pendingWorkerRevivals(), 'the wake ended during the read').toEqual([]);
         }
         else if (scenario === 'page-returned') await events(WORKER, [openTurn(`wake-returned-${scenario}`)]);
         else if (scenario === 'recovery-off') await saveConfig({ ...getConfig(), multiAgent: { ...getConfig().multiAgent, recoverAgentTabs: false } });
@@ -10093,16 +10095,19 @@ describe('unattributed activity recovery', () => {
       ]);
       await attributed(PRIME, false, Date.now());
       const limit = 'ChatGPT temporarily rate-limited loading this conversation history.';
-      let retryAt = 0;
+      let retryAt = 0, firstRetryAt = 0;
       for (let attempt = 0; attempt < 8; attempt++) {
         if (attempt) await vi.advanceTimersByTimeAsync(60_000);
         retryAt = Date.now() + 30_000 + attempt * 1000;
+        if (!attempt) firstRetryAt = retryAt;
         await events(PRIME, [{ kind: 'chat_error', time: Date.now(), turnId: 'history-limit-repeat', recoverable: false, blocking: true, retryAt, text: limit }]);
       }
       const session = (await findSessionByConversation(PRIME))!;
       const { readRecentEvents } = await import('../src/main/session/store.js');
       const notices = async () => (await readRecentEvents(session.id, 50, { kinds: ['chat_error'] })).filter(event => event.kind === 'chat_error' && event.message.text === limit);
       expect(await notices()).toHaveLength(1);
+      // The one notice keeps the first deadline ChatGPT gave, for the timeline to show (#1355).
+      expect((await notices())[0]).toMatchObject({ blocking: true, retryAt: firstRetryAt });
       // Whichever hold shows, its deadline is the newest Retry-After, though only one notice was written.
       expect((await sessionControlsFor(session.id)).recovery?.map(hold => hold.deadline)).toEqual([retryAt]);
       // Another error in between makes the next limit a new notice again.

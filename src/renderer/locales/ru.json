@@ -1817,7 +1817,7 @@
   "Local control API": "Локальный API управления",
   "Let agents on this computer read app status and chats.": "Разрешить агентам на этом компьютере читать состояние приложения и чаты.",
   "Allow actions": "Разрешить действия",
-  "Let those agents also send and cancel messages. Needs the local control API.": "Эти агенты смогут также отправлять и отменять сообщения. Нужен локальный API управления.",
+  "Let those agents also send messages, start new chats and cancel messages. Needs the local control API.": "Эти агенты смогут также отправлять сообщения, начинать новые чаты и отменять сообщения. Нужен локальный API управления.",
   "macOS asks for your password once after each update, so this version can open its saved keys. Enter your Mac login password and choose “Always Allow”. Chats and the browser connection continue as soon as you answer.": "После каждого обновления macOS один раз запрашивает пароль, чтобы эта версия могла открыть сохранённые ключи. Введите пароль для входа в Mac и выберите «Разрешать всегда». Чаты и подключение к браузеру продолжат работу, как только вы ответите.",
   "Handoff length": "Объём передачи",
   "How much a Compact & Resume brief keeps. Longer briefs carry more detail into the new chat; shorter ones leave it more room.": "Сколько сохраняет сводка Compact & Resume. Длинная переносит в новый чат больше деталей, короткая оставляет ему больше места.",
@@ -2173,5 +2173,18 @@
   "This chat was deleted in ChatGPT. Start a new chat to continue.": "Этот чат удалён в ChatGPT. Чтобы продолжить, начните новый чат.",
   "Chat deleted in ChatGPT": "Чат удалён в ChatGPT",
   "ChatGPT no longer has this chat, so nothing more can be sent to it.": "В ChatGPT больше нет этого чата, поэтому в него ничего нельзя отправить.",
-  "Start a new chat to continue. This history stays in the app.": "Чтобы продолжить, начните новый чат. Эта история останется в приложении."
+  "Start a new chat to continue. This history stays in the app.": "Чтобы продолжить, начните новый чат. Эта история останется в приложении.",
+  "ChatGPT Projects for your projects, workers in their own Git copy, and steadier long runs.": "Проекты ChatGPT для ваших проектов, воркеры в собственной копии Git и более стабильная долгая работа.",
+  "Projects in ChatGPT": "Проекты в ChatGPT",
+  "New projects get their own ChatGPT Project, and their new chats open inside it.": "Новые проекты получают собственный проект ChatGPT, и их новые чаты открываются в нём.",
+  "Background chats in a tab group": "Фоновые чаты в группе вкладок",
+  "Background chats can stay in one collapsed tab group in your browser window instead of their own window.": "Фоновые чаты могут оставаться в одной свёрнутой группе вкладок в окне браузера, а не в отдельном окне.",
+  "Workers in their own Git copy": "Воркеры в собственной копии Git",
+  "When you turn it on, each new worker gets its own Git worktree and branch, away from your checkout.": "Если включить, каждый новый воркер получает собственный Git worktree и ветку, отдельно от вашей рабочей копии.",
+  "Dictation on Windows": "Диктовка в Windows",
+  "The microphone button turns your speech into text in the message box, and you send it when you're ready.": "Кнопка микрофона превращает вашу речь в текст в поле сообщения, а отправляете вы его сами, когда будете готовы.",
+  "Rename your connectors": "Переименование коннекторов",
+  "Chat On Steroids apps you rename in ChatGPT keep working.": "Приложения Chat On Steroids, переименованные в ChatGPT, продолжают работать.",
+  "This tunnel ID is also set for {0}. Each connector needs its own tunnel; otherwise ChatGPT sends some calls to the wrong connector and they fail with UNKNOWN_TOOL.": "Этот ID туннеля также указан для {0}. Каждому коннектору нужен свой туннель, иначе ChatGPT отправляет часть вызовов не тому коннектору, и они завершаются ошибкой UNKNOWN_TOOL.",
+  "ChatGPT asked to wait until at least {0}. After that the app continues by itself. Reloading cannot remove this limit.": "ChatGPT попросил подождать как минимум до {0}. После этого приложение продолжит само. Перезагрузка не снимает это ограничение."
 }
