@@ -22,7 +22,7 @@ the code currently does it. Known implementation gaps are collected in §21 inst
 mixed into the happy path as features.
 
 Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-13** (upstream through
-`461b97018ce6a993601231dd9bd4a5af7a93417d`). App/extension **2.1.35**,
+`780a4d1592beb4346321c8ba04607ef2fd90d014`). App/extension **2.1.35**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -3651,6 +3651,10 @@ alone picks its glyph; static markup names the glyph class. `--ico` sizes the la
 `--glyph` the drawing, which stays 17px in compact controls except carets and small dismiss
 marks. Do not add hand-drawn SVG icons; the sprite keeps only the product mark.
 `test/icon-font.test.ts` checks names, package codepoints and stray SVG.
+
+`renderer/pets.ts` owns the library cards. Bundled descriptions bind to the mounted node and
+follow the selected language; imported descriptions remain their author's literal text, even
+when they match a catalog key. Search matches the displayed bundled description in that language.
 
 `renderer/pet-machine.ts` owns the optional Tur Tur Sahur companion's gesture,
 animation and autonomous-action state. `renderer/pet.ts` projects it with Pointer
