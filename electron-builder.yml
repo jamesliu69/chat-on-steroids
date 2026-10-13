@@ -95,7 +95,7 @@ nsis:
   perMachine: false
   buildUniversalInstaller: false
   allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
+  createDesktopShortcut: "always"
   createStartMenuShortcut: true
   shortcutName: Chat On Steroids
   artifactName: Chat-On-Steroids-Setup-${arch}.${ext}
