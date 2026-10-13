@@ -20,7 +20,7 @@ vi.mock('../src/renderer/file-code-editor.js', () => ({
     return { destroy: () => view.remove(), language: 'TypeScript' };
   }
 }));
-import { positionOf, projectTimeline } from '../src/shared/chronology.js';
+import { positionOf, projectTimeline, residenceOf } from '../src/shared/chronology.js';
 
 /**
  * The session timeline as the user reads it while a chat is running.
@@ -165,7 +165,7 @@ async function settleHistoryFrame(w: Pick<Window, 'requestAnimationFrame'>): Pro
   await settle();
 }
 
-async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers: Array<{ id: string; sourceSessionId: string }> = [], projects: LocalProject[] = [], options: { origin?: SessionSummary["origin"]; developerMode?: boolean; playfulStatus?: boolean; followOutput?: boolean; sessions?: SessionSummary[]; pro?: boolean; astra?: boolean; reserveOpenings?: boolean; handoff?: Handoff | null; deferProcessStop?: boolean; defaultChatModel?: string; noModels?: boolean } = {}) {
+async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers: Array<{ id: string; sourceSessionId: string }> = [], projects: LocalProject[] = [], options: { origin?: SessionSummary["origin"]; developerMode?: boolean; playfulStatus?: boolean; followOutput?: boolean; followUp?: 'steer' | 'queue'; sessions?: SessionSummary[]; pro?: boolean; astra?: boolean; reserveOpenings?: boolean; handoff?: Handoff | null; deferProcessStop?: boolean; defaultChatModel?: string; noModels?: boolean } = {}) {
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
@@ -198,7 +198,7 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
     },
     commandAllowlist: { enabled: false, mode: 'allow' as const, rules: [] as string[] },
     tunnel: { kind: 'openai', tunnelId: 'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', desktopTunnelId: '', binaryPath: '' },
-    ui: { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light', developerMode: options.developerMode ?? false, playfulStatus: options.playfulStatus ?? false, ...(options.followOutput === undefined ? {} : { followOutput: options.followOutput }),
+    ui: { minimizeToTray: true, autoConnect: false, privacyScreenshots: false, theme: 'light', developerMode: options.developerMode ?? false, playfulStatus: options.playfulStatus ?? false, ...(options.followOutput === undefined ? {} : { followOutput: options.followOutput }), ...(options.followUp === undefined ? {} : { followUp: options.followUp }),
       ...(options.defaultChatModel ? { defaultChatModel: options.defaultChatModel, defaultChatReasoning: 'high' } : {}) },
     sessions: { record: true, retainDays: 30, advisoryTokens: 300000, limitTokens: 400000 },
     compaction: { auto: true, autoTokens: 300000 },
@@ -300,10 +300,13 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
       },
       getSession: (_id: string, options?: { from?: number; before?: number; after?: number; limit?: number }) => {
         const from = options?.from ?? 0;
+        // Pages as the store does: by residence (a turn's final answer beside its end). The CI
+        // fail-first run executes this file against code without residenceOf; position is its fallback there.
+        const residence = residenceOf ?? positionOf;
         const eligible = live.events.filter((event) => event.seq >= from &&
-          (options?.before === undefined || positionOf(event) < options.before) &&
-          (options?.after === undefined || positionOf(event) > options.after))
-          .sort((a, b) => options?.from !== undefined ? a.seq - b.seq : positionOf(a) - positionOf(b));
+          (options?.before === undefined || residence(event) < options.before) &&
+          (options?.after === undefined || residence(event) > options.after))
+          .sort((a, b) => options?.from !== undefined ? a.seq - b.seq : residence(a) - residence(b));
         const limit = options?.limit ?? 30;
         const page = options?.after !== undefined || options?.from !== undefined
           ? eligible.slice(0, limit) : eligible.slice(-limit);
@@ -1223,7 +1226,7 @@ it('keeps generated-image metadata visible when recording storage is full', asyn
   expect(row.querySelector('.generated-image-frame')).toBeTruthy();
   expect(row.querySelector('img')).toBeNull();
   expect(row.querySelector('.generated-image-frame')?.classList.contains('is-unavailable')).toBe(true);
-  expect(row.querySelector('button')?.textContent).toBe('Free image storage');
+  expect(row.querySelector('button')?.textContent).toBe('Free storage');
 });
 
 it('does not group images across an intervening authored message or another turn', async () => {
@@ -5514,4 +5517,100 @@ it("never hangs the running turn's clock under an older question read further up
   }
   expect(timeline.textContent).not.toContain('Origin row 360.');
   expect(w.document.querySelector('#timeline .turn-status')).toBeNull();
+});
+
+// A long turn's answer was opened early and filled only at the end. The live update carrying the
+// finished answer was skipped as "an old revision owned by an older page", so the chat seemed to
+// stop at its last work heading with no summary.
+it("shows a long turn's final answer when it arrives live, at the end of the turn", async () => {
+  const TURN = 'g-long-0-1';
+  // Like the store, every row of the turn names its turn's start (`turnOrigin`).
+  const opened: SessionEvent = { seq: 2, time: T0 + 2000, source: 'extension', kind: 'assistant_message', messageId: 'answer', turnId: TURN, turnOrigin: 1, final: false, message: text('Restoring the fleet first.') };
+  const work = Array.from({ length: 120 }, (_, i) => ({ ...toolCall(3 + i, `call-${i}`), turnId: TURN, turnOrigin: 1 }) as SessionEvent);
+  const { w, live, append } = await boot([{ seq: 1, time: T0 + 1000, source: 'extension', kind: 'turn_start', turnId: TURN }, opened, ...work]);
+  const timeline = w.document.getElementById('timeline')!;
+  expect(timeline.textContent).not.toContain('Restoring the fleet first.');
+  // The store rewrites the same message: same origin, new sequence, final text.
+  live.events.splice(live.events.indexOf(opened), 1);
+  await append([
+    { seq: 123, origin: 2, contentSeq: 123, time: T0 + 2000, source: 'extension', kind: 'assistant_message', messageId: 'answer', turnId: TURN, turnOrigin: 1, final: true,
+      message: text('Restoring the fleet first. Done: 53 devices are back.') } as SessionEvent,
+    { seq: 124, time: T0 + 124_000, source: 'extension', kind: 'turn_end', turnId: TURN, turnOrigin: 1, outcome: 'completed' } as SessionEvent
+  ]);
+  expect(timeline.textContent).toContain('Done: 53 devices are back.');
+  const rows = [...timeline.querySelectorAll('[data-timeline-key]')];
+  const answerRow = rows.findIndex(row => row.textContent?.includes('Done: 53 devices are back.'));
+  const lastWork = rows.map((row, index) => row.matches('.tool-group, [data-timeline-key^="event:"][class*="tool"]') ? index : -1).reduce((a, b) => Math.max(a, b), -1);
+  expect(answerRow).toBeGreaterThan(lastWork);
+});
+
+// Like Codex's Steer: a message waiting for the end of the turn can be sent into it now.
+it('offers Send now on a queued message while the running turn can take it', async () => {
+  const { w, live, append } = await boot([]);
+  const api = (w as any).api;
+  let directly = false;
+  api.getSessionControls = async () => ({ ok: true, data: { sessionId: summary([]).id,
+    activeTurnId: 'plain-turn', canInject: false, canSendDirectly: directly, queueAtFinish: false } });
+  live.inputs.push({ id: 'waiting', sessionId: summary([]).id, text: 'Also check the logs', mode: 'after-turn', dueAt: 0,
+    model: null, reasoningEffort: null, state: 'queued', owner: null, createdAt: 0, conversationId: 'chat-b' });
+  await append([]);
+  const sendNow = () => w.document.querySelector<HTMLButtonElement>('#finishQueue [aria-label="Send now"]:not([hidden])');
+  // A turn that cannot be joined (or no turn at all): the message just waits.
+  expect(sendNow()).toBeNull();
+
+  directly = true;
+  await append([]);
+  const steer = vi.fn(async () => { live.inputs[0]!.mode = 'auto'; return { ok: true, data: true }; });
+  api.sendQueuedInputNow = steer;
+  sendNow()!.click(); sendNow()?.click();
+  await settle();
+  expect(steer).toHaveBeenCalledTimes(1);
+  expect(steer).toHaveBeenCalledWith('waiting');
+});
+
+it('says so when a queued message can no longer join the running turn', async () => {
+  const { w, live, append } = await boot([]);
+  const api = (w as any).api;
+  api.getSessionControls = async () => ({ ok: true, data: { sessionId: summary([]).id,
+    activeTurnId: 'plain-turn', canInject: false, canSendDirectly: true, queueAtFinish: false } });
+  live.inputs.push({ id: 'waiting', sessionId: summary([]).id, text: 'Also check the logs', mode: 'after-turn', dueAt: 0,
+    model: null, reasoningEffort: null, state: 'queued', owner: null, createdAt: 0, conversationId: 'chat-b' });
+  await append([]);
+  api.sendQueuedInputNow = async () => ({ ok: true, data: false });
+  w.document.querySelector<HTMLButtonElement>('#finishQueue [aria-label="Send now"]:not([hidden])')!.click();
+  await settle();
+  expect(w.document.body.textContent).toContain('The turn ended before this message could join it. It stays queued.');
+});
+
+// Codex's "Follow-up behavior": messages typed while a turn runs join it, or wait for its end.
+// Cmd/Ctrl+Shift+Enter sends the other way.
+async function sendDuringTurn(followUp: 'steer' | 'queue' | undefined, keys: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean } = {}) {
+  const app = await boot([], true, [], [], followUp === undefined ? {} : { followUp });
+  const api = (app.w as any).api;
+  api.getSessionControls = async () => ({ ok: true, data: { sessionId: summary([]).id, activeTurnId: 'running-turn', canInject: false, canSendDirectly: true, queueAtFinish: false } });
+  await app.append([]);
+  const input = app.w.document.getElementById('chatInput') as HTMLTextAreaElement;
+  input.value = 'Also check the logs';
+  input.dispatchEvent(new app.w.Event('input', { bubbles: true }));
+  input.dispatchEvent(new app.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...keys }));
+  await vi.waitFor(() => expect(app.live.sent).toHaveLength(1));
+  return { app, sent: app.live.sent[0]! };
+}
+
+it('sends a message into the running turn by default', async () => {
+  const { app, sent } = await sendDuringTurn(undefined);
+  expect(sent.mode).toBe('auto');
+  expect((app.w.document.getElementById('sendMode') as HTMLSelectElement).value).toBe('auto');
+});
+
+it('queues a message for after the turn when that is the chosen follow-up behavior', async () => {
+  const { sent } = await sendDuringTurn('queue');
+  expect(sent.mode).toBe('after-turn');
+});
+
+it.each([
+  [{ metaKey: true }, undefined, 'after-turn'], [{ ctrlKey: true }, undefined, 'after-turn'],
+  [{ metaKey: true }, 'queue', 'auto'], [{ ctrlKey: true }, 'queue', 'auto']
+] as const)('sends the other way with %o + Shift + Enter (default %s)', async (modifier, followUp, mode) => {
+  expect((await sendDuringTurn(followUp, { ...modifier, shiftKey: true })).sent.mode).toBe(mode);
 });

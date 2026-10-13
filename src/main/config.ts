@@ -1,6 +1,6 @@
 import { DEFAULT_HELPER_CHAT_MODEL, SUPERSEDED_HELPER_CHAT_MODELS } from '../shared/chat-models.js';
 import { UI_LANGUAGES } from '../shared/ui-language.js';
-import { REASONING_EFFORTS } from '../shared/session.js';
+import { DEFAULT_RECORDING_STORAGE_GIB, REASONING_EFFORTS, RECORDING_STORAGE_LIMITS_GIB, type RecordingStorageLimitGiB } from '../shared/session.js';
 import { appearanceSchema } from './appearance-schema.js';
 import { BROWSER_BRIDGE_PORTS } from '../shared/browser-bridge.js';
 import { CONNECTOR_SUFFIX_MAX, CONNECTOR_SUFFIX_PATTERN } from '../shared/connector-names.js';
@@ -95,6 +95,11 @@ export const browserBridgePortSchema = z.union([z.literal('auto'), z.literal(BRO
  * and the size of what is attached.
  */
 const DEFAULT_CONTEXT_WINDOW = 400_000;
+/** Only the sizes Settings offers; anything else in a hand-edited file falls back to the default. */
+const recordingStorageLimit = z.number()
+  .refine(size => (RECORDING_STORAGE_LIMITS_GIB as readonly number[]).includes(size))
+  .transform(size => size as RecordingStorageLimitGiB);
+
 const DEFAULT_SESSIONS: SessionSettings = {
   record: true,
   retainDays: 30,
@@ -102,7 +107,8 @@ const DEFAULT_SESSIONS: SessionSettings = {
   // Derived, never typed. The Chat panel writes `limit = threshold × 4/3` on every save,
   // so a default that did not already satisfy that relation would be a state the UI cannot
   // produce: the red line would move the first time anyone opened the panel and saved.
-  limitTokens: Math.round((DEFAULT_CONTEXT_WINDOW * 4) / 3)
+  limitTokens: Math.round((DEFAULT_CONTEXT_WINDOW * 4) / 3),
+  storageLimitGiB: DEFAULT_RECORDING_STORAGE_GIB
 };
 
 /**
@@ -348,14 +354,18 @@ const configSchema = z.object({
     finishLeadMinutes: z.number().int().min(3).max(5).optional(),
     backgroundChats: z.boolean().optional().default(true),
     backgroundPlacement: z.enum(['window', 'group']).optional().default('window').catch('window'),
+    followUp: z.enum(['steer', 'queue']).optional().default('steer').catch('steer'),
     browserBridgePort: browserBridgePortSchema.optional().default('auto'),
     browserOnly: z.boolean().optional().default(false),
     autoRefreshPlugins: z.boolean().optional().default(false),
+    autoRefreshPluginsAsked: z.boolean().optional().default(false),
     autoSelectSkills: z.boolean().optional().default(false),
     tabsToKeepOpen: z.number().int().min(1).max(50).optional(),
     minimizeToTray: z.boolean(),
     autoConnect: z.boolean(),
     startAtLogin: z.boolean().optional().default(false),
+    turnNotifications: z.boolean().optional().default(true),
+    keepAwake: z.boolean().optional().default(true),
     privacyScreenshots: z.boolean().optional().default(false),
     // Dark is the design the app is drawn for, and a config written before the theme
     // existed has no stored answer to override — so it is the default rather than the
@@ -376,10 +386,11 @@ const configSchema = z.object({
         .max(4_000_000)
         .optional()
         .default(DEFAULT_SESSIONS.advisoryTokens),
-      limitTokens: z.number().int().min(10_000).max(4_000_000).optional().default(DEFAULT_SESSIONS.limitTokens)
+      limitTokens: z.number().int().min(10_000).max(4_000_000).optional().default(DEFAULT_SESSIONS.limitTokens),
+      storageLimitGiB: recordingStorageLimit.catch(DEFAULT_RECORDING_STORAGE_GIB)
     })
     .optional()
-    .default({ ...DEFAULT_SESSIONS }),
+    .default({ ...DEFAULT_SESSIONS, storageLimitGiB: DEFAULT_RECORDING_STORAGE_GIB }),
   compaction: z
     .object({
       auto: z.boolean().optional().default(DEFAULT_COMPACTION.auto),
@@ -574,7 +585,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     tunnel: { kind: 'openai', tunnelId: '', desktopTunnelId: '', binaryPath: '' },
     // The fork requires explicit opt-in to automatic connector refresh. Fresh and legacy
     // installs start Off; a saved explicit choice remains authoritative.
-    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, autoSelectSkills: false, backgroundChats: true, backgroundPlacement: 'window', browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true,
+    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, keepAwake: true, turnNotifications: true, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, autoSelectSkills: false, backgroundChats: true, backgroundPlacement: 'window', followUp: 'steer', browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true,
       // The built-in browser is opt-in: Chrome with the companion stays the default for new and
       // existing installs alike, and the built-in one runs only once someone chooses it.
       chatBrowser: 'chrome' },

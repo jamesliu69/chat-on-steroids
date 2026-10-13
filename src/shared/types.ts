@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from './session.js';
+import type { ReasoningEffort, RecordingStorageLimitGiB } from './session.js';
 import { WINDOWS_COMPUTER_READ_METHODS, WINDOWS_COMPUTER_INPUT_METHODS } from './windows-computer.js';
 import { BROWSER_READ_TOOLS, BROWSER_WRITE_TOOLS } from './browser-control.js';
 import type { CommandAllowlistSettings } from './command-allowlist.js';
@@ -147,6 +147,8 @@ export interface UiPrefs {
   browserBridgePort?: import('./browser-bridge.js').BrowserBridgePort;
   /** Opt-in browser automation for changed connector tool schemas. */
   autoRefreshPlugins?: boolean;
+  /** True once the person answered the one-time offer to turn automatic plugin refresh on. */
+  autoRefreshPluginsAsked?: boolean;
   /** Opt-in deterministic metadata routing for managed Skills on ordinary user input. */
   autoSelectSkills?: boolean;
   /** Actual app-owned tabs to retain; active work and drafts stay protected. Omitted uses workers + 2. */
@@ -176,6 +178,12 @@ export interface UiPrefs {
   minimizeToTray: boolean;
   autoConnect: boolean;
   startAtLogin?: boolean;
+  /** A notification when a chat finishes a turn while the window is in the background. Missing means on. */
+  turnNotifications?: boolean;
+  /** Codex's "Follow-up behavior": a message typed during a turn joins it (`steer`, the default) or waits for its end (`queue`). */
+  followUp?: 'steer' | 'queue';
+  /** Keep the computer from sleeping while a chat is working (Codex: Prevent sleep while running). Missing means on. */
+  keepAwake?: boolean;
   /** Default screenshots to the active window instead of the whole primary monitor. */
   privacyScreenshots: boolean;
   /** Browser for app-originated launches; connected source tabs retain placement ownership. */
@@ -198,6 +206,8 @@ export interface SessionSettings {
   advisoryTokens: number;
   /** Estimated tokens at which that suggestion becomes urgent. */
   limitTokens: number;
+  /** Size of the store for recorded images and long texts, in GiB (#1406). Missing means 2. */
+  storageLimitGiB?: RecordingStorageLimitGiB;
 }
 
 /**

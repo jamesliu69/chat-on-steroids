@@ -6,6 +6,7 @@ import { displayLocalServer } from './local-url.js';
 import { paintPluginRefreshReminder } from './plugin-refresh-reminder.js';
 import { initRecordingStorageSetting, paintRecordingStorageNotice, paintRecordingStorageUsage } from './image-storage.js';
 import { paintCredentialsNotice } from './credentials-notice.js';
+import { paintPluginRefreshOffer } from './plugin-refresh-offer.js';
 import { initUsage, refreshUsage } from './usage.js';
 import { initSidebarResize } from './sidebar-resize.js';
 import { initViewMenu } from './view-menu.js';
@@ -719,6 +720,7 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark'; appearance?:
       finishLeadMinutes: Number($<HTMLSelectElement>('finishLeadMinutes').value),
       backgroundChats: $<HTMLInputElement>('backgroundChats').checked,
       backgroundPlacement: $<HTMLSelectElement>('backgroundPlacement').value === 'group' ? 'group' : 'window',
+      followUp: $<HTMLSelectElement>('followUp').value === 'queue' ? 'queue' : 'steer',
       browserBridgePort: (selectedBridgePort === 'auto' ? 'auto' : Number(selectedBridgePort)) as BrowserBridgePort,
       autoContinue: $<HTMLInputElement>('autoContinue').checked,
       browserOnly: $<HTMLInputElement>('browserOnly').checked,
@@ -726,6 +728,8 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark'; appearance?:
       autoSelectSkills: $<HTMLInputElement>('autoSelectSkills').checked,
       autoConnect: $<HTMLInputElement>('autoConnect').checked,
       startAtLogin: $<HTMLInputElement>('startAtLogin').checked,
+      turnNotifications: $<HTMLInputElement>('turnNotifications').checked,
+      keepAwake: $<HTMLInputElement>('keepAwake').checked,
       minimizeToTray: $<HTMLInputElement>('minimizeToTray').checked,
       developerMode: $<HTMLInputElement>('developerMode').checked,
       playfulStatus: $<HTMLInputElement>('playfulStatus').checked,
@@ -1542,7 +1546,10 @@ function apply(next: AppState): void {
   paintPluginRefreshRecovery(next);
   paintPluginRefreshReminder(next.connectorSchemas ?? {}, next.confirmedConnectorSchemas ?? {}, next.status.surfaces);
   paintRecordingStorageNotice(next.recordingStorageFull === true);
+  // A new size changes the "used of" line at once, not only when Settings opens again.
+  if (previousState && previousState.config.sessions.storageLimitGiB !== next.config.sessions.storageLimitGiB) void paintRecordingStorageUsage();
   paintCredentialsNotice(next, api, apply);
+  paintPluginRefreshOffer(next, api, apply);
 
   // ---- health numbers and facts
   paintClock();
@@ -1614,6 +1621,7 @@ function apply(next: AppState): void {
   $<HTMLSelectElement>('finishLeadMinutes').disabled = config.ui.finishTool !== true;
   applyChecked($<HTMLInputElement>('backgroundChats'), config.ui.backgroundChats === true, previousState?.config.ui.backgroundChats);
   applyValue($<HTMLSelectElement>('backgroundPlacement'), config.ui.backgroundPlacement ?? 'window', previousState?.config.ui.backgroundPlacement ?? 'window');
+  applyValue($<HTMLSelectElement>('followUp'), config.ui.followUp ?? 'steer', previousState?.config.ui.followUp ?? 'steer');
   const bridgePortControl = $<HTMLSelectElement>('browserBridgePort');
   applyValue(bridgePortControl, String(config.ui.browserBridgePort ?? 'auto'), String(previousState?.config.ui.browserBridgePort ?? 'auto'));
   bridgePortControl.disabled = next.bridge.portOverridden === true;
@@ -1627,6 +1635,8 @@ function apply(next: AppState): void {
   $('startAtLoginRow').hidden = next.loginStartupAvailable !== true;
   $<HTMLInputElement>('startAtLogin').disabled = next.loginStartupAvailable !== true;
   applyChecked($<HTMLInputElement>('startAtLogin'), config.ui.startAtLogin === true, previousState?.config.ui.startAtLogin);
+  applyChecked($<HTMLInputElement>('turnNotifications'), config.ui.turnNotifications !== false, previousState ? previousState.config.ui.turnNotifications !== false : undefined);
+  applyChecked($<HTMLInputElement>('keepAwake'), config.ui.keepAwake !== false, previousState ? previousState.config.ui.keepAwake !== false : undefined);
   applyChecked($<HTMLInputElement>('autoConnect'), config.ui.autoConnect, previousState?.config.ui.autoConnect);
   applyChecked($<HTMLInputElement>('developerMode'), config.ui.developerMode === true, previousState?.config.ui.developerMode);
   applyChecked($<HTMLInputElement>('playfulStatus'), config.ui.playfulStatus === true, previousState?.config.ui.playfulStatus);
@@ -2612,9 +2622,13 @@ $('removeApiKey').addEventListener('click', async () => {
 for (const id of [
   'autoConnect',
   'startAtLogin',
+  'keepAwake',
+  'minimizeToTray',
   'developerMode',
   'playfulStatus',
   'followOutput',
+  'followUp',
+  'turnNotifications',
   'mentionCore',
   'controlApiEnabled',
   'controlApiAllowActions',

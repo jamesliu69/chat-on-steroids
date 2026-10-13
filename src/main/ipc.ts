@@ -14,9 +14,11 @@ import { SKILL_ID_PATTERN } from '../shared/skills.js';
 import { listSkillLibrary } from './skill-library.js';
 import { installRecommendedSkill, listRecommendedSkills } from './recommended-skills.js';
 import { noteChatOrigin } from './session/recorder.js';
-import { committedResumeAncestorsFromSummary, REASONING_EFFORTS, type SessionChange } from '../shared/session.js';
+import { refreshAppProxy } from './app-proxy.js';
+import { committedResumeAncestorsFromSummary, DEFAULT_RECORDING_STORAGE_GIB, REASONING_EFFORTS, RECORDING_STORAGE_LIMITS_GIB, type RecordingStorageLimitGiB, type SessionChange } from '../shared/session.js';
 import { safeExternalLink } from '../shared/external-link.js';
 import { wakeBrowserWork } from './browser-wake.js';
+import { refreshKeepAwake } from './keep-awake.js';
 import { getChatModels, startChatModelDiscovery, configureChatModelDiscovery } from './chat-models.js';
 import { releaseSessionFinish, requestSessionFinishGoal } from './session/finish.js';
 import { GOAL_MARKER_INSTRUCTION } from '../shared/goal-templates.js';
@@ -25,7 +27,7 @@ import { stageInputAttachment, stageInputAttachments, type AttachmentSource } fr
 import { recordDeliveredInput, recordedInputImage } from './session/input-history.js';
 import { UI_BASE_ZOOM, titleBarOverlayForTheme, windowBackgroundForTheme } from './window-layout.js';
 import { usageOverview } from './session/usage.js';
-import { inputArgs, listInputs, editQueuedInput, reorderQueuedInputs, setInputAutomation, configureInputDelivery, pausedBrowserHelpers, cancelFinishInputs } from './session/input.js';
+import { inputArgs, listInputs, editQueuedInput, sendQueuedInputNow, reorderQueuedInputs, setInputAutomation, configureInputDelivery, pausedBrowserHelpers, cancelFinishInputs } from './session/input.js';
 import { draftOpeningMessage, onGoalChange, nativeGoalFailure } from './goal.js';
 import { cancelTaskRequest, runTaskRequest } from './task-request.js';
 import { randomUUID } from 'node:crypto';
@@ -119,6 +121,7 @@ import {
   renameSession,
   getSession,
   getImageStorage,
+  setRecordingStorageLimit,
   readHandoff,
   readToolEditReview,
   withSessionMutationFence
@@ -221,14 +224,18 @@ const settingsPatch = z.object({
     finishLeadMinutes: z.number().int().min(3).max(5).optional(),
     backgroundChats: z.boolean().optional(),
     backgroundPlacement: z.enum(['window', 'group']).optional(),
+    followUp: z.enum(['steer', 'queue']).optional(),
     browserBridgePort: browserBridgePortSchema.optional(),
     browserOnly: z.boolean().optional(),
     autoRefreshPlugins: z.boolean().optional(),
+    autoRefreshPluginsAsked: z.boolean().optional(),
     autoSelectSkills: z.boolean().optional(),
     tabsToKeepOpen: z.number().int().min(1).max(50).optional(),
     minimizeToTray: z.boolean(),
     autoConnect: z.boolean(),
     startAtLogin: z.boolean().optional(),
+    turnNotifications: z.boolean().optional(),
+    keepAwake: z.boolean().optional(),
     privacyScreenshots: z.boolean(),
     theme: z.enum(['light', 'dark'])
   }),
@@ -236,7 +243,9 @@ const settingsPatch = z.object({
     record: z.boolean(),
     retainDays: z.number().int().min(0).max(3650),
     advisoryTokens: z.number().int().min(10_000).max(4_000_000),
-    limitTokens: z.number().int().min(10_000).max(4_000_000)
+    limitTokens: z.number().int().min(10_000).max(4_000_000),
+    storageLimitGiB: z.number().refine(size => (RECORDING_STORAGE_LIMITS_GIB as readonly number[]).includes(size))
+      .transform(size => size as RecordingStorageLimitGiB).optional()
   }),
   compaction: z.object({
     auto: z.boolean(),
@@ -388,15 +397,20 @@ function mergeSettings(current: Config, base: SettingsSnapshot, wanted: Settings
       finishLeadMinutes: pick(current.ui.finishLeadMinutes, base.ui.finishLeadMinutes, wanted.ui.finishLeadMinutes),
       backgroundChats: pick(current.ui.backgroundChats, base.ui.backgroundChats, wanted.ui.backgroundChats),
       backgroundPlacement: pick(current.ui.backgroundPlacement, base.ui.backgroundPlacement, wanted.ui.backgroundPlacement),
+      followUp: pick(current.ui.followUp, base.ui.followUp, wanted.ui.followUp),
       browserBridgePort: wanted.ui.browserBridgePort === undefined ? current.ui.browserBridgePort
         : pick(current.ui.browserBridgePort ?? 'auto', base.ui.browserBridgePort ?? 'auto', wanted.ui.browserBridgePort),
       browserOnly: pick(current.ui.browserOnly, base.ui.browserOnly, wanted.ui.browserOnly),
       autoRefreshPlugins: pick(current.ui.autoRefreshPlugins, base.ui.autoRefreshPlugins, wanted.ui.autoRefreshPlugins),
+      // Only the offer's own call answers it; a settings save never takes it back.
+      autoRefreshPluginsAsked: current.ui.autoRefreshPluginsAsked === true || wanted.ui.autoRefreshPluginsAsked === true,
       autoSelectSkills: pick(current.ui.autoSelectSkills, base.ui.autoSelectSkills, wanted.ui.autoSelectSkills),
       tabsToKeepOpen: pick(current.ui.tabsToKeepOpen, base.ui.tabsToKeepOpen, wanted.ui.tabsToKeepOpen),
       minimizeToTray: pick(current.ui.minimizeToTray, base.ui.minimizeToTray, wanted.ui.minimizeToTray),
       autoConnect: pick(current.ui.autoConnect, base.ui.autoConnect, wanted.ui.autoConnect),
       startAtLogin: pick(current.ui.startAtLogin, base.ui.startAtLogin, wanted.ui.startAtLogin),
+      turnNotifications: pick(current.ui.turnNotifications, base.ui.turnNotifications, wanted.ui.turnNotifications),
+      keepAwake: pick(current.ui.keepAwake, base.ui.keepAwake, wanted.ui.keepAwake),
       privacyScreenshots: pick(
         current.ui.privacyScreenshots,
         base.ui.privacyScreenshots,
@@ -412,7 +426,8 @@ function mergeSettings(current: Config, base: SettingsSnapshot, wanted: Settings
         base.sessions.advisoryTokens,
         wanted.sessions.advisoryTokens
       ),
-      limitTokens: pick(current.sessions.limitTokens, base.sessions.limitTokens, wanted.sessions.limitTokens)
+      limitTokens: pick(current.sessions.limitTokens, base.sessions.limitTokens, wanted.sessions.limitTokens),
+      storageLimitGiB: pick(current.sessions.storageLimitGiB, base.sessions.storageLimitGiB, wanted.sessions.storageLimitGiB)
     },
     compaction: {
       auto: pick(current.compaction.auto, base.compaction.auto, wanted.compaction.auto),
@@ -658,6 +673,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
     // Renderer palette changes are immediate, so keep OS/Electron-owned chrome in lock-step too.
     // Without this, selecting Dark on macOS left the title bar, menus and file picker in the
     // system theme until restart (and startup still defaulted to system before index.ts applies it).
+    // A changed Goal provider address may be one the system reaches directly.
+    void refreshAppProxy();
+    setRecordingStorageLimit(next.sessions.storageLimitGiB ?? DEFAULT_RECORDING_STORAGE_GIB);
+    if ((before.ui.keepAwake !== false) !== (next.ui.keepAwake !== false)) refreshKeepAwake();
     nativeTheme.themeSource = next.ui.theme;
     if (process.platform === 'win32') getWindow()?.setTitleBarOverlay(titleBarOverlayForTheme(next.ui.theme, next.ui.appearance));
     // BrowserWindow's native backing color is fixed at construction unless updated explicitly.
@@ -783,6 +802,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
     // The renderer owns the choice; the main process keeps it for the browser extension.
     const language = z.enum(UI_LANGUAGES).parse(payload);
     if (getConfig().ui.language !== language) await updateConfig(config => ({ ...config, ui: { ...config.ui, language } }));
+  });
+  // The one-time offer to turn automatic plugin refresh on (installs from before it existed have
+  // it saved as off). Either answer is kept, so the offer never comes back.
+  handle('pluginRefresh:offer', async (payload) => {
+    const { turnOn } = z.object({ turnOn: z.boolean() }).strict().parse(payload);
+    await updateConfig(config => ({ ...config, ui: { ...config.ui, autoRefreshPluginsAsked: true, ...(turnOn ? { autoRefreshPlugins: true } : {}) } }));
+    if (turnOn) wakeBrowserWork();
+    return buildState();
   });
   handle('ui:whatsNewSeen', async () => {
     // Only this version can be recorded; the renderer cannot write another one (#1172).
@@ -1394,6 +1421,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
   handle('sessions:retryHelper', async (payload) => {
     const { id, sourceSessionId } = z.object({ id: z.string().uuid(), sourceSessionId: z.string().min(8).max(64) }).parse(payload);
     return retryGoalBrowserHelper(sourceSessionId, id);
+  });
+  handle('sessions:sendQueuedNow', async (payload) => {
+    const { id } = z.object({ id: z.string().uuid() }).strict().parse(payload);
+    const sent = await sendQueuedInputNow(id);
+    if (sent) wakeBrowserWork();
+    return sent;
   });
   handle('sessions:editInput', async (payload) => { const { id, text, afterTurn } = z.object({ id: z.string().uuid(), text: inputArgs.shape.text, afterTurn: z.boolean().optional() }).parse(payload); return editQueuedInput(id, text, afterTurn); });
   handle('sessions:cancelInput', async (payload) => cancelDesktopInput(z.object({ id: z.string().uuid() }).parse(payload).id));

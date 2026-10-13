@@ -61,18 +61,21 @@ import type {
   StoredText,
   SwarmState,
   WorkerWorktreeCleanupOffer,
-  TokenPressure
+  TokenPressure,
+  RecordingStorageLimitGiB
 } from '../shared/session.js';
 import {
   ATTRIBUTION_LABELS,
   CHAT_ACTIVE_MS,
   committedResumeAncestorsFromSummary,
   continuationMarkerOf,
+  DEFAULT_RECORDING_STORAGE_GIB,
+  RECORDING_STORAGE_LIMITS_GIB,
   TURN_OUTCOME_LABELS,
   foldProgress,
   toolCallSummary
 } from '../shared/session.js';
-import { chronological, positionOf } from '../shared/chronology.js';
+import { chronological, positionOf, residenceOf } from '../shared/chronology.js';
 import { recentChatActivity, sessionWorkingAt, workerReportedFinish } from '../shared/session-activity.js';
 import {
   DEFAULT_GOAL_MODEL,
@@ -1503,7 +1506,7 @@ function canonicalMessageKey(event: SessionEvent): string | null {
 function mergeDetailDelta(delta: SessionEvent[]): void {
   if (delta.length === 0) return;
   const merged = [...events];
-  const floor = events.length ? Math.min(...events.map(positionOf)) : 0;
+  const floor = events.length ? Math.min(...events.map(residenceOf)) : 0;
   const messageRows = new Map<string, number>();
   for (let index = 0; index < merged.length; index++) {
     const key = canonicalMessageKey(merged[index]!);
@@ -1516,7 +1519,7 @@ function mergeDetailDelta(delta: SessionEvent[]): void {
     else {
       // An old canonical revision is not newly authored history. Its original
       // page still owns it; admitting it here would evict an unrelated live row.
-      if (positionOf(event) < floor) continue;
+      if (residenceOf(event) < floor) continue;
       if (key) messageRows.set(key, merged.length);
       merged.push(event);
     }
@@ -1618,8 +1621,19 @@ function pendingComposerInput(): InputEntry | undefined {
       pendingNewInput?.generation === selectionGeneration && pendingNewInput.id === entry.id));
 }
 let durationTimer: number | undefined;
+/** Whether the selected chat's running turn takes a message now (Send directly). */
+function canSendQueuedNow(): boolean {
+  return selectedId !== null && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledCanSendDirectly;
+}
+/** The running turn whose delivery choice was last set to the Follow-up default. */
+let followUpTurn: string | null = null;
+/** Codex's "Follow-up behavior": messages typed during a turn wait for its end instead of joining it. */
+function followUpQueues(): boolean {
+  return deps.state()?.config.ui.followUp === 'queue';
+}
 function paintDeliveryControls(): void {
   paintGoalProgress();
+  for (const button of document.querySelectorAll<HTMLButtonElement>('#finishQueue .queue-send-now')) button.hidden = !canSendQueuedNow();
   const working = selectedId !== null && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledTurnId !== null;
   const queueAtFinish = selectedId !== null && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledQueueAtFinish;
   const canInject = selectedId !== null && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledCanInject;
@@ -1645,6 +1659,12 @@ function paintDeliveryControls(): void {
   const explicitInjection = (canInject && (!files.length || injectableAttachments(files))) ||
     (canSendDirectly && files.length > 0 && injectableAttachments(files));
   if (injectionAction) injectionAction.hidden = !explicitInjection;
+  // Each running turn starts from the Follow-up default; a choice made in the menu lasts for that turn.
+  const turnKey = working && (canInject || canSendDirectly || queueAtFinish) ? `${selectedId}:${controlledTurnId}` : null;
+  if (turnKey !== followUpTurn) {
+    followUpTurn = turnKey;
+    if (turnKey) $<HTMLSelectElement>('sendMode').value = followUpQueues() ? 'after-turn' : 'auto';
+  }
   if ($<HTMLSelectElement>('sendMode').value === 'tool' && !explicitInjection) $<HTMLSelectElement>('sendMode').value = 'auto';
   if (canInject && explicitInjection && $<HTMLSelectElement>('sendMode').value === 'auto') $<HTMLSelectElement>('sendMode').value = 'tool';
   if (!canInject && !canSendDirectly && !queueAtFinish) $<HTMLSelectElement>('sendMode').value = 'auto';
@@ -2070,9 +2090,9 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
     } else if (prepend) {
       const boundary = olderBefore!;
       historyBefore = boundary;
-      const retained = events.filter(event => positionOf(event) >= boundary);
+      const retained = events.filter(event => residenceOf(event) >= boundary);
       events = retainTimelinePage(chronological(foldProgress([...folded, ...retained])), 'older');
-    } else events = chronological([...folded].sort((a, b) => positionOf(a) - positionOf(b)).slice(-MAX_TIMELINE_ROWS));
+    } else events = chronological([...folded].sort((a, b) => residenceOf(a) - residenceOf(b)).slice(-MAX_TIMELINE_ROWS));
     detailFor = wanted;
   }
   detailCursor = Math.max(opening ? 0 : detailCursor ?? 0,
@@ -3099,8 +3119,8 @@ async function fillTimelineHistory(): Promise<void> {
         break;
       }
       const cursor = demand.direction < 0
-        ? events.reduce((oldest, event) => Math.min(oldest, positionOf(event)), Infinity)
-        : events.reduce((newest, event) => Math.max(newest, positionOf(event)), 0);
+        ? events.reduce((oldest, event) => Math.min(oldest, residenceOf(event)), Infinity)
+        : events.reduce((newest, event) => Math.max(newest, residenceOf(event)), 0);
       if (!Number.isFinite(cursor) || (demand.direction < 0 && (cursor <= 1 || cursor === historyStart))) {
         historyDemand = null;
         break;
@@ -3109,8 +3129,8 @@ async function fillTimelineHistory(): Promise<void> {
       if (demand.sessionId !== selectedId || demand.selection !== selectionGeneration || detailFor !== selectedId) continue;
       if (!loaded) { if (demand === historyDemand) historyDemand = null; continue; }
       const next = demand.direction < 0
-        ? events.reduce((oldest, event) => Math.min(oldest, positionOf(event)), Infinity)
-        : events.reduce((newest, event) => Math.max(newest, positionOf(event)), 0);
+        ? events.reduce((oldest, event) => Math.min(oldest, residenceOf(event)), Infinity)
+        : events.reduce((newest, event) => Math.max(newest, residenceOf(event)), 0);
       if (demand === historyDemand && demand.opening) {
         // Filling a newly selected tail has not navigated away from live work.
         // User input replaces the demand and owns its position from then on.
@@ -3618,9 +3638,9 @@ function visibleEvents(): SessionEvent[] {
  * Keep the current visible rows plus the incoming stage; ordinary tall histories
  * still settle at 160 records. Dense collapsed activity has bounded extra room. */
 function retainTimelinePage(source: SessionEvent[], direction: 'older' | 'newer'): SessionEvent[] {
-  // Residency and navigation share the immutable origin domain. Display order
-  // can move a final across its turn's tools, but must not cut a hole in a page.
-  source = [...source].sort((a, b) => positionOf(a) - positionOf(b));
+  // Residency and navigation share one domain, the one the store pages by (`residenceOf`):
+  // immutable origins, except that a turn's final answer lives beside its turn's end.
+  source = [...source].sort((a, b) => residenceOf(a) - residenceOf(b));
   const pane = $('chatBody');
   const edge = pane.getBoundingClientRect().top;
   const protectedKeys = new Set<string>();
@@ -5318,7 +5338,10 @@ export function chatSettingsPatch(current: Config): {
       retainDays: 0,
       // Both follow the single threshold above rather than being typed separately.
       advisoryTokens: threshold,
-      limitTokens: urgentFrom(threshold)
+      limitTokens: urgentFrom(threshold),
+      storageLimitGiB: (RECORDING_STORAGE_LIMITS_GIB as readonly number[]).includes(Number($<HTMLSelectElement>('recordingStorageLimit').value))
+        ? Number($<HTMLSelectElement>('recordingStorageLimit').value) as RecordingStorageLimitGiB
+        : current.sessions.storageLimitGiB ?? DEFAULT_RECORDING_STORAGE_GIB
     },
     compaction: {
       auto: $<HTMLInputElement>('autoCompact').checked,
@@ -5755,6 +5778,7 @@ const CHAT_INPUTS = [
   'goalReasoning',
   'handoffPrompt',
   'handoffLength',
+  'recordingStorageLimit',
   'goalPrompt',
   'goalObjectivePrompt',
   'goalLoopPrompt'
@@ -5816,6 +5840,11 @@ export function chatApply(state: AppState, previous?: Config): void {
     $<HTMLSelectElement>('handoffLength'),
     config.compaction.handoffLength ?? DEFAULT_HANDOFF_LENGTH,
     previous?.compaction.handoffLength
+  );
+  applyChatValue(
+    $<HTMLSelectElement>('recordingStorageLimit'),
+    String(config.sessions.storageLimitGiB ?? DEFAULT_RECORDING_STORAGE_GIB),
+    previous === undefined ? undefined : String(previous.sessions.storageLimitGiB ?? DEFAULT_RECORDING_STORAGE_GIB)
   );
   applyAutoCompactHint(config);
   $<HTMLInputElement>('autoCompactTokens').disabled = !config.compaction.auto;
@@ -6129,6 +6158,24 @@ async function refreshInputQueue(): Promise<void> {
         } else cancel.disabled = false;
       };
       if (entry.recovery) { card.append(cancel); return card; }
+      // Like Codex's Steer: send a message that waits for the end of the turn into the turn now.
+      if (entry.mode === 'after-turn' && !entry.attachments?.length && !entry.images?.length && !entry.stages?.length) {
+        const now = dockAction(() => t("Send now"), 'i-arrow-up', () => {});
+        now.classList.add('queue-send-now');
+        ui(now, 'title', () => t("Send into the running turn now"));
+        now.hidden = !canSendQueuedNow();
+        now.onclick = async () => {
+          if (now.disabled || !card.isConnected || selection !== selectionGeneration) return;
+          now.disabled = true;
+          const sent = await run(api.sendQueuedInputNow(entry.id));
+          if (!card.isConnected || selection !== selectionGeneration) return;
+          if (sent === false) toast(t("The turn ended before this message could join it. It stays queued."));
+          if (sent !== true) now.disabled = false;
+          inputQueueGeneration++;
+          void refreshInputQueue();
+        };
+        card.append(now);
+      }
       const queueSessionSummary = sessions.find(row => row.id === selectedId);
       const modelSelection = queueSessionSummary?.selectedModel;
       if (entry.mode === 'finish' && modelSelection?.conversationId === queueSessionSummary?.conversationId && isAstraModel(modelSelection?.model, modelSelection?.reasoningEffort)) {
@@ -6276,7 +6323,7 @@ async function stopCurrentTurn(): Promise<void> {
   finally { if (selectedId === id && selectionGeneration === generation) { controlledStopPending = false; void refreshSessionControls(); } }
 }
 let composerDiscoveryGeneration = 0;
-async function sendComposer(delivery?: 'finish', plan?: string[], planObjective?: string, controlAction = false): Promise<boolean | void> {
+async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: string[], planObjective?: string, controlAction = false): Promise<boolean | void> {
   const input = $<HTMLTextAreaElement>('chatInput');
   const key = draftKey();
   const projectId = selectedId ? sessions.find(row => row.id === selectedId)?.projectId ?? null : selectedProjectId;
@@ -6848,6 +6895,14 @@ export function initChat(next: Deps): void {
   $('chatInput').addEventListener('keydown', (event) => {
     if (skillPicker?.keydown(event)) return;
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (currentPreparedPlan() || authoredComposerText().trim() || imageDrafts.get(draftKey())?.length) $<HTMLFormElement>('composer').requestSubmit(); }
+    // Cmd/Ctrl+Shift+Enter sends the other way than the Follow-up default (Codex does the same).
+    else if (event.key === 'Enter' && event.shiftKey && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+      event.preventDefault();
+      if (!authoredComposerText().trim() && !imageDrafts.get(draftKey())?.length) return;
+      if ($('sendOptions').hidden || currentPreparedPlan() || taskPlans.has(draftKey())) { $<HTMLFormElement>('composer').requestSubmit(); return; }
+      retireDictation();
+      void sendComposer($<HTMLSelectElement>('sendMode').value === 'after-turn' ? 'auto' : 'after-turn');
+    }
   });
   $('composerSettings').addEventListener('toggle', paintTaskActions);
   $('composerSettings').querySelector('summary')!.addEventListener('click', () => {

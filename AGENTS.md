@@ -21,8 +21,8 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-13** (upstream through
-`4f8345d6000419286c486b56971366f3ae5f879f`). App/extension **2.1.36**,
+Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-14** (upstream through
+`80c7bad26743e5a465534003b490b3d134a5e4f5`). App/extension **2.1.36**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -252,7 +252,10 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Desktop | Windows on; macOS retains its off default and separate native OS consent; Linux supports extension browser control. | Existing screen/control grants also govern browser tools; unsupported native clipboard remains masked. No new per-tab permission dialog. |
 | Shell/UI | Dark theme, minimize to tray, no automatic connector connection/login startup by default. | Optional browser/finish/plan choices are resolved by current config and their consumer, not invented from absent fields. |
 | Command policy | Off, in Allowlist mode, with no rules. | Missing legacy settings stay Off; a missing mode defaults to Allowlist. Rules and mode persist while Off. An enabled empty Allowlist rejects every launch; an enabled empty Denylist permits simple supported commands. |
-| Plugin auto-refresh | Off. | Fresh, legacy and conservative-recovery configs start Off; an explicit saved On/Off choice survives. Local status/discovery never claims ChatGPT refreshed its connector snapshot. |
+| Plugin auto-refresh | Off. | Fresh, legacy and conservative-recovery configs start Off. While it is off and `ui.autoRefreshPluginsAsked` is not set, the window offers it once (`pluginRefresh:offer`); either answer sets `autoRefreshPluginsAsked`, which a settings save never clears. An explicit saved On/Off choice survives. Local status/discovery never claims ChatGPT refreshed its connector snapshot. |
+| Turn-done notifications | On (`ui.turnNotifications`, missing means on). | Codex's turn-completion notification. `turn-notifications.ts` watches session changes and notifies once per newer `lastTurnEndAt` of a top-level chat whose outcome is `completed` and has no new active turn, while the window is unfocused. Seeded from the session list at startup, so older turns never notify. Completion and answer evidence come from recorded session state, so recording Off also means no turn-done notification. Workers, helpers, chats whose Goal/Loop switch is on, and chats that got a Session-finish or stuck notice in the last 2 minutes stay quiet. The body is the answer's first paragraph as plain text (140 characters); a click opens the chat. |
+| Follow-up behavior | Join the running turn (`ui.followUp: 'steer'`; a broken value loads as that). | Codex's "Follow-up behavior". Each running turn starts the composer's delivery choice from this default (`queue` selects After this turn); a choice made in the send menu lasts for that turn. Cmd/Ctrl+Shift+Enter sends the other way (`sendComposer('auto' \| 'after-turn')`); with no running turn it is an ordinary send. |
+| Keep awake | On (`ui.keepAwake`, missing means on). | Codex's "Prevent sleep while running". `keep-awake.ts` holds `powerSaveBlocker` (`prevent-app-suspension`: the system stays awake, the screen may sleep) while any session is working by `sessionWorkingAt` with the bridge's `sessionActivityExpiresAt` deadline, so a chat that died mid-turn releases it when its deadline passes. Refreshed on session changes, at the nearest deadline, every 60 s and when the setting changes. |
 | Browser bridge port | Auto. | `ui.browserBridgePort` accepts Auto or 8765–8769. Auto falls back to 18765–18769, then 38765–38769 (`BROWSER_BRIDGE_AUTO_PORTS`, mirrored by the extension's `PORTS`; #1314: Windows reserved the primary range). Effective `CLF_BRIDGE_PORTS` overrides it and disables the Settings control. |
 | Background chats | On. | Omitted legacy settings use On; explicit saved On/Off remains exact. Cold Windows startup requests a minimized browser window. |
 | Background placement | Window. | `ui.backgroundPlacement` `'window'` / `'group'` (an unknown saved value reads as `'window'`), published in `/status` as `backgroundPlacement`. Group mode puts every background tab in one collapsed "Chat On Steroids" tab group in the last-focused normal window (never the background window, never incognito), then keeps using it; failures fall back to the minimized window. No follow and no compaction tab selection in the user's window (#128). |
@@ -1348,7 +1351,7 @@ plain names. ChatGPT records a connector's calls under the exact name typed (cal
 | Delivery choice | Eligibility and behavior |
 | --- | --- |
 | Immediate / `auto` | In an exact active non-Pro turn, **Send directly** claims that original turn and uses ChatGPT's own Send while the turn works. ChatGPT folds the message into the turn: it ends the running part as interrupted and continues with the message, keeping the result of a call still running. Nothing is stopped first, and the running turn's model is kept. **Inject now** takes the same native path whenever the turn takes it, because text inside a tool result never reached the model (measured 2026-10-09, #1231: ChatGPT passes a command's output alone and treats any other result's text as untrusted). Tool injection remains for Pro (including Astra), for an unproven model, and for image injection: authored `delivery: tool` then captures the exact turn, waits visibly in the existing outbox, enters only that turn's eligible outer MCP result, and fails visibly if its turn ends before delivery. A new turn resets eligibility. On a proven non-Pro model, your text (no images or files) never enters a tool result even when no direct turn can be joined: an `auto` message waits in the queue and the browser sends it through the composer once the turn allows, and an Inject now becomes that same message (`composerOnlyText`, 2026-10-12: with the turn bookkeeping unsure, four messages were folded into tool results the user never saw). For a proven idle chat/New Chat, elect the normal browser send. Unknown model/turn identity grants no interruption. |
-| After turn | Existing-session FIFO spends one distinct completion or confirmed failure/silence-refresh ticket per browser claim. Replays/restart cannot drain the next entry. Does not block an otherwise eligible immediate tool injection. |
+| After turn | Existing-session FIFO spends one distinct completion or confirmed failure/silence-refresh ticket per browser claim. Replays/restart cannot drain the next entry. Does not block an otherwise eligible immediate tool injection. **Send now** on a queued card (Codex's Steer; `sessions:sendQueuedNow { id }` → `sendQueuedInputNow`, shown while `canSendDirectly`) turns a plain queued text (no files, images, stages, recovery or finish owner) into a Send directly row (`mode: auto`, the current `directTurn`, browser transport) inside the outbox serialization, only while `sessionInputPolicy` grants a direct turn; otherwise it returns false and the message keeps waiting. |
 | Finish checkpoint | Waits for a successful finish-tool boundary; ordinary eligible chats can deliver after verified completion. Astra's separate after-turn opt-in remains explicit. Checkpoints inherit the current chat model. |
 | Native attachment | Browser upload/send only. A file-bearing active-chat input waits for the browser-safe boundary; it never becomes a tool-result file reference. |
 | Image injection | When **Inject now** is available, an image-only selection of up to ten PNG/JPEG/WebP/GIF files enters the exact chat's outer tool result as image blocks. `MAX_INPUT_IMAGES` owns admission, normalization, each outer response and retained history previews. Existing per-image and aggregate byte/pixel limits remain in force. New Chat, after-turn, mixed files and larger selections use native upload. |
@@ -1767,15 +1770,23 @@ The extension captures already-loaded pixels without fetching signed URLs; route
 owner, node and source revision must survive each await. At most two captures run concurrently.
 Previews are WebP, at most 384,000 encoded bytes, 1,600 pixels per edge and 2.56 million decoded
 pixels; source images above 30 million pixels retain metadata without a preview. Main fully
-decodes previews before asset admission. The existing 2 GiB global asset budget remains exact;
+decodes previews before asset admission. The global asset budget remains exact; its size is
+`config.sessions.storageLimitGiB` (2, 5, 10, 20 or 50; default 2; anything else loads as 2), set in
+Settings → Browser & history (Storage size) and applied through `setRecordingStorageLimit()` at
+startup and on every settings save, which re-decides the full state at once when usage is known;
 quota failures retain the canonical row and explicitly report storage full. The store keeps that as
 one state (`recordingStorageFull()`, set by a write the global limit refused, cleared by an admitted
 write or a clean-up that leaves room): it is logged once per change, travels as
 `AppState.recordingStorageFull`, and the window shows one dismissible notice that opens the clean-up.
 The same clean-up is in Settings → Agents & automation → Browser & history (Recording storage), which
 reads the usage when Settings opens. There is no automatic
-eviction. The adjacent Free image storage action offers explicit oldest-1-GiB or all-recorded-image
-cleanup with confirmation; chat text, original files and pending attachments remain. Store owns
+eviction. The adjacent Free storage action offers explicit oldest-1-GiB or all-recorded-image
+cleanup with confirmation; chat text, original files and pending attachments remain. Its third mode,
+`old-chats-gib`, takes whole chats whose `updatedAt` is over 7 days old, oldest first, until about
+1 GiB is chosen, and removes their images and long-text (`.txt`) assets. A retired long text keeps
+its `StoredText` head, loses `assetId` (or a change's `reviewAssetId`), and its note reads
+"…[N more characters removed to free storage]". Only keyed user/assistant messages and tool calls
+are rewritten; a text that any other record (or a rewritten one) still names stays on disk. Store owns
 serialized image inventory, durable reference retirement and physical removal. A removed native
 provider tuple cannot silently refill the cache when the page is observed again.
 Opening the cleanup dialog reuses the store's maintained quota total; a cold read counts file
@@ -3987,7 +3998,7 @@ sub-agents and diagnostics rows left out); it keeps one size while typing and fa
 Opening a text match calls `sessions:locate-match { id, query }` → `SessionSearchLocation | null`
 (the first user/assistant message holding a query word, read from the recording only then); the
 timeline shows it from the loaded page or loads the page around it as history, centered and briefly
-marked. Jump to latest from a history page whose end is not loaded opens the chat at its end. Primary-shortcut labels (`kbd[data-shortcut]`, the sidebar tooltip)
+marked. Jump to latest from a history page whose end is not loaded opens the chat at its end. Timeline pages (`readSessionEvents`, store option `byResidence`) and the renderer's window floor, trimming and paging cursors use `residenceOf`: an entry's position, except that a turn's final answer (`final: true`) lives at its `contentSeq`, beside its turn's end where it is drawn. ChatGPT can open the answer early in a long turn and fill it last; paged by first appearance it was never on the newest page and live updates dropped it as an old revision. Display order and turn identity keep `positionOf`. Primary-shortcut labels (`kbd[data-shortcut]`, the sidebar tooltip)
 come from `renderer/shortcuts.ts`: ⌘ on macOS, the localized Ctrl ("Strg") elsewhere.
 
 Captured ChatGPT HTML passes a strict allowlist; authored plain text stays text. Provider
@@ -4455,6 +4466,15 @@ launch `tunnel/proxy.ts` derives them (#1255): an existing `HTTPS_PROXY` is left
 `HTTPS_PROXY`, with loopback kept direct unless `NO_PROXY` is set. SOCKS4 and malformed entries are
 skipped. A failed or slow lookup means no proxy, never a tunnel that does not start. The quick
 tunnel (cloudflared) is unchanged.
+
+The app's own requests (update check, Skills from GitHub, Goal providers, remote plugins) use the
+same proxy through Node's built-in support (`app-proxy.ts`, `http.setGlobalProxyFromEnv`, Node
+24.14+; a no-op where it is missing). `HTTPS_PROXY`/`HTTP_PROXY` win; otherwise the system's HTTP(S)
+proxy for `https://github.com/` applies (no SOCKS in Node: stays direct). `NO_PROXY` keeps the
+person's entries plus loopback and `.localhost`, and adds the exact host of the custom Goal provider
+and each remote plugin whose own `resolveProxy` answer is direct (Node's `NO_PROXY` has no address
+ranges). `refreshAppProxy()` runs at startup, every 2 minutes and after each settings save, and resets
+Node's agents only when the result changed.
 
 For a few seconds after a new OpenAI tunnel-client process connects (app start, update, or a
 client the supervisor replaced), OpenAI still routes an existing chat's tool calls to the previous
