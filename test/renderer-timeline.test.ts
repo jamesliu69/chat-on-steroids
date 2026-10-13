@@ -1382,6 +1382,184 @@ it('loads recorded tool images on expansion and hides truncated binary envelopes
   expect(tool.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,YQ==');
 });
 
+// #1190: project headings come from the whole project list, chats from the newest page of all
+// history. A project whose chats are all older looked empty, and expanding it did nothing.
+async function olderProjectFixture(projectPages?: SessionSummary[][]) {
+  const project = { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', name: 'Older workspace', path: '/fixture', createdAt: 1 };
+  const recent = { ...summary([]), id: 'recent-unfiled', projectId: undefined, updatedAt: T0 + 400 };
+  const worker = { ...summary([]), id: 'older-worker', projectId: project.id, updatedAt: T0 + 3,
+    origin: { kind: 'worker' as const, fromSessionId: 'older-parent', agentId: 'worker-1', task: 'Inspect' } };
+  const parent = { ...summary([]), id: 'older-parent', conversationId: 'older-chat', projectId: project.id, updatedAt: T0 + 2 };
+  const unused = { ...summary([]), id: 'oldest-unfiled', projectId: undefined, updatedAt: T0 + 1 };
+  // The newest page of everything shows no chat of the project; the project's own pages do.
+  const all = [[recent], [unused]];
+  const own = projectPages ?? [[worker], [parent]];
+  const { w, append } = await boot([], false, [], [project], { sessions: [recent] });
+  const list = vi.fn(async (options: any) => {
+    const pages = options?.projectId === project.id ? own : all;
+    const index = options?.cursor ? pages.findIndex(rows => rows.at(-1)?.id === options.cursor.id) + 1 : 0;
+    const rows = pages[index] ?? [];
+    return { ok: true, data: { sessions: rows, total: 4, nextCursor: index < pages.length - 1 ? { updatedAt: rows.at(-1)!.updatedAt, id: rows.at(-1)!.id } : null,
+      activeId: null, pressure: [], blocked: [] } };
+  });
+  (w as any).api.listSessions = list;
+  await append([]); list.mockClear();
+  const heading = () => w.document.querySelector('.project-heading') as HTMLElement;
+  const projectCalls = () => list.mock.calls.map(([options]) => options).filter(options => options?.projectId);
+  return { w, list, heading, parent, worker, own, project, append, projectCalls };
+}
+
+it("shows a project's older chats when it is expanded, asking for that project's pages only", async () => {
+  const f = await olderProjectFixture(); f.heading().click(); await settle();
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).not.toBeNull();
+  // A page of workers alone shows no chat, so the next page of the project follows.
+  expect(f.projectCalls()).toEqual([
+    { projectId: f.project.id, limit: 60 },
+    { projectId: f.project.id, limit: 60, cursor: { updatedAt: f.worker.updatedAt, id: f.worker.id } }
+  ]);
+  // The rest of the history is not paged for it, no chat is selected, and the project stays open.
+  expect(f.list.mock.calls.every(([options]) => !!options?.projectId)).toBe(true);
+  expect(f.w.document.querySelector('[data-id="oldest-unfiled"]')).toBeNull();
+  expect(f.w.document.querySelector('.sess.is-sel')).toBeNull();
+  expect((f.w.document.querySelector('.project-group') as HTMLDetailsElement).open).toBe(true);
+});
+
+it("keeps a project's older chats through the sidebar's next refresh", async () => {
+  const f = await olderProjectFixture(); f.heading().click(); await settle();
+  await f.append([]); await settle();
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).not.toBeNull();
+  // Asked once: the refresh and another expand do not read the project again.
+  f.heading().click(); f.heading().click(); await settle();
+  expect(f.projectCalls()).toHaveLength(2);
+});
+
+it('does not overwrite a newer sidebar summary with a delayed project history page', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  const newer = { ...f.parent, projectId: undefined, title: 'Newer catalog title', updatedAt: T0 + 600 };
+  f.list.mockResolvedValue({ ok: true, data: { sessions: [newer], total: 1, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await f.append([]); await settle();
+  const row = () => f.w.document.querySelector('[data-id="older-parent"]');
+  expect(row()?.textContent).toContain('Newer catalog title');
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(row()?.textContent).toContain('Newer catalog title');
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).toBeNull();
+});
+
+it('discards a project page after its project has been removed', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  (f.w as any).api.removeProject = vi.fn(async () => ({ ok: true, data: { ...f.project, ungrouped: true } }));
+  projectMenu(f.w, f.project.id); menuItem(f.w, 'remove').click(); await settle();
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
+  expect(f.projectCalls()).toHaveLength(1);
+});
+
+it('does not resurrect a row withdrawn by a complete catalog read while its project page was pending', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  f.list.mockResolvedValue({ ok: true, data: { sessions: [], total: 0, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await f.append([]); await settle();
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
+});
+
+it('accepts genuinely older project rows despite ordinary newest-page refreshes', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  await f.append([]); await settle();
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).not.toBeNull();
+});
+
+it('does not restore a directly deleted older session from a pending project page outside the newest range', async () => {
+  const projectId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const parent = { ...summary([]), id: 'older-parent', conversationId: 'older-chat', projectId, updatedAt: T0 + 2 };
+  const f = await olderProjectFixture([[parent], [{ ...parent, id: 'older-next', updatedAt: T0 + 1 }]]);
+  f.heading().click(); await settle();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.w.document.querySelector<HTMLElement>('.project-show-more')!.click(); await settle();
+  (f.w as any).api.deleteSession = vi.fn(async () => ({ ok: true, data: true }));
+  f.w.document.querySelector<HTMLElement>('[data-id="older-parent"] .sess-menu')!.click();
+  menuItem(f.w, 'remove').click(); await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
+  finish({ ok: true, data: { sessions: [parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
+});
+
+it('stops reading a project when it is collapsed while a page is on its way', async () => {
+  const f = await olderProjectFixture();
+  let resolve!: (value: any) => void;
+  f.list.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  f.heading().click(); await settle();
+  expect(f.projectCalls()).toHaveLength(1);
+  f.heading().click();
+  resolve({ ok: true, data: { sessions: f.own[0], total: 4, nextCursor: { updatedAt: f.worker.updatedAt, id: f.worker.id }, activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.projectCalls()).toHaveLength(1);
+  expect((f.w.document.querySelector('.project-group') as HTMLDetailsElement).open).toBe(false);
+  // Expanding again continues where it stopped.
+  f.heading().click(); await settle();
+  expect(f.projectCalls()).toHaveLength(2);
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).not.toBeNull();
+});
+
+it('does not loop when a project page cannot be read, and tries again on the next expand', async () => {
+  const f = await olderProjectFixture();
+  f.list.mockResolvedValueOnce({ ok: false, error: 'Fixture read failure' } as any);
+  f.heading().click(); await settle();
+  expect(f.projectCalls()).toHaveLength(1);
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).toBeNull();
+  f.heading().click(); f.heading().click(); await settle();
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).not.toBeNull();
+});
+
+it('asks an empty project once', async () => {
+  const f = await olderProjectFixture([[]]);
+  f.heading().click(); await settle();
+  f.heading().click(); f.heading().click(); await settle();
+  expect(f.projectCalls()).toEqual([{ projectId: f.project.id, limit: 60 }]);
+  expect(f.w.document.querySelectorAll('.project-group .sess')).toHaveLength(0);
+});
+
+it('continues with the project\'s older pages from "Show more"', async () => {
+  const task = (index: number): SessionSummary => ({ ...summary([]), id: `project-task-${index}`, conversationId: `chat-${index}`, title: `Task ${index}`,
+    projectId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', updatedAt: T0 + 100 - index });
+  const f = await olderProjectFixture([[0, 1, 2, 3, 4].map(task), [5, 6].map(task)]);
+  f.heading().click(); await settle();
+  const shown = () => [...f.w.document.querySelectorAll<HTMLElement>('.project-group .sess')].map(row => row.dataset.id);
+  expect(shown()).toHaveLength(5);
+  // Everything loaded is on screen, and the project has more: the button reads on from there.
+  const more = f.w.document.querySelector('.project-show-more') as HTMLElement;
+  expect(more).not.toBeNull();
+  more.click(); await settle();
+  expect(f.projectCalls()).toHaveLength(2);
+  expect(shown()).toEqual([0, 1, 2, 3, 4, 5, 6].map(index => `project-task-${index}`));
+  expect(f.w.document.querySelector('.project-show-more')).toBeNull();
+});
+
 it('pages project tasks as complete parent/worker groups and keeps the selected task visible after reordering', async () => {
   const project = { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', name: 'Paged', path: '/paged', createdAt: 1 };
   const tasks = Array.from({ length: 8 }, (_, index) => ({ ...summary([]), id: `project-task-${index}`, conversationId: `chat-${index}`, title: `Task ${index}`, projectId: project.id }));
@@ -3455,6 +3633,32 @@ it('queues every generated stage in an existing session without Send and preserv
   expect(w.document.querySelectorAll('#finishQueue .queued-input')).toHaveLength(1);
   expect(w.document.getElementById('finishQueue')!.textContent).toContain('Verify it');
   expect(live.sent).toHaveLength(1);
+});
+
+// #1428: in a chat with nothing running, the plan used to be queued "at Session finish" right
+// away, and Session finish only comes at the end of a turn. Nothing started until the person
+// sent some other message.
+it('shows the plan in an idle chat and starts it with Enter, like in a new chat', async () => {
+  const { w, live } = await boot([]);
+  const api = (w as any).api;
+  api.getSessionControls = (id: string) => Promise.resolve({ ok: true, data: { sessionId: id, conversationId: 'chat-a', automation: 'off', activeTurnId: null, finishHeld: false, blocked: '', job: null } });
+  // Selected again, so the chat's state is read with nothing running.
+  w.document.getElementById('newChat')!.click(); await settle();
+  (w.document.querySelector(`[data-id="${summary([]).id}"]`) as HTMLButtonElement).click(); await settle();
+  api.draftTaskPlan = vi.fn(async () => ({ ok: true, data: ['Build foundation', 'Verify it'] }));
+  const input = w.document.getElementById('chatInput') as HTMLTextAreaElement;
+  input.value = 'Build the whole task'; input.dispatchEvent(new w.Event('input'));
+  w.document.getElementById('createPlan')!.click(); w.document.getElementById('composer')!.dispatchEvent(new w.Event('submit', { cancelable: true })); await settle();
+  // Written out for review, not queued behind a turn that will not come.
+  expect(live.sent).toHaveLength(0);
+  expect(w.document.querySelectorAll('.plan-stage')).toHaveLength(2);
+  expect(w.document.getElementById('chatSend')!.getAttribute('aria-label')).toBe('Start full plan');
+  expect(w.document.querySelector('.plan-stage-heading')!.getAttribute('title')).not.toMatch(/Session finish/);
+  input.focus();
+  input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await settle();
+  expect(live.sent).toHaveLength(1);
+  expect(live.sent[0]).toMatchObject({ sessionId: summary([]).id, text: 'Build foundation', stages: ['Verify it'], objective: 'Build the whole task', authoredSource: 'objective', mode: 'auto' });
+  expect(w.document.querySelectorAll('.plan-stage')).toHaveLength(0);
 });
 
 it('retries a materialized finish checkpoint without recreating its already independent siblings', async () => {

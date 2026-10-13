@@ -145,12 +145,19 @@ let deps: Deps;
 let visible = false;
 
 let sessions: SessionSummary[] = [];
+/** Last accepted newest-page receipt; its covered range can withdraw a delayed older row. */
+let newestSessionPage: { sessions: SessionSummary[]; nextCursor: { updatedAt: number; id: string } | null } | null = null;
 let pressure = new Map<string, TokenPressure>();
 let sessionTotal = 0;
 let sessionPageCursor: { updatedAt: number; id: string } | null = null;
 let sessionPageLoading = false;
 /** True after the user has explicitly paged beyond the newest page. */
 let loadedOlderSessions = false;
+/**
+ * Where each project's own history continues (#1190): absent until the project was first
+ * expanded, a cursor while it has older chats that are not loaded, null once all of them are.
+ */
+const projectHistory = new Map<string, { cursor: { updatedAt: number; id: string } | null; asked: boolean; loading: boolean }>();
 let activeId: string | null = null;
 let selectedId: string | null = null;
 let newChatSelected = true;
@@ -249,7 +256,7 @@ async function removeProjectFromSidebar(id: string): Promise<void> {
     // Reject list snapshots captured before this newer catalog commit.
     ++sessionsLoadGeneration;
     projects = projects.map(row => row.id === id ? removed : row);
-    expandedProjects.delete(id); projectVisibleCounts.delete(id);
+    expandedProjects.delete(id); projectVisibleCounts.delete(id); projectHistory.delete(id);
     if (selectedProjectId === id) {
       if (!selectedId) {
         const oldKey = draftKey();
@@ -514,7 +521,9 @@ function onDictationEvent(event: DictationEvent): void {
     if (['stopped', 'idle', 'ended', 'complete'].includes(status)) { completedDictation(session, 'Dictation stopped.'); return; }
     if (!session.stopping) {
       dictationPhase = ['starting', 'initializing', 'requesting'].includes(status) ? 'starting' : 'listening';
-      dictationNotice = dictationPhase === 'starting' ? 'Preparing microphone…' : 'Listening…';
+      dictationNotice = dictationPhase === 'starting' ? 'Preparing microphone…'
+        : event.engine === 'legacy' ? 'Listening with basic accuracy. For punctuation and better results, turn on online speech recognition in Windows settings.'
+          : 'Listening…';
       paintDictation();
     }
   }
@@ -685,6 +694,8 @@ let changedTranscripts: { all: boolean; ids: Set<string> } = { all: false, ids: 
 let detailStamp: { updatedAt: number; events: number } | null = null;
 let toolActivityTimer: number | undefined;
 let sessionsLoadGeneration = 0;
+/** Explicit successful session writes retire older pages; ordinary catalog reads do not. */
+let sessionMutationGeneration = 0;
 let detailLoadGeneration = 0;
 let handoffLoadGeneration = 0;
 
@@ -1048,7 +1059,8 @@ async function finishRename(save: boolean): Promise<void> {
   paintSessions();
   if (!save || value === edit.original.trim()) return;
   // Empty asks for the title the app would show without a name: ChatGPT's own.
-  await run(api.renameSession(edit.id, value || null));
+  const changed = await run(api.renameSession(edit.id, value || null));
+  if (changed) ++sessionMutationGeneration;
   await loadSessions('changed');
 }
 
@@ -1082,6 +1094,7 @@ async function toggleSessionTrust(id: string, expectedConversationId: string, tr
 async function deleteSession(id: string): Promise<void> {
   const done = await run(api.deleteSession(id));
   if (done === null) return;
+  ++sessionMutationGeneration;
   sessions = sessions.filter((entry) => entry.id !== id);
   pressure.delete(id);
   sessionTotal = Math.max(0, sessionTotal - 1);
@@ -1126,7 +1139,13 @@ async function loadSessions(detail: 'reread' | 'changed' = 'reread'): Promise<vo
   if (!list || generation !== sessionsLoadGeneration) return;
   const changed = changedTranscripts;
   changedTranscripts = { all: false, ids: new Set() };
-  if (catalog) projects = catalog;
+  if (catalog) {
+    projects = catalog;
+    for (const id of projectHistory.keys()) {
+      if (!projects.some(project => project.id === id && !project.ungrouped)) projectHistory.delete(id);
+    }
+  }
+  newestSessionPage = { sessions: list.sessions, nextCursor: list.nextCursor ?? null };
   // Once older pages have been requested, a hot refresh only replaces/updates the newest page.
   // Throwing the older rows away here would make scrolling history vanish every 400 ms while a
   // live chat is recording. Before pagination begins, replacing the first page is cheaper and
@@ -1173,9 +1192,10 @@ async function loadMoreSessions(): Promise<void> {
   if (sessionPageLoading || !sessionPageCursor || sessions.length >= sessionTotal) return;
   sessionPageLoading = true;
   const cursor = sessionPageCursor;
+  const mutation = sessionMutationGeneration;
   try {
     const page = await run(api.listSessions({ cursor, limit: SESSION_PAGE_SIZE }));
-    if (!page) return;
+    if (!page || mutation !== sessionMutationGeneration) return;
     mergeSessionRows(page.sessions);
     loadedOlderSessions = true;
     sessionTotal = page.total;
@@ -1186,6 +1206,57 @@ async function loadMoreSessions(): Promise<void> {
     paintSessions();
   } finally {
     sessionPageLoading = false;
+  }
+}
+
+/** A chat the project's section can show: workers alone leave it looking empty. */
+function projectShowsChat(id: string): boolean {
+  return sessions.some(entry => projectGroup(entry.projectId) === id && entry.origin?.kind !== 'worker' &&
+    (!!entry.conversationId || entry.origin?.kind === 'desktop'));
+}
+
+/**
+ * Reads the next page of one project's own chats (#1190). Project headings come from the whole
+ * project list, but chats from the newest page of all history: a project whose chats are all
+ * older looked empty, and expanding it did nothing. Only that project's pages are read, so the
+ * cost is what the project holds, and the rest of the sidebar does not fill up with old chats.
+ * It never selects a chat. A failed read leaves the place as it was, for the next expand.
+ */
+async function loadProjectHistory(id: string): Promise<void> {
+  const state = projectHistory.get(id) ?? { cursor: null, asked: false, loading: false };
+  projectHistory.set(id, state);
+  if (state.loading || (state.asked && !state.cursor)) return;
+  state.loading = true;
+  try {
+    do {
+      const newestAtStart = newestSessionPage;
+      const mutation = sessionMutationGeneration;
+      const page = await run(api.listSessions({ projectId: id, limit: SESSION_PAGE_SIZE, ...(state.cursor ? { cursor: state.cursor } : {}) }));
+      if (!page || projectHistory.get(id) !== state || mutation !== sessionMutationGeneration) return;
+      state.asked = true;
+      state.cursor = page.nextCursor ?? null;
+      const rows = page.sessions.filter(row => {
+        const current = sessions.find(entry => entry.id === row.id);
+        if (current && current.updatedAt >= row.updatedAt) return false;
+        if (newestSessionPage && newestSessionPage !== newestAtStart &&
+            !newestSessionPage.sessions.some(entry => entry.id === row.id)) {
+          const oldest = newestSessionPage.sessions.at(-1);
+          const outsideRange = !!newestSessionPage.nextCursor && !!oldest &&
+            (row.updatedAt < oldest.updatedAt || (row.updatedAt === oldest.updatedAt && row.id < oldest.id));
+          if (!outsideRange) return false;
+        }
+        return true;
+      });
+      mergeSessionRows(rows);
+      // Rows older than the newest page are now held: refreshes must keep them, as after scrolling.
+      if (rows.length) loadedOlderSessions = true;
+      const admitted = new Set(rows.map(row => row.id));
+      for (const entry of page.pressure) if (admitted.has(entry.id)) pressure.set(entry.id, entry);
+      paintSessions();
+      // A page of workers shows nothing; read on while the project is open and still looks empty.
+    } while (state.cursor && expandedProjects.has(id) && !projectShowsChat(id));
+  } finally {
+    state.loading = false;
   }
 }
 
@@ -1303,6 +1374,7 @@ function paintSessions(): void {
       const open = !expandedProjects.has(id);
       if (open) expandedProjects.add(id); else expandedProjects.delete(id);
       section.open = open;
+      if (open) void loadProjectHistory(id);
     });
     if (project) {
       // One button for the project's actions, as in ChatGPT; a right click on the row opens the same menu.
@@ -1330,10 +1402,16 @@ function paintSessions(): void {
     const count = projectVisibleCounts.get(id) ?? PROJECT_TASK_PAGE_SIZE;
     const shown = tasks.filter((task, index) => index < count || task.selected);
     section.append(...shown.flatMap(task => task.rows));
-    if (shown.length < tasks.length) {
+    // The project's own older chats count as "more" too, once it is known to have some (#1190).
+    const older = !!projectHistory.get(id)?.cursor;
+    if (shown.length < tasks.length || older) {
       const more = el('button', 'btn project-show-more', () => t("Show more")) as HTMLButtonElement;
       more.type = 'button'; ui(more, 'aria-label', () => t("Show more tasks in {0}", [project?.name ?? t("this project")]));
-      more.addEventListener('click', () => { projectVisibleCounts.set(id, count + PROJECT_TASK_PAGE_INCREMENT); paintSessions(); });
+      more.addEventListener('click', () => {
+        projectVisibleCounts.set(id, count + PROJECT_TASK_PAGE_INCREMENT);
+        if (older && count + PROJECT_TASK_PAGE_INCREMENT > tasks.length) void loadProjectHistory(id);
+        paintSessions();
+      });
       section.append(more);
     }
     projectSections.push(section);
@@ -1581,7 +1659,7 @@ function paintDeliveryControls(): void {
   send.dataset.action = stop ? 'stop' : 'send';
   ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : t("Send message"));
   if (stop && !working && pending) ui(send, 'aria-label', () => t("Cancel delivery"));
-  const planAction = selectedId ? t("Queue plan at Session finish") : t("Start full plan");
+  const planAction = selectedId && !chatKnownIdle(selectedId) ? t("Queue plan at Session finish") : t("Start full plan");
   if (preparedPlan && !stop) send.setAttribute('aria-label', planAction);
   else if (planMode && !stop) ui(send, 'aria-label', () => t("Generate plan"));
   send.classList.toggle('is-plan-ready', !!preparedPlan && !stop);
@@ -1644,6 +1722,14 @@ type TaskPlanDraft = { text: string; requestId: string | null; stages: string[] 
 // Planning belongs to its draft key. Completed stages own their captured objective
 // independently of composer edits; existing sessions hand them to the durable queue.
 const taskPlans = new Map<string, TaskPlanDraft>();
+/**
+ * Whether this chat is known to have no turn running (#1428). A plan in a running chat waits for
+ * its Session finish; in an idle one that finish never comes, so the plan is shown and Enter
+ * starts it, as in a new chat. A chat whose state is not known here keeps waiting for its turn.
+ */
+function chatKnownIdle(sessionId: string): boolean {
+  return controlledSessionId === sessionId && controlledSelection === selectionGeneration && controlledTurnId === null;
+}
 function currentPreparedPlan(): (TaskPlanDraft & { stages: string[] }) | null {
   const plan = taskPlans.get(draftKey());
   return plan?.stages ? plan as TaskPlanDraft & { stages: string[] } : null;
@@ -1700,7 +1786,7 @@ async function createTaskPlan(backend: 'api' | 'chatgpt'): Promise<void> {
       // unchanged source draft, before queue admission can yield to new typing.
       inputDrafts.delete(key);
       if (draftKey() === key) { replaceComposerDraft(); input.value = ''; skillPicker?.restore(); }
-      if (sessionId) await queuePreparedPlan(key, plan as TaskPlanDraft & { stages: string[] }, sessionId, projectId);
+      if (sessionId && !chatKnownIdle(sessionId)) await queuePreparedPlan(key, plan as TaskPlanDraft & { stages: string[] }, sessionId, projectId);
     }
     else plan.error = result.error;
   } catch (error) {
@@ -1739,7 +1825,7 @@ function paintPreparedPlan(): void {
       if (plan.stages.length) { paintPreparedPlan(); paintDeliveryControls(); } else cancelTaskPlan();
     });
     edit.disabled = remove.disabled = field.disabled = plan.sending;
-    ui(heading, 'title', () => selectedId ? t("Queued at Session finish; edit or delete this checkpoint independently.") : index === 0 ? t("Send includes your complete request and the full plan. Later stages are queued as verification checkpoints.") : t("Included in the first message, then queued as a checkpoint at Session finish or after a completed answer when enabled."));
+    ui(heading, 'title', () => selectedId && !chatKnownIdle(selectedId) ? t("Queued at Session finish; edit or delete this checkpoint independently.") : index === 0 ? t("Send includes your complete request and the full plan. Later stages are queued as verification checkpoints.") : t("Included in the first message, then queued as a checkpoint at Session finish or after a completed answer when enabled."));
     heading.append(label, text, edit, remove); row.append(heading, field, error); return row;
   }));
 }
@@ -1747,8 +1833,14 @@ async function sendPreparedPlan(): Promise<void> {
   const key = draftKey(), plan = currentPreparedPlan();
   if (!plan || plan.sending) return;
   if (selectedId) {
-    await queuePreparedPlan(key, plan, selectedId, sessions.find(row => row.id === selectedId)?.projectId ?? null);
-    return;
+    // Decided when it is sent: the chat may have started or finished a turn since the plan was written.
+    const target = selectedId, selection = selectionGeneration;
+    await refreshSessionControls();
+    if (selectedId !== target || selectionGeneration !== selection || taskPlans.get(key) !== plan || plan.sending) return;
+    if (!chatKnownIdle(target)) {
+      await queuePreparedPlan(key, plan, target, sessions.find(row => row.id === target)?.projectId ?? null);
+      return;
+    }
   }
   const tasks = plan.stages.map(stage => stage.trim());
   if (!tasks.length || tasks.some(task => !task) || JSON.stringify(tasks).length > 12000) { toast(t("Keep every stage nonempty and the plan below 12,000 characters.")); return; }

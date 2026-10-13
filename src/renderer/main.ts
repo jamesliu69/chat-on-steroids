@@ -4,6 +4,8 @@ import { chatgptNameLine } from './connector-name.js';
 import { CONNECTOR_SUFFIX_MAX, CONNECTOR_SUFFIX_PATTERN } from '../shared/connector-names.js';
 import { displayLocalServer } from './local-url.js';
 import { paintPluginRefreshReminder } from './plugin-refresh-reminder.js';
+import { initRecordingStorageSetting, paintRecordingStorageNotice, paintRecordingStorageUsage } from './image-storage.js';
+import { paintCredentialsNotice } from './credentials-notice.js';
 import { initUsage, refreshUsage } from './usage.js';
 import { initSidebarResize } from './sidebar-resize.js';
 import { initViewMenu } from './view-menu.js';
@@ -89,6 +91,7 @@ $('pluginRefreshReset').addEventListener('click', async () => {
     if (state) paintPluginRefreshRecovery(state);
   }
 });
+initRecordingStorageSetting();
 publishStopNoticeTexts(texts => api.setStopNoticeTexts(texts));
 // The tray menu and desktop notices come from the main process, which has no catalogs.
 publishMainTexts(texts => api.setMainTexts?.(texts));
@@ -230,6 +233,7 @@ function showTab(name: string): void {
   $('workspaceSettings').hidden = false;
   $('workspaceSettings').classList.toggle('is-sel', settings);
   if (name === 'usage') void refreshUsage();
+  if (name === 'settings') void paintRecordingStorageUsage();
   $('tabs').hidden = !settings;
   $('settingsFindBox').hidden = !settings;
   // A page opened any way leaves the search; the page list comes back.
@@ -777,7 +781,7 @@ async function saveSnapshot(patch: SettingsPatch, previous: AppState['config']):
     if (previous.multiAgent.enabled && !patch.multiAgent.enabled) {
       // A cached snapshot keeps offering the `agents` tool until the connector is
       // reloaded. Say so plainly rather than letting it look sticky.
-      toast(t("Multi-agent off. Reconnect the connector in ChatGPT (then start a new chat) to drop the agents tool."));
+      toast(t("Multi-agent off. Refresh the Core plugin in ChatGPT (then start a new chat) to drop the agents tool."));
     } else if (toolSurfaceChanged) {
       toast(t("Tools changed. Start a new ChatGPT conversation to guarantee the new tool list is loaded."));
     }
@@ -1537,6 +1541,8 @@ function apply(next: AppState): void {
   paintUpdate(next);
   paintPluginRefreshRecovery(next);
   paintPluginRefreshReminder(next.connectorSchemas ?? {}, next.confirmedConnectorSchemas ?? {}, next.status.surfaces);
+  paintRecordingStorageNotice(next.recordingStorageFull === true);
+  paintCredentialsNotice(next, api, apply);
 
   // ---- health numbers and facts
   paintClock();
@@ -1644,10 +1650,10 @@ function apply(next: AppState): void {
   if (!config.ui.minimizeToTray) {
     ui($('backgroundRunningCopy'), 'textContent', () => t("The app quits completely when you close the window."));
   } else if (next.platform?.family === 'macos') {
-    ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use the connector. It stays available from the menu bar and Dock when you close the window."));
+    ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use its plugins in ChatGPT. It stays available from the menu bar and Dock when you close the window."));
     ui($('minimizeToTrayCopy'), 'textContent', () => t("Hide the window to the menu bar when closed"));
   } else {
-    ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use the connector. It stays in the tray when you close the window."));
+    ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use its plugins in ChatGPT. It stays in the tray when you close the window."));
     ui($('minimizeToTrayCopy'), 'textContent', () => t("Keep running in the tray when closed"));
   }
 
@@ -1931,7 +1937,7 @@ function connectorCards(next: AppState): HTMLElement[] {
         el(
           'p',
           'hint',
-          () => t("Select the tunnel for this connector.")
+          () => t("Select the tunnel for this plugin.")
         )
       );
     }
@@ -1947,7 +1953,7 @@ function connectorCards(next: AppState): HTMLElement[] {
         lastRequestAt === null
           ? pluginCreated(surface)
             ? el('p', 'hint', () => t("Added in ChatGPT. Its tools have not run yet."))
-            : el('p', 'hint is-warn', () => t("Not created in ChatGPT yet — ChatGPT has never called this connector."))
+            : el('p', 'hint is-warn', () => t("Not created in ChatGPT yet — ChatGPT has never called this plugin."))
           : el(
               'p',
               'hint',

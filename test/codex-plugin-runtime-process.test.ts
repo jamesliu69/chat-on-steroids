@@ -41,7 +41,9 @@ describe.runIf(process.platform === 'win32')('Windows Codex runtime launch bound
     vi.restoreAllMocks();
     vi.clearAllMocks();
     vi.unstubAllEnvs();
-    if (directory) await rm(directory, { recursive: true, force: true });
+    // Electron's exited subprocess can briefly retain a Windows directory handle.
+    // Retry only bounded fixture cleanup; test assertions and process failures remain fatal.
+    if (directory) await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   it('runs the npm JavaScript entry in Node mode without a shell or parent-environment mutation', async () => {
