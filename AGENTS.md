@@ -22,7 +22,7 @@ the code currently does it. Known implementation gaps are collected in §21 inst
 mixed into the happy path as features.
 
 Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-13** (upstream through
-`2affe2957a5139f40f0ac404fed3c08a89493ad1`). App/extension **2.1.35**,
+`461b97018ce6a993601231dd9bd4a5af7a93417d`). App/extension **2.1.35**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -3977,6 +3977,8 @@ same persisted preference. `translate="no"` protects text and attributes, includ
 language names. Japanese has its own system-font fallbacks and CJK wrapping. Changing language
 repaints owned labels while retaining drafts/selections; never translate authored messages,
 provider text or file paths. Catalog checks cover all source keys and numbered placeholders;
+the worker delivery line (`chat.ts`) and disabled dock reasons (`workspace-docks.ts`) are bound
+to their mounted nodes too. Feature names in sentences follow each catalog's control labels.
 `dom.run()` translates catalogued IPC errors before displaying a toast; unknown error strings
 and successful payloads stay literal. With no saved preference or available storage, the app
 follows the system language, falling back to English when unsupported. A saved preference wins.
