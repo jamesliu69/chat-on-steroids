@@ -151,6 +151,11 @@ let sessionPageCursor: { updatedAt: number; id: string } | null = null;
 let sessionPageLoading = false;
 /** True after the user has explicitly paged beyond the newest page. */
 let loadedOlderSessions = false;
+/**
+ * Where each project's own history continues (#1190): absent until the project was first
+ * expanded, a cursor while it has older chats that are not loaded, null once all of them are.
+ */
+const projectHistory = new Map<string, { cursor: { updatedAt: number; id: string } | null; asked: boolean; loading: boolean }>();
 let activeId: string | null = null;
 let selectedId: string | null = null;
 let newChatSelected = true;
@@ -249,7 +254,7 @@ async function removeProjectFromSidebar(id: string): Promise<void> {
     // Reject list snapshots captured before this newer catalog commit.
     ++sessionsLoadGeneration;
     projects = projects.map(row => row.id === id ? removed : row);
-    expandedProjects.delete(id); projectVisibleCounts.delete(id);
+    expandedProjects.delete(id); projectVisibleCounts.delete(id); projectHistory.delete(id);
     if (selectedProjectId === id) {
       if (!selectedId) {
         const oldKey = draftKey();
@@ -514,7 +519,9 @@ function onDictationEvent(event: DictationEvent): void {
     if (['stopped', 'idle', 'ended', 'complete'].includes(status)) { completedDictation(session, 'Dictation stopped.'); return; }
     if (!session.stopping) {
       dictationPhase = ['starting', 'initializing', 'requesting'].includes(status) ? 'starting' : 'listening';
-      dictationNotice = dictationPhase === 'starting' ? 'Preparing microphone…' : 'Listening…';
+      dictationNotice = dictationPhase === 'starting' ? 'Preparing microphone…'
+        : event.engine === 'legacy' ? 'Listening with basic accuracy. For punctuation and better results, turn on online speech recognition in Windows settings.'
+          : 'Listening…';
       paintDictation();
     }
   }
@@ -1189,6 +1196,42 @@ async function loadMoreSessions(): Promise<void> {
   }
 }
 
+/** A chat the project's section can show: workers alone leave it looking empty. */
+function projectShowsChat(id: string): boolean {
+  return sessions.some(entry => projectGroup(entry.projectId) === id && entry.origin?.kind !== 'worker' &&
+    (!!entry.conversationId || entry.origin?.kind === 'desktop'));
+}
+
+/**
+ * Reads the next page of one project's own chats (#1190). Project headings come from the whole
+ * project list, but chats from the newest page of all history: a project whose chats are all
+ * older looked empty, and expanding it did nothing. Only that project's pages are read, so the
+ * cost is what the project holds, and the rest of the sidebar does not fill up with old chats.
+ * It never selects a chat. A failed read leaves the place as it was, for the next expand.
+ */
+async function loadProjectHistory(id: string): Promise<void> {
+  const state = projectHistory.get(id) ?? { cursor: null, asked: false, loading: false };
+  projectHistory.set(id, state);
+  if (state.loading || (state.asked && !state.cursor)) return;
+  state.loading = true;
+  try {
+    do {
+      const page = await run(api.listSessions({ projectId: id, limit: SESSION_PAGE_SIZE, ...(state.cursor ? { cursor: state.cursor } : {}) }));
+      if (!page) return;
+      state.asked = true;
+      state.cursor = page.nextCursor ?? null;
+      mergeSessionRows(page.sessions);
+      // Rows older than the newest page are now held: refreshes must keep them, as after scrolling.
+      loadedOlderSessions = true;
+      for (const entry of page.pressure) pressure.set(entry.id, entry);
+      paintSessions();
+      // A page of workers shows nothing; read on while the project is open and still looks empty.
+    } while (state.cursor && expandedProjects.has(id) && !projectShowsChat(id));
+  } finally {
+    state.loading = false;
+  }
+}
+
 function maybePageSessions(): void {
   if (!visible || !sessionPageCursor || sessions.length >= sessionTotal) return;
   const pane = $('sessionList').closest<HTMLElement>('.scroll');
@@ -1303,6 +1346,7 @@ function paintSessions(): void {
       const open = !expandedProjects.has(id);
       if (open) expandedProjects.add(id); else expandedProjects.delete(id);
       section.open = open;
+      if (open) void loadProjectHistory(id);
     });
     if (project) {
       // One button for the project's actions, as in ChatGPT; a right click on the row opens the same menu.
@@ -1330,10 +1374,16 @@ function paintSessions(): void {
     const count = projectVisibleCounts.get(id) ?? PROJECT_TASK_PAGE_SIZE;
     const shown = tasks.filter((task, index) => index < count || task.selected);
     section.append(...shown.flatMap(task => task.rows));
-    if (shown.length < tasks.length) {
+    // The project's own older chats count as "more" too, once it is known to have some (#1190).
+    const older = !!projectHistory.get(id)?.cursor;
+    if (shown.length < tasks.length || older) {
       const more = el('button', 'btn project-show-more', () => t("Show more")) as HTMLButtonElement;
       more.type = 'button'; ui(more, 'aria-label', () => t("Show more tasks in {0}", [project?.name ?? t("this project")]));
-      more.addEventListener('click', () => { projectVisibleCounts.set(id, count + PROJECT_TASK_PAGE_INCREMENT); paintSessions(); });
+      more.addEventListener('click', () => {
+        projectVisibleCounts.set(id, count + PROJECT_TASK_PAGE_INCREMENT);
+        if (older && count + PROJECT_TASK_PAGE_INCREMENT > tasks.length) void loadProjectHistory(id);
+        paintSessions();
+      });
       section.append(more);
     }
     projectSections.push(section);
@@ -1581,7 +1631,7 @@ function paintDeliveryControls(): void {
   send.dataset.action = stop ? 'stop' : 'send';
   ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : t("Send message"));
   if (stop && !working && pending) ui(send, 'aria-label', () => t("Cancel delivery"));
-  const planAction = selectedId ? t("Queue plan at Session finish") : t("Start full plan");
+  const planAction = selectedId && !chatKnownIdle(selectedId) ? t("Queue plan at Session finish") : t("Start full plan");
   if (preparedPlan && !stop) send.setAttribute('aria-label', planAction);
   else if (planMode && !stop) ui(send, 'aria-label', () => t("Generate plan"));
   send.classList.toggle('is-plan-ready', !!preparedPlan && !stop);
@@ -1644,6 +1694,14 @@ type TaskPlanDraft = { text: string; requestId: string | null; stages: string[] 
 // Planning belongs to its draft key. Completed stages own their captured objective
 // independently of composer edits; existing sessions hand them to the durable queue.
 const taskPlans = new Map<string, TaskPlanDraft>();
+/**
+ * Whether this chat is known to have no turn running (#1428). A plan in a running chat waits for
+ * its Session finish; in an idle one that finish never comes, so the plan is shown and Enter
+ * starts it, as in a new chat. A chat whose state is not known here keeps waiting for its turn.
+ */
+function chatKnownIdle(sessionId: string): boolean {
+  return controlledSessionId === sessionId && controlledSelection === selectionGeneration && controlledTurnId === null;
+}
 function currentPreparedPlan(): (TaskPlanDraft & { stages: string[] }) | null {
   const plan = taskPlans.get(draftKey());
   return plan?.stages ? plan as TaskPlanDraft & { stages: string[] } : null;
@@ -1700,7 +1758,7 @@ async function createTaskPlan(backend: 'api' | 'chatgpt'): Promise<void> {
       // unchanged source draft, before queue admission can yield to new typing.
       inputDrafts.delete(key);
       if (draftKey() === key) { replaceComposerDraft(); input.value = ''; skillPicker?.restore(); }
-      if (sessionId) await queuePreparedPlan(key, plan as TaskPlanDraft & { stages: string[] }, sessionId, projectId);
+      if (sessionId && !chatKnownIdle(sessionId)) await queuePreparedPlan(key, plan as TaskPlanDraft & { stages: string[] }, sessionId, projectId);
     }
     else plan.error = result.error;
   } catch (error) {
@@ -1739,7 +1797,7 @@ function paintPreparedPlan(): void {
       if (plan.stages.length) { paintPreparedPlan(); paintDeliveryControls(); } else cancelTaskPlan();
     });
     edit.disabled = remove.disabled = field.disabled = plan.sending;
-    ui(heading, 'title', () => selectedId ? t("Queued at Session finish; edit or delete this checkpoint independently.") : index === 0 ? t("Send includes your complete request and the full plan. Later stages are queued as verification checkpoints.") : t("Included in the first message, then queued as a checkpoint at Session finish or after a completed answer when enabled."));
+    ui(heading, 'title', () => selectedId && !chatKnownIdle(selectedId) ? t("Queued at Session finish; edit or delete this checkpoint independently.") : index === 0 ? t("Send includes your complete request and the full plan. Later stages are queued as verification checkpoints.") : t("Included in the first message, then queued as a checkpoint at Session finish or after a completed answer when enabled."));
     heading.append(label, text, edit, remove); row.append(heading, field, error); return row;
   }));
 }
@@ -1747,8 +1805,14 @@ async function sendPreparedPlan(): Promise<void> {
   const key = draftKey(), plan = currentPreparedPlan();
   if (!plan || plan.sending) return;
   if (selectedId) {
-    await queuePreparedPlan(key, plan, selectedId, sessions.find(row => row.id === selectedId)?.projectId ?? null);
-    return;
+    // Decided when it is sent: the chat may have started or finished a turn since the plan was written.
+    const target = selectedId, selection = selectionGeneration;
+    await refreshSessionControls();
+    if (selectedId !== target || selectionGeneration !== selection || taskPlans.get(key) !== plan || plan.sending) return;
+    if (!chatKnownIdle(target)) {
+      await queuePreparedPlan(key, plan, target, sessions.find(row => row.id === target)?.projectId ?? null);
+      return;
+    }
   }
   const tasks = plan.stages.map(stage => stage.trim());
   if (!tasks.length || tasks.some(task => !task) || JSON.stringify(tasks).length > 12000) { toast(t("Keep every stage nonempty and the plan below 12,000 characters.")); return; }
@@ -5105,9 +5169,8 @@ function paintSwarm(state: SwarmState): void {
           top.append(clear);
         }
         const sub = el('div', 'model-sub');
-        const bits = [t("{0} pending", [agent.pending]), t("{0} delivered", [agent.delivered])];
-        if (agent.conversationId) bits.push(t("chat bound"));
-        sub.textContent = bits.join(' · ');
+        ui(sub, 'textContent', () => [t("{0} pending", [agent.pending]), t("{0} delivered", [agent.delivered]),
+          ...(agent.conversationId ? [t("chat bound")] : [])].join(' · '));
         row.append(top, sub);
         if (agent.task) row.append(el('p', 'hint', agent.task));
         // Why it failed, not just that it did. A worker only reaches this state when its

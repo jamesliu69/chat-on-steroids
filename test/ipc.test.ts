@@ -1314,6 +1314,12 @@ describe('every link the window offers', () => {
         // Only a blank tab to paste into: the browser would open its internal page as a new tab instead.
         expect(openInPreferredBrowser).toHaveBeenCalledWith('about:blank', { browser, reveal: true });
       }
+      // A copy that fails is reported, and no browser comes up for an address that is not there.
+      write.mockClear();
+      vi.mocked(openInPreferredBrowser).mockClear();
+      write.mockRejectedValueOnce(new Error('clipboard unavailable') as never);
+      expect(await handlers.get('browser:setupOpen')!(null, { browser: 'chrome', page: 'extensions' })).toMatchObject({ ok: false });
+      expect(openInPreferredBrowser).not.toHaveBeenCalled();
       write.mockClear();
       vi.mocked(openInPreferredBrowser).mockClear();
       await handlers.get('browser:setupOpen')!(null, { browser: 'edge', page: 'chatgpt' });
@@ -2255,10 +2261,11 @@ describe('native worker checkout cleanup confirmation', () => {
   });
 });
 
-it('projects unreadable ledger health through state:get and recovers only through explicit reset', async () => {
+it('projects reloaded unreadable ledger health through state:get and recovers only through explicit reset', async () => {
   const file = path.join(dir, 'state', 'plugin-refresh.json');
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, '{broken');
+  initDurableStore(dir);
   const broken: any = await handlers.get('state:get')!(null, undefined);
   expect(broken).toMatchObject({ ok: true, data: { pluginRefreshUnreadable: true } });
   expect(await fs.readFile(file, 'utf8')).toBe('{broken');
