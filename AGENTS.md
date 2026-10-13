@@ -21,8 +21,8 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-12** (upstream through
-`4b8efb1eb518c2940908a9786c3ff69e68de17e1`). App/extension **2.1.35**,
+Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-13** (upstream through
+`2f1a5812ccf2b9d667f4ec8ba589bb15a56c2ed2`). App/extension **2.1.35**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -713,8 +713,8 @@ Once a chat's history has been limited, the page's Retry presses after Retry-Aft
 0 s, 2, 4, 8, then 15 minutes (`LOAD_FAILURE_LIMITED_BACKOFF_MS`), instead of the once-a-minute
 pace kept for an ordinary load failure. Measured 2026-10-11: pressing every minute drew a new 429
 with a longer Retry-After each time. The recorder writes a repeating history-limit notice (one
-that carries `retryAt`) once: an identical one within 30 minutes of the newest `chat_error` is not
-appended again, while the provider access dialog is still recorded again after 30 s. The bridge's
+that carries `retryAt`) once: an identical one within 30 minutes of the newest blocking `chat_error`
+is not appended again (a passing failure in between, such as a stream 404, does not repeat it), while the provider access dialog is still recorded again after 30 s. The bridge's
 provider-limit hold still follows every new Retry-After, because it reads the observations, not
 the recording.
 **A chat deleted in ChatGPT** answers its history request and a send into it with HTTP 404 and
@@ -1768,7 +1768,8 @@ old worker final must not put a revived worker to sleep. Unknown identity is nev
 similar text, time or display position. Recovery messages use this same projection mechanism.
 
 The session's derived `timelineTurns` index retains each exact generation's first start and
-observed end. Every read projects `turnOrigin` before rendering so paging out a `turn_start`
+observed end; a `turn_start` of that generation after its end reopens it until its next end, so
+untagged rows of the reopened stretch (worker reports) stay inside the turn, before its answer. Every read projects `turnOrigin` before rendering so paging out a `turn_start`
 cannot change the order of its surviving replies/calls. Explicit null means unowned, not a
 license to infer a group from whichever start remains in the page. `authoredAt` retains provider
 creation time separately from the local execution clock; legacy canonical assistant keys supply
@@ -2029,7 +2030,9 @@ as soon as it loads), stops it when another browser is chosen, and the app stops
   forward, or opens one on ChatGPT; opening a chat from the app reveals that chat's window.
 - **Extension.** Loaded unchanged. Its `chrome.tabs`, `chrome.windows` and `chrome.debugger` are
   answered by `TabModel` + `callChromeApi` through the worker preload; messaging, scripting,
-  storage, alarms and runtime stay Electron's. `ExtensionWorkerLink` keeps its worker alive and
+  storage and runtime stay Electron's. The preload also supplies `chrome.alarms` on the worker's own
+  timers: Electron drops a due alarm without calling `onAlarm`, which stopped the companion's retry
+  pass after its first failure (2026-10-12). `ExtensionWorkerLink` keeps its worker alive and
   queues events while none can take them.
 - **Navigation lock.** The app-wide `will-navigate`/`will-redirect`/window-open lockdown exempts
   only web contents the host owns (`cosBrowser.browses(contents)`): a browser has to navigate, and
@@ -2825,8 +2828,11 @@ as proof the tab is still there. An idle chat with nothing owed is deliberately 
 Provider access-limit notices preserve only an active Goal/Loop's existing exact session/turn
 recovery grant. They neither renew its deadline nor discard a pending/spent repair or postpone
 Goal pickup. Genuine new work in the same batch keeps its ordinary rearming authority, and an
-accepted terminal boundary still retires its pending repair, including after handout. Ordinary
-chats retain their no-reload behavior for these blocking notices; no new grant comes from a dialog.
+accepted terminal boundary still retires its pending repair, including after handout. A chat
+whose unfinished work the user wants continued (`recoveryInputAllowed`) keeps its existing grant too,
+deferred past the limit: the history Retry-After, or `ACCESS_LIMIT_HOLD_MS` (5 min) without one. Retiring
+it left a turn that dropped into a limit stopped for good (2026-10-12). No reload happens while the
+limit holds, and no new grant comes from a dialog.
 
 | Trigger | Required meaning |
 | --- | --- |
@@ -4286,8 +4292,23 @@ Page side: fiber.js decides ownership once (`ownResult`, `ownRequestPath`, `ownS
 proven app id, then proven link, then the configured/proven name, except that a name match on a
 surface with a proven app but a different id is foreign. Rows carry `own`; content.js trusts it.
 Turns carry `sightings` for every connector's result rows, emitted once per request id as
-`app_sightings`. The Core @-mention, plugin refresh (`ownSnapshot`, installed-row names) and the
+`app_sightings`. The Core @-mention, plugin refresh (`ownSnapshot`, native installed-link IDs) and the
 Plugins catalog limit use proven ids first.
+
+**Installed discovery.** `/settings/plugins-settings` accepts visible native buttons
+and same-origin links to exact `plugin_asdk_app_*` management routes inside the page's `main`.
+A unique surface with account-proven App IDs accepts only its proven IDs, permitting
+renames before learned names catch up; a same-named foreign ID never falls back.
+First enrollment and legacy buttons use the unique configured/learned name leaf.
+Unknown, catalog, external, transcript, hidden or ambiguous rows grant no authority.
+After awaits, the same unique connected visible link must retain its exact href;
+the elected helper adds its request marker before navigating/reading the card.
+Legacy buttons retain their flow. Each invocation fences its starting URL/epoch,
+including document registration before claim/result dispatch; navigation cannot
+inherit click authority or misattribute an old failed read. Name collisions fail
+closed, while an enrolled exact App ID retains its surface and declaration budget.
+Initial enrollment and a legitimately recreated, proven identity remain supported.
+
 An explicit successful Plugin Restart may rearm matching unclaimed, non-manual, unfinished
 refresh debt with a fresh request ID. The existing serialized ledger publishes that ID before
 waking browser work; ordinary status polling and a closed helper do not grant another attempt.
@@ -4706,8 +4727,9 @@ diagnostics, not restart authority; secrets must never be printed to investigate
 
 Activity › Diagnostics report (`diagnostics:saveReport`, `diagnostics-report.ts`) saves one plain-text
 file for bug reports: versions, bridge/companion state, the connection self-test, settings,
-pending commands/workers and the newest 3 MB of `app.log`, then reveals it so the user reads
-it first. Everything passes `report-scrub.ts`: credentials, emails, `KEY=value`/`Bearer`, private
+memory per kind of process (`memoryFacts`: main, app window, each built-in-browser ChatGPT page,
+graphics, helpers; megabytes only), pending commands/workers and the newest 3 MB of `app.log`,
+then reveals it so the user reads it first. Everything passes `report-scrub.ts`: credentials, emails, `KEY=value`/`Bearer`, private
 hosts and IPs are masked; the home folder becomes `~`; every other path segment becomes a stable
 `<p:xxxx>` tag that keeps its extension (ids, dated session ids and structural/app folder names stay
 readable); known personal values (project paths/names, chat titles, worker tasks/labels/results,

@@ -74,6 +74,7 @@ const {
   CHAT_SILENCE_MS,
   GOAL_QUIET_MS,
   PRO_SILENCE_MS,
+  ACCESS_LIMIT_HOLD_MS,
   DELIBERATE_SILENCE_MS,
   PRO_ACTIVITY_MS,
   COMMAND_DEADLINE_MS,
@@ -3380,7 +3381,8 @@ describe('automatic compaction', () => {
       // Half an hour of work: no pickup, no reload, and the ticket is still the same one.
       for (let minute = 0; minute < 30; minute += 2) {
         await vi.advanceTimersByTimeAsync(2 * 60_000);
-        await request('POST', '/events', { body: { conversationId, events: [{ kind: 'turn_start', time: Date.now(), turnId: 'long-turn' }] } });
+        await request('POST', '/events', { body: { conversationId, events: [{ kind: 'turn_start', time: Date.now(), turnId: 'long-turn' },
+          { kind: 'assistant_message', time: Date.now(), turnId: 'long-turn', text: `still working ${minute}`, messageId: 'a-long', state: 'streaming', activeNow: true }] } });
         expect(await takeRepair(), `minute ${minute + 2}`).toBeNull();
       }
       expect(continuationForSession(filed.body.sessionId as string)?.token).toBe(token);
@@ -3388,6 +3390,42 @@ describe('automatic compaction', () => {
       await request('POST', '/events', { body: { conversationId, events: [{ kind: 'turn_end', time: Date.now(), turnId: 'long-turn', outcome: 'completed' }] } });
       await vi.advanceTimersByTimeAsync(2 * 60_000);
       expect(await takeRepair()).toMatchObject({ reason: 'compaction' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // 2026-10-12: the page lost its stream, the model went quiet with its turn still open, and silence
+  // recovery left the chat to the ticket while the ticket waited for that turn: nothing moved.
+  it('asks for the handoff once a working turn falls silent', async () => {
+    vi.useFakeTimers();
+    try {
+      await pair();
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac0c';
+      await request('POST', '/events', {
+        body: { conversationId, events: [
+          { kind: 'user_message', time: Date.now(), text: 'a turn that goes quiet', messageId: 'm-auto-silent' },
+          { kind: 'turn_start', time: Date.now(), turnId: 'quiet-turn' }
+        ] }
+      });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
+      const takeRepair = async (): Promise<{ token: string; reason: string } | null> => {
+        await sweepStaleSwarm(Date.now());
+        return (await request('GET', '/status')).body.repairs?.[0] ?? null;
+      };
+      // Still working: no pickup.
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      await request('POST', '/events', { body: { conversationId, events: [{ kind: 'assistant_message', time: Date.now(), turnId: 'quiet-turn',
+        text: 'working', messageId: 'a-quiet', state: 'streaming', activeNow: true }] } });
+      expect(await takeRepair()).toBeNull();
+      // No turn end ever arrives; the turn only goes quiet.
+      let handout: { token: string; reason: string } | null = null;
+      for (let minute = 0; minute < 12 && !handout; minute += 2) {
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        handout = await takeRepair();
+      }
+      expect(handout).toMatchObject({ reason: 'compaction' });
+      expect(continuationForSession(filed.body.sessionId as string)?.token).toBe(filed.body.token);
     } finally {
       vi.useRealTimers();
     }
@@ -3680,6 +3718,25 @@ describe('capturing a sent handoff from the recorder', () => {
     expect(saved?.text).toContain('… the middle of this brief was longer');
     expect(saved?.text.length).toBeLessThanOrEqual(96_000);
     expect(saved?.text.endsWith('END_OF_BRIEF')).toBe(true);
+  });
+
+  // 2026-10-12: the source turn was stopped and its end arrived with the handoff request, so the
+  // brief's interval held two turns and the finished brief was refused as ambiguous.
+  it('captures a handoff when the source turn reports its end after the request', async () => {
+    await pair();
+    const conversationId = 'c0c0c0c0-7870-4000-8000-000000000006';
+    await request('POST', '/events', { body: { conversationId, events: [{ kind: 'turn_start', time: Date.now(), turnId: 'source-turn' }] } });
+    const { token, anchor } = await sentHandoff(conversationId);
+    await request('POST', '/events', { body: { conversationId, events: [
+      { kind: 'turn_end', time: Date.now(), turnId: 'source-turn', outcome: 'completed' },
+      ...generation('handoff-turn', 'assistant-final', `carry on
+
+${SAMPLE_BRIEF}`)
+    ] } });
+
+    const bound = await request('POST', '/compact', { body: { conversationId, token, sourceMessageId: anchor } });
+    expect(bound.status).toBe(200);
+    expect(bound.body).toMatchObject({ bound: true, stored: true });
   });
 
   it('refuses a later Retry final that reused the same handoff user message', async () => {
@@ -10110,11 +10167,58 @@ describe('unattributed activity recovery', () => {
       expect((await notices())[0]).toMatchObject({ blocking: true, retryAt: firstRetryAt });
       // Whichever hold shows, its deadline is the newest Retry-After, though only one notice was written.
       expect((await sessionControlsFor(session.id)).recovery?.map(hold => hold.deadline)).toEqual([retryAt]);
-      // Another error in between makes the next limit a new notice again.
+      // A passing failure in between does not change the limit: it is still one notice (2026-10-12).
       await events(PRIME, [{ kind: 'chat_error', time: Date.now(), turnId: 'history-limit-repeat', recoverable: false, text: 'Something else failed' }]);
+      await events(PRIME, [{ kind: 'chat_error', time: Date.now() + 1, turnId: 'history-limit-repeat', recoverable: false, blocking: true, retryAt: Date.now() + 30_000, text: limit }]);
+      expect(await notices()).toHaveLength(1);
+      // Another blocking failure in between makes the next limit a new notice again.
+      await vi.advanceTimersByTimeAsync(60_000);
+      await events(PRIME, [{ kind: 'chat_error', time: Date.now(), turnId: 'history-limit-repeat', recoverable: false, blocking: true, text: 'Another blocking failure' }]);
       await events(PRIME, [{ kind: 'chat_error', time: Date.now() + 1, turnId: 'history-limit-repeat', recoverable: false, blocking: true, retryAt: Date.now() + 30_000, text: limit }]);
       expect(await notices()).toHaveLength(2);
     } finally { vi.useRealTimers(); }
+  });
+
+  it('leaves a newer turn\'s silence watch alone when an older sweep finishes late (#1360)', async () => {
+    // A sweep finds a grant spent, then awaits tickets and pickups before it retires that grant. A
+    // new turn that starts during those awaits owns a new grant; retiring it by chat id left the
+    // new turn without its silence deadline and without its one reload.
+    const inputModule = await import('../src/main/session/input.js');
+    const gate = faultGate();
+    const original = inputModule.pendingQueuedPickups;
+    const held = vi.spyOn(inputModule, 'pendingQueuedPickups').mockImplementationOnce(async () => {
+      await gate.hold();
+      return original();
+    });
+    try {
+      await pair();
+      // A turn without a local call: its silence is spent without a reload.
+      await events(PRIME, [{ kind: 'model_selection', time: Date.now(), model: 'GPT-5.6 Sol', reasoningEffort: 'high' }, openTurn('stale-sweep-old')]);
+      const session = (await findSessionByConversation(PRIME))!;
+      const sweeping = sweepStaleSwarm(Date.now() + CHAT_SILENCE_MS + 1);
+      await gate.entered;
+
+      // New work in the same chat while the old sweep is still awaiting.
+      await events(PRIME, [
+        { kind: 'user_message', time: Date.now(), messageId: 'stale-sweep-question', text: 'Next question' },
+        openTurn('stale-sweep-new')
+      ]);
+      await attributed(PRIME, false, Date.now());
+      const watched = (await sessionControlsFor(session.id)).recovery?.find(hold => hold.kind === 'silence');
+      expect(watched, 'the new turn is watched').toBeDefined();
+
+      gate.release();
+      await sweeping;
+      expect((await sessionControlsFor(session.id)).recovery?.find(hold => hold.kind === 'silence'), 'the old sweep left the new grant alone')
+        .toEqual(watched);
+      // And the new turn still gets its one reload at its own deadline.
+      const reloads = () => getLog().filter(entry => entry.message.includes('asking the browser to reload ' + PRIME)).length;
+      const before = reloads();
+      await sweepStaleSwarm(watched!.deadline + 1);
+      expect(reloads() - before).toBe(1);
+    } finally {
+      gate.release(); held.mockRestore();
+    }
   });
 
   it('refuses a pre-existing repair handout while a newer history Retry-After is active', async () => {
@@ -10216,6 +10320,28 @@ describe('unattributed activity recovery', () => {
       await notice();
       await sweepStaleSwarm(Date.now());
       expect(await maintenance()).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps a chat that continues unfinished work under watch past a provider access limit with no Retry-After (2026-10-12)', async () => {
+    // A long turn dropped, its recovery reload met ChatGPT's access limit with no Retry-After, and the
+    // chat's watch was retired: nothing reloaded or continued it again, though the page came back.
+    vi.useFakeTimers();
+    try {
+      await pair();
+      getConfig().ui.autoContinue = true;
+      await events(PRIME, [{ kind: 'model_selection', time: Date.now(), model: 'GPT-5.6 Sol', reasoningEffort: 'high' }, openTurn('limited-continue')]);
+      await attributed(PRIME, false, Date.now());
+      await events(PRIME, [{ kind: 'chat_error', time: Date.now(), turnId: 'limited-continue',
+        recoverable: false, blocking: true, text: 'provider access limit' }]);
+      // No reload against the live limit.
+      await vi.advanceTimersByTimeAsync(ACCESS_LIMIT_HOLD_MS - 1000);
+      await sweepStaleSwarm(Date.now());
+      expect(await maintenance()).toBeNull();
+      // Once the limit's few minutes are over, the ordinary silence recovery takes the chat back.
+      await vi.advanceTimersByTimeAsync(2000);
+      await sweepStaleSwarm(Date.now());
+      expect(await maintenance()).toMatchObject({ conversationId: PRIME, reason: 'silence' });
     } finally { vi.useRealTimers(); }
   });
 

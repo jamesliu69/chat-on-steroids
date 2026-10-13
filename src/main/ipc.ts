@@ -72,7 +72,7 @@ import { runningToolActivity } from './mcp/call-context.js';
 import { onBackgroundExecChange, runningExecProcesses, stopExecProcess } from './codex/ownership.js';
 import { keychainNoticeReady } from './keychain-notice.js';
 import { runDiagnostics } from './diagnostics.js';
-import { readRecentLog, renderDiagnosticsReport, saveDiagnosticsReport, systemFacts } from './diagnostics-report.js';
+import { readRecentLog, renderDiagnosticsReport, saveDiagnosticsReport, systemFacts, memoryFacts } from './diagnostics-report.js';
 import { listSessions, readTurnTraces } from './session/store.js';
 import { formatLogAsJson, formatLogForClipboard, getLog, logInfo, onLog } from './logger.js';
 import { managedWorktreeCleanupOffers, acknowledgeManagedWorktreeCleanupOffer } from './agents.js';
@@ -1127,6 +1127,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       projects: await listProjects().catch(() => []),
       workerTexts: workers.flatMap(worker => [worker.task ?? '', worker.label ?? '', worker.result ?? '']),
       log: await readRecentLog(),
+      memory: memoryFacts(getWindow()),
       now: Date.now()
     });
     return saveDiagnosticsReport(text, getWindow());
@@ -1210,8 +1211,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
   // Installation does not change the saved execution browser or load the CoS host.
   handle('browser:setupOpen', async (payload) => {
     const { browser, page } = z.object({ browser: z.enum(['chrome', 'edge', 'brave']), page: z.enum(['extensions', 'chatgpt']) }).strict().parse(payload);
-    const url = page === 'chatgpt' ? 'https://chatgpt.com/' : `${browser === 'edge' ? 'edge' : browser === 'brave' ? 'brave' : 'chrome'}://extensions/`;
-    await openInPreferredBrowser(url, { browser, reveal: true });
+    if (page === 'chatgpt') {
+      await openInPreferredBrowser('https://chatgpt.com/', { browser, reveal: true });
+      return true;
+    }
+    // A browser opens its own internal pages only from its address bar: given on the command line,
+    // chrome://extensions and edge://extensions both open a new tab instead (measured 2026-10-12).
+    // So the address goes on the clipboard and the browser comes up with a new tab to paste it into.
+    clipboard.writeText(`${browser}://extensions`);
+    await openInPreferredBrowser('about:blank', { browser, reveal: true });
     return true;
   });
 
