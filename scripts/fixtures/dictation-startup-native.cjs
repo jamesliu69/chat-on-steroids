@@ -4,13 +4,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const vm = require('node:vm');
 const { execFileSync, spawn } = require('node:child_process');
+const { readRecognizerScript, windowsPowerShellPath } = require('./dictation-startup-fixture-utils.cjs');
 if (process.platform !== 'win32') throw new Error('Windows PowerShell is required');
-const source = fs.readFileSync(path.join(__dirname, '../../src/main/dictation.ts'), 'utf8');
-const embedded = source.match(/const SCRIPT = (\[[\s\S]*?\])\.join\('\\r\\n'\)/);
-assert(embedded, 'production script must be located');
-const original = vm.runInNewContext(embedded[1], Object.create(null)).join('\r\n');
+const original = readRecognizerScript();
+const powershell = windowsPowerShellPath();
 const native = original.match(/\$cosRecognizerSource = @'\r\n([\s\S]*?)\r\n'@/)[1];
 const encode = script => Buffer.from(script, 'utf16le').toString('base64');
 const args = script => ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encode(script)];
@@ -109,8 +107,9 @@ public static class WaitProbe {
 }`;
   const ps = `$ErrorActionPreference='Stop'\r\nAdd-Type -WarningAction SilentlyContinue -TypeDefinition @'\r\n${syntheticDefinitions()}\n${probe}\r\n'@\r\n` +
     `$rows = foreach($generic in $false,$true) { foreach($status in [Enum]::GetValues([Windows.Foundation.AsyncStatus])) { [pscustomobject]@{generic=$generic;status=$status.ToString();result=[WaitProbe]::Run($generic,$status)} } }; $rows | ConvertTo-Json -Compress`;
-  const output = execFileSync('powershell.exe', args(ps), { windowsHide: true, encoding: 'utf8', timeout: 25_000 });
+  const output = execFileSync(powershell, args(ps), { windowsHide: true, encoding: 'utf8', timeout: 25_000 });
   const rows = JSON.parse(output.trim().split(/\r?\n/).at(-1));
+  assert.equal(rows.length, 8, 'both production waits must report all four operation states');
   for (const row of rows) {
     const expected = { Started: 'TimeoutException:', Completed: 'Completed', Canceled: 'OperationCanceledException:', Error: 'COMException:80045509' }[row.status];
     assert(row.result.startsWith(expected), `${row.generic ? 'compile' : 'start'} ${row.status}: expected ${expected}, got ${row.result}`);
@@ -136,7 +135,7 @@ async function startupCase(scenario, revoke, expectedEngine) {
   const stopFile = base + '.stop', release = base + '.release', scriptFile = base + '.ps1';
   for (const file of [stopFile, release]) fs.rmSync(file, { force: true });
   fs.writeFileSync(scriptFile, '\uFEFF' + startupScript(parent.pid, stopFile), 'utf8');
-  const child = spawn('powershell.exe', args('& ([scriptblock]::Create([System.IO.File]::ReadAllText($env:COS_FIXTURE_SCRIPT)))'), {
+  const child = spawn(powershell, args('& ([scriptblock]::Create([System.IO.File]::ReadAllText($env:COS_FIXTURE_SCRIPT)))'), {
     windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, COS_FIXTURE_SCENARIO: scenario, COS_FIXTURE_RELEASE: release, COS_FIXTURE_SCRIPT: scriptFile }
   });

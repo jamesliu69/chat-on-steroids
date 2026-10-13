@@ -7,18 +7,16 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const vm = require('node:vm');
 const { execFileSync, spawn } = require('node:child_process');
+const { readRecognizerScript, windowsPowerShellPath } = require('./dictation-startup-fixture-utils.cjs');
 
 if (process.platform !== 'win32') {
   console.log('Skipped: Windows PowerShell required');
   process.exit(0);
 }
 
-const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src/main/dictation.ts'), 'utf8');
-const embedded = source.match(/const SCRIPT = (\[[\s\S]*?\])\.join\('\\r\\n'\)/);
-if (!embedded) throw new Error('Could not locate the production recognizer script');
-const original = vm.runInNewContext(embedded[1], Object.create(null)).join('\r\n');
+const original = readRecognizerScript();
+const powershell = windowsPowerShellPath();
 const encode = script => Buffer.from(script, 'utf16le').toString('base64');
 
 // 1. Syntax of the full script, as PowerShell itself reads it.
@@ -27,7 +25,7 @@ fs.writeFileSync(scriptFile, '﻿' + original, 'utf8');
 try {
   const parse = "$errors = $null; $tokens = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:COS_SMOKE_SCRIPT, [ref]$tokens, [ref]$errors); " +
     "if($errors.Count) { $errors | ForEach-Object { [Console]::Error.WriteLine($_.ToString()) }; exit 1 }";
-  execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encode(parse)], {
+  execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encode(parse)], {
     env: { ...process.env, COS_SMOKE_SCRIPT: scriptFile }, encoding: 'utf8', timeout: 15_000
   });
 } finally { fs.rmSync(scriptFile, { force: true }); }
@@ -35,7 +33,7 @@ try {
 // 1b. The C# recognizer compiles against this Windows' own metadata (what runs before any audio).
 const definitions = original.slice(0, original.indexOf('\r\n$modern = $false'));
 if (!definitions.includes('function CompileRecognizer')) throw new Error('Recognizer definitions not found');
-const compiledOutput = execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+const compiledOutput = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
   encode(definitions.replace('__COS_PARENT_PID__', String(process.pid)) + "\r\nCompileRecognizer\r\n'compiled'")], { encoding: 'utf8', timeout: 30_000 });
 if (!compiledOutput.includes('compiled')) throw new Error('The recognizer did not compile: ' + compiledOutput.slice(-500));
 
@@ -59,7 +57,7 @@ function run(name, onListening) {
     if (!parent.pid) throw new Error('Failed to launch the parent process fixture');
     const stopFile = path.join(os.tmpdir(), `cos-dictation-smoke-${process.pid}-${name}.stop`);
     fs.rmSync(stopFile, { force: true });
-    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive',
+    const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive',
       '-EncodedCommand', encode(loopScript(parent.pid, stopFile))], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let buffer = '', stderr = '', listened = false, acted = false, stopped = false;
     const finish = ok => { clearTimeout(timer); parent.kill(); fs.rmSync(stopFile, { force: true }); resolve(ok); };
@@ -103,4 +101,4 @@ function run(name, onListening) {
   } else {
     process.exitCode = 1;
   }
-})();
+})().catch(error => { console.error(error); process.exitCode = 1; });
