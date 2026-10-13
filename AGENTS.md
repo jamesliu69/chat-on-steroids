@@ -22,7 +22,7 @@ the code currently does it. Known implementation gaps are collected in §21 inst
 mixed into the happy path as features.
 
 Baseline source alignment: **2026-09-17**; targeted merge updates: **2026-10-13** (upstream through
-`780a4d1592beb4346321c8ba04607ef2fd90d014`). App/extension **2.1.35**,
+`4f8345d6000419286c486b56971366f3ae5f879f`). App/extension **2.1.36**,
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -372,6 +372,13 @@ Setup profiles switch only Core/Desktop/Plugins tunnel IDs and the tunnel API-ke
 The active IDs remain in `config.tunnel`; `config.setupProfiles` contains inactive snapshots
 only. `setup-profiles.ts` switches both in one queued config commit, incrementing `profileEpoch`.
 Keys remain in `secrets.bin`: the original profile keeps `openaiApiKey`, others use `setup:<id>`.
+A `secrets.bin` that working secure storage cannot read (lost key after a keychain reset or a moved
+profile, a damaged file, Linux `v10` ciphertext) is never composed over: every mutation fails with
+"The saved keys could not be read". `AppState.credentialsUnreadable` reports that state (only a
+read can set it; unavailable storage is the separate `secureStorage` state), and the window shows a
+notice whose Start fresh asks first, then calls `credentials:start-fresh`. That tries one more read
+and, only if it still fails, renames the file to `secrets.unreadable-<UTC stamp>.bin` (kept, never
+read again) and starts an empty store. It returns whether anything was set aside.
 Settings writes fence changed tunnel IDs by profile identity/epoch; key writes name their exact
 profile. Connection lifecycle reuses the selected key and reconnects when the OpenAI profile
 epoch changes, even if its tunnel ID matches. Each Core MCP endpoint generation freezes the local
@@ -710,6 +717,11 @@ start reuses the existing single recovery scheduler when the deadline expires. A
 when neither is usable, a 60-second **local fallback** applies instead. This fallback is not
 a claim that ChatGPT supplied a retry deadline. The existing pending-repair and terminal
 pickup-stopped countdowns retain their prior precedence over the generic limit notice.
+While the chat's own automatic Compact & Resume ticket is still before its handoff request, the
+recovery projection is a single read-only `compaction` countdown with `phase` `waiting` (the
+source turn still works) or `asking` (the request is being sent); the dock shows it without a
+clock. From the request on, the chat's Compact & Resume timeline row reports progress and the
+projection is empty. The countdown authorizes nothing.
 Once a chat's history has been limited, the page's Retry presses after Retry-After back off to
 0 s, 2, 4, 8, then 15 minutes (`LOAD_FAILURE_LIMITED_BACKOFF_MS`), instead of the once-a-minute
 pace kept for an ordinary load failure. Measured 2026-10-11: pressing every minute drew a new 429
@@ -919,6 +931,18 @@ escapes, live revocation during an await, and preserving an unrelated user's new
 **Intent:** a chat consistently works in its selected local folder, and workers/resumed chats
 retain that choice. Sidebar organization must not destroy work or grant access.
 
+Project headings come from the whole catalog, chats from the newest page of all history. So a
+project's chats can all lie outside that page (#1190): `sessions:list` takes an optional
+`projectId` and then pages that project's sessions alone, with the same bounded cursor (`total`
+stays the whole history). The renderer asks once when a project is first expanded and merges only
+those rows; a page of workers shows no chat, so it reads on while the project is open and still
+looks empty. "Show more" continues with the project's cursor once everything loaded is shown. It
+never selects a chat, and a failed read is retried on the next expand.
+Each page retains its project-history owner. Removed or replaced owners and successful explicit
+session rename/delete commits revoke pending pages; ordinary catalog reads do not. A newer
+accepted catalog page preserves its newer/equal summaries and withdraws missing rows within its
+covered range without starving genuinely older project rows. Only admitted rows update pressure.
+
 `projects.ts` owns a bounded catalog of canonical absolute local folders with stable UUIDs.
 Adding uses the native folder selection/approved-root flow, resolves the real directory and
 deduplicates it. Session metadata owns `projectId`. Before send/use, `projectWorkspace()` and
@@ -1080,8 +1104,9 @@ Every successful launch also returns a session id when it finishes immediately. 
 `write_stdin` calls can reread completed output after direct polling or automatic delivery;
 structured results keep `session_id` for running work and use `completed_session_id` for
 finished work, so existing polling loops still stop. Either id is the `write_stdin` input.
-On every OS, structured `output_replayed` marks a retained reread and `benign_exit` marks a
-proven expected non-zero result; raw exit codes remain intact. ChatGPT gives the model the
+On every OS, structured `output_replayed` marks a retained reread and `expected_exit` marks a
+proven expected non-zero result (`benign_exit` until 2.1.35; renamed with the Windows shell notes
+for #1417, because ChatGPT's approval reviewer read both as a tool ruling on risk); raw exit codes remain intact. ChatGPT gives the model the
 structured result rather than the text, so `exec_command`'s advisory `Note:` lines (batch
 exit codes, benign exits, recovery hints, a still-running identical command) are also carried
 in structured `supplemental_context`; delivery appends its own app context there after them.
@@ -1743,7 +1768,12 @@ owner, node and source revision must survive each await. At most two captures ru
 Previews are WebP, at most 384,000 encoded bytes, 1,600 pixels per edge and 2.56 million decoded
 pixels; source images above 30 million pixels retain metadata without a preview. Main fully
 decodes previews before asset admission. The existing 2 GiB global asset budget remains exact;
-quota failures retain the canonical row and explicitly report storage full. There is no automatic
+quota failures retain the canonical row and explicitly report storage full. The store keeps that as
+one state (`recordingStorageFull()`, set by a write the global limit refused, cleared by an admitted
+write or a clean-up that leaves room): it is logged once per change, travels as
+`AppState.recordingStorageFull`, and the window shows one dismissible notice that opens the clean-up.
+The same clean-up is in Settings → Agents & automation → Browser & history (Recording storage), which
+reads the usage when Settings opens. There is no automatic
 eviction. The adjacent Free image storage action offers explicit oldest-1-GiB or all-recorded-image
 cleanup with confirmation; chat text, original files and pending attachments remain. Store owns
 serialized image inventory, durable reference retirement and physical removal. A removed native
@@ -2687,6 +2717,12 @@ same question, turn, work revision and document immediately before the actual in
 A pre-Send withdrawal reports which fence ended it (`left-chat`, `stop-requested`,
 `new-user-message`, `turn-changed`, `turn-progressed`, `page-final`, `page-unreadable`,
 `journal-pending`, `app-refused` or `lease-lost`), so the log can tell a moving page from a lost claim.
+
+After the computer sleeps (or the process is stopped), every activity deadline is already past.
+`noteRecoverySweepTick` runs on each tick of the 30-second sweep timer; a tick more than two minutes
+after the previous one gives every working chat a fresh `WAKE_GRACE_MS` (90 s) deadline, so pages can
+reconnect and report before silence recovery reloads anything. It grants no activity and changes no
+other recovery clock.
 
 Continue also refreshes the current native assistant response before recovery Stop and
 before and after asynchronous Send authorization. Its exact final message vetoes Continue
@@ -3635,15 +3671,27 @@ of appearance controls.
 The Windows composer dictation control uses `preload/index.ts`'s fixed
 `dictationSupported`, `startDictation`, `stopDictation` and
 `onDictationEvent` methods. `main/dictation.ts` alone owns a Windows
-`System.Speech.Recognition` child process and sends validated
-`shared/dictation.ts` events (`status`, `partial`, `final`, `error`) to
-its originating `webContents`. Only an explicit microphone click starts it;
+PowerShell recognizer child and sends validated `shared/dictation.ts` events
+(`status`, `partial`, `final`, `error`) to its originating `webContents`. The child
+dictates with Windows' own `Windows.Media.SpeechRecognition` engine (online, with
+punctuation) and falls back to offline `System.Speech` when that cannot run;
+`status: 'listening'` carries `engine: 'modern' | 'legacy'`, and the renderer tells
+the person when only the basic engine listens. Its fixed error sentences are catalog
+keys. Only an explicit microphone click starts it;
 the renderer owns the current composer draft, stops on manual edits/navigation,
-and never sends recognized text automatically. A normal Stop grants 650ms for
-final recognition; app `before-quit` kills the child synchronously, and the
+and never sends recognized text automatically. Stop creates a per-session stop file
+that the child polls; it then finishes the phrase in progress and exits, with 4 s
+before it is killed. App `before-quit` kills the child synchronously, and the
 PowerShell event loop checks the owning app's PID each second so a crashed/killed
-app cannot leave an orphan recording. No audio enters IPC or storage;
+app cannot leave an orphan recording. `scripts/fixtures/smoke-dictation-parent-windows.cjs`
+parses the whole script with PowerShell and runs its loop without a microphone. No audio enters IPC or storage;
 macOS/Linux hide this Windows-only control.
+WinRT constraint compilation and StartAsync each have a 15-second bound and require Completed.
+Their waits and startup publication recheck the existing parent PID and Stop marker. Cancellation,
+Stop and owner loss exit without fallback; availability failures and timeouts may fall back only
+while ownership remains valid. Permission denial still forbids fallback, and modern cancellation
+and disposal precede legacy startup. Synthetic startup tests exercise these boundaries without
+opening a microphone; they do not establish live audio recognition or legacy microphone acceptance.
 
 Interface icons use one system: the bundled Phosphor font (`renderer/icons.css`, built from
 `@phosphor-icons/web`). Code names an icon by meaning (`icon('i-retry')`) and `dom.ts` `ICONS`
@@ -4024,7 +4072,9 @@ session-scoped actions inside that dialog. Normal/Goal/Loop and Plan use their e
 the Goal row opens the objective editor, including before the first message. The mode menu's Goal
 and Loop pencils open that editor without switching automation; Save applies objective and mode,
 then closes the menu. The Plan toolbar toggle only arms planning, even over an existing draft;
-Send/Enter generates. Queued and prepared plan stages show up to three lines. The model menu lists
+Send/Enter generates. In a chat with a turn running, the written plan is queued at that turn's
+Session finish at once; in a new chat, or one known to be idle (#1428), it is shown and Send/Enter
+starts it now (the choice is made again when it is sent). Queued and prepared plan stages show up to three lines. The model menu lists
 every observed model separately behind its model-name disclosure; the compact popover leads
 with the selected effort and the slider only adjusts that model. Closing the popover resets
 the disclosure; Escape closes the list before the popover and returns focus to its trigger.
@@ -4067,12 +4117,14 @@ and reload backing follow the persisted palette. `scripts/verify-appearance.cjs`
 production renderer in isolated Electron with color, queue/push, theme, reset, reload and narrow
 layout checks. It does not operate the installed app or a provider conversation.
 
-Unreadable plugin-refresh ledgers fail closed. `pluginRefreshUnreadable()` validates without
-repairing or rearming; `AppState.pluginRefreshUnreadable` exposes only that boolean. Settings
+Unreadable plugin-refresh ledgers fail closed. `pluginRefreshUnreadable()` uses the same
+revision-scoped read cache without repairing or rearming; `AppState.pluginRefreshUnreadable`
+exposes only that boolean. Settings
 shows the read error beside Automatic plugin refresh even when it is off. The explicit
-`plugin-refresh:reset` / `resetPluginRefresh()` action rechecks under the ledger owner's lock;
+`plugin-refresh:reset` / `resetPluginRefresh()` action rechecks the file under the ledger owner's lock;
 a healthy or missing ledger is a no-op. `recoverDurable()` copies the bad file to a unique
 `state/plugin-refresh.recovery-<uuid>.json` before atomically installing an empty ledger.
+Successful recovery invalidates that ledger's durable revision and replaces its read cache.
 Failed backup/replacement retains the original and never queues a recovery retry. Only a
 successful reset clears cached confirmation and wakes browser work; old request IDs stay fenced.
 
@@ -4286,6 +4338,41 @@ duplicate surfaces and I/O failures leave the ledger intact and reject new work 
 `Could not read plugin-refresh state`; parser contents stay private. A missing file still
 allows initial enrollment. Tolerant reads for auxiliary state keep their existing behavior.
 
+
+**Scoped refresh receipts.** Each published surface captures its configured tunnel/profile.
+New ledger rows carry `tunnelKey`; old rows with a concrete App ID require that same App ID
+to prove the configured OpenAI tunnel. A completed, unambiguous receipt may then bind a changed
+schema and durably claim its one Refresh click, or record manual handling if no control exists.
+Unconfirmed, manual, parked or ambiguously failed receipts, and unchanged completed schemas, remain
+`observeOnly`; full matching declarations can bind them without a new Refresh click. Manual/cloudflared
+runs retain schema proof only within the current process; another publication or scope cannot
+borrow it. A read-only legacy check binds its requested tunnel/schema, and an ended failure
+projects `failed/migration` without rewriting its installation or click identity.
+An inspection failure before a completed legacy migration claims its click may retry within
+the existing failure budget; binding still requires the same app and live owned tunnel.
+
+`pluginRefreshStatuses()` and `confirmedPluginSchemas()` project committed rows cached by
+`durableRevision('plugin-refresh')`. Reads create no debt, repair no rows, emit no browser wake
+and expose no App IDs, declarations or private errors. Writes/store replacement invalidate the
+cache. Failed reads are discarded and retry on the next call without Reset or browser work;
+a read overlapping recovery cannot replace or project an older snapshot after the write commits.
+`beginPluginToolCall` reserves successful
+use for one publication; the caller may confirm it only after a successful provider tool result.
+Explicit request primitives bind `requestedVersion`, `requestedFromVersion`, requested tunnel
+and optional first schema, retain claimed/manual custody, and reserve at most one durable startup
+attempt per accepted round. These primitives do not change automatic preferences or install apps.
+
+| Receipt | Readiness evidence | Refresh authority |
+| --- | --- | --- |
+| Missing or foreign scope | Unknown | No borrowed grant |
+| Current unclaimed debt | Pending | One durable claim before a click |
+| Claimed, not confirmed | Refreshing or failed | No second click |
+| Manual or ended observation | Manual or failed | Read-only recheck only |
+| Unscoped completed legacy identity, changed schema | Unknown until app/tunnel proof | Bind scope, then one durable claim; ambiguous outcomes stay read-only |
+| Other unscoped legacy identity | Unknown or scoped migration failure | Same App ID, tunnel and full declarations; no new click |
+| Scoped full confirmation | Current; unstable transports require this process | No additional click |
+| Future-version intent | Wait for the exact build; reserve startup once durably | No grant to the old build |
+
 Setup counts a connector as created in ChatGPT from this run's requests or from
 `connector-proof.ts`: requests and tool calls through the same tunnel in earlier runs, an
 enrolled refresh row, or the extension's `core_plugin` message (ChatGPT's own app list names
@@ -4360,6 +4447,14 @@ opens the app on click. A skipped or failed notice is not retried; notification 
 tunnel state or recovery. No raw tunnel detail or secret identifier enters the notice.
 `test/connection.test.ts` and `test/connection-notice.test.ts` cover grace/recovery, sleep,
 intentional retirement and notification presentation.
+
+tunnel-client reads proxies only from its environment (Go: `HTTPS_PROXY`, `NO_PROXY`). On every
+launch `tunnel/proxy.ts` derives them (#1255): an existing `HTTPS_PROXY` is left alone; otherwise
+`ALL_PROXY` is passed on when Go can use it; otherwise the system's proxy for the control plane
+(`session.resolveProxy`, supplied by main through `setSystemProxyResolver`, 3 s limit) becomes
+`HTTPS_PROXY`, with loopback kept direct unless `NO_PROXY` is set. SOCKS4 and malformed entries are
+skipped. A failed or slow lookup means no proxy, never a tunnel that does not start. The quick
+tunnel (cloudflared) is unchanged.
 
 For a few seconds after a new OpenAI tunnel-client process connects (app start, update, or a
 client the supervisor replaced), OpenAI still routes an existing chat's tool calls to the previous
