@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { expect, it } from 'vitest';
+import { it } from 'vitest';
+import { assertTranslatedUpdateTexts, updateTextLocales } from './fixtures/update-texts.js';
 const keys = [
   "Choose Update all to retry.",
   "Choose Update all to retry. You can keep using the current app.",
@@ -28,13 +28,6 @@ const keys = [
   "Could not verify the saved connector against the current tool definitions.",
   "In ChatGPT, refresh this existing connector, then choose Update all to recheck. If Refresh is unavailable, save a Diagnostics report from Activity."
 ];
-it.each(["de", "es", "fr", "ja", "ko", "pt-BR", "pt-PT", "ru", "tr", "vi", "zh-CN", "zh-TW"])('publishes the translated update recovery strings in %s', locale => {
-  const catalog = JSON.parse(readFileSync(`src/renderer/locales/${locale}.json`, 'utf8'));
-  for (const key of keys) {
-    expect(typeof catalog[key], key).toBe('string');
-    expect(catalog[key].trim(), key).not.toBe('');
-    expect(catalog[key], key).not.toBe(key);
-    expect([...catalog[key].matchAll(/\{(\d+)\}/g)].map(match => match[1]).sort(), key)
-      .toEqual([...key.matchAll(/\{(\d+)\}/g)].map(match => match[1]).sort());
-  }
+it.each(updateTextLocales)('publishes the translated update recovery strings in %s', locale => {
+  assertTranslatedUpdateTexts(locale, keys);
 });

@@ -5,6 +5,7 @@ const path = require('node:path');
 const http = require('node:http');
 const assert = require('node:assert/strict');
 const { fixtureConfigSource } = require('./fixtures/app-defaults.cjs');
+const { loadFixtureAssets, fixtureAssetHandler } = require('./fixtures/static-assets.cjs');
 const root = path.resolve(__dirname, '..'), built = path.join(root, 'out/renderer');
 const output = path.join(root, 'outputs/plugin-refresh-recovery');
 const before = process.argv.includes('--before');
@@ -25,16 +26,11 @@ app.whenReady().then(async () => {
       resetPluginRefresh:()=>{window.resetCalls++;return new Promise(resolve=>window.finishReset=resolve)}
     },{get:(target,key)=>key in target?target[key]:String(key).startsWith('on')?()=>()=>{}:()=>ok(null)});
     window.fixturePush=()=>listener(structuredClone(state));`;
-  const server=http.createServer((req,res)=>{
-    const pathname=new URL(req.url,'http://127.0.0.1').pathname;
-    if(pathname==='/fixture.js'){res.setHeader('Content-Type','text/javascript');res.end(fixture);return;}
-    const file=path.resolve(built,'.'+(pathname==='/'?'/index.html':pathname));
-    if(!file.startsWith(built+path.sep)||!fs.existsSync(file)){res.writeHead(404);res.end();return;}
-    const type={'.html':'text/html','.js':'text/javascript','.css':'text/css','.woff2':'font/woff2','.webp':'image/webp'}[path.extname(file)];
-    if(type)res.setHeader('Content-Type',type);
-    const data=fs.readFileSync(file);
-    res.end(path.extname(file)==='.html'?data.toString().replace('<head>','<head><script src="/fixture.js"></script>'):data);
-  });
+  const assets=loadFixtureAssets(built),page=assets.get('/index.html');
+  if(!page)throw new Error('Built renderer index is missing');
+  assets.set('/index.html',{...page,bytes:Buffer.from(page.bytes.toString().replace('<head>','<head><script src="/fixture.js"></script>'))});
+  assets.set('/fixture.js',{type:'text/javascript',bytes:Buffer.from(fixture)});
+  const server=http.createServer(fixtureAssetHandler(assets));
   let win;
   try {
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); fs.mkdirSync(output,{recursive:true});
