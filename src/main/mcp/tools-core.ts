@@ -1,5 +1,9 @@
 import { toolDeclaration } from './tool-declarations.js';
 import { registerPlanTool } from './plan-tool.js';
+import { registerSessionTool as registerSessionSearchReadTool } from './session-tool.js';
+import { ArtifactFetchError } from './artifact-fetch.js';
+import { ArtifactTargetError } from './artifact-target.js';
+import { downloadArtifactFile } from './artifact-download.js';
 import { goalWorkerChat, imageExportCapable } from '../bridge.js';
 import { exportImage, ImageExportError } from '../image-export.js';
 import { awaitRequestCorrelation } from '../session/correlation.js';
@@ -64,6 +68,8 @@ import {
   MAX_UNREAD_EXEC_RESULTS_PER_CONVERSATION,
   noteExecAttended,
   noteExecOwner,
+  provenConversation,
+  provenSession,
   runningIdenticalExec
 } from '../codex/ownership.js';
 import {
@@ -131,6 +137,7 @@ import { repairPrimeFromResumeShadow } from '../session/continuation.js';
 import {
   currentCall,
   currentCaller,
+  freezeCurrentCallerUnattributed,
   noteChanges,
   noteCount,
   noteDetail,
@@ -240,10 +247,28 @@ function execChildEnvironment(): NodeJS.ProcessEnv {
   return applyUnifiedExecEnv(env);
 }
 
-/** One stable owner for the running model turn, upgraded lazily when page proof arrives. */
-function execPrincipal(): string | null {
+/** Resolve one stable terminal principal without borrowing another chat's identity. */
+async function execPrincipal(tool: 'exec_command' | 'write_stdin', finalizeAnonymous = false): Promise<string | null> {
+  const call = currentCall();
+  if (call?.caller.unattributedFrozen && !finalizeAnonymous) return null;
   const caller = currentCaller();
-  return executionPrincipal(caller.requestId, caller.sessionId ?? null);
+  const allowUnattributed = call?.allowUnattributed ?? getConfig().multiAgent.allowUnattributedCalls;
+  let conversationId = provenConversation(caller.requestId, caller.conversationId);
+  if (!conversationId && caller.requestId && !allowUnattributed) {
+    conversationId = await awaitFreshCallOrigin(tool, call?.startedAt ?? Date.now(), IDENTITY_EVIDENCE_MS, {
+      requestId: caller.requestId
+    });
+    if (conversationId && call) call.caller.conversationId = conversationId;
+  }
+  if (!conversationId && !caller.requestId && finalizeAnonymous) {
+    freezeCurrentCallerUnattributed();
+    return null;
+  }
+  const sessionId = conversationId
+    ? provenSession(caller.requestId, caller.sessionId ?? null)
+    : null;
+  if (call) call.caller.sessionId = sessionId;
+  return executionPrincipal(caller.requestId, sessionId);
 }
 
 export function registerCoreTools(reg: SurfaceRegistrar): void {
@@ -900,8 +925,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               }
             }
 
-            const owner = execPrincipal();
-            const unread = backgroundExecObligations(owner).exitedUnread;
+            const initialOwner = await execPrincipal('exec_command');
+            const unread = backgroundExecObligations(initialOwner).exitedUnread;
             if (unread.length >= MAX_UNREAD_EXEC_RESULTS_PER_CONVERSATION) {
               const sessionIds = unread.map((session) => session.processId).join(', ');
               return fail(
@@ -911,7 +936,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             }
 
             // Read before this launch registers, so the new copy never names itself.
-            const identical = runningIdenticalExec(owner, commandDetail, dir.virtual);
+            const identical = runningIdenticalExec(initialOwner, commandDetail, dir.virtual);
             if (identical.length) {
               const ids = identical.map((row) => row.processId).join(', ');
               const ageS = Math.max(0, Math.round((Date.now() - identical[0]!.startedAt) / 1000));
@@ -953,6 +978,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               env: execChildEnvironment(),
               tty: input.tty ?? DEFAULT_TTY
             });
+            const owner = await execPrincipal('exec_command', true);
             // Which exact session or temporary request principal may later write to this
             // process id. Request custody upgrades lazily when exact correlation arrives.
             noteExecOwner(output.processId ?? output.completedSessionId ?? null, owner);
@@ -1067,7 +1093,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           // The ownership registry decides both admission and the reason for refusal.
           // A request-scoped caller can continue a process it opened before proof. Another
           // request must wait for exact correlation; a numeric process id is not custody.
-          let asking = execPrincipal();
+          let asking = await execPrincipal('write_stdin', true);
           let denied = execOwnershipFailure(input.session_id, asking);
           if (denied === 'unidentified') {
             const caller = currentCaller();
@@ -1081,7 +1107,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
                 IDENTITY_EVIDENCE_MS,
                 { exact: true, requestId: caller.requestId }
               );
-              asking = execPrincipal();
+              asking = await execPrincipal('write_stdin', true);
               denied = execOwnershipFailure(input.session_id, asking);
             }
           }
@@ -1136,9 +1162,83 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     );
   }
 
+  // ------------------------------------------------------- download_artifact
+
+  // Requests ChatGPT native-file injection. The gateway still validates the reference,
+  // exact host and sandbox destination; metadata alone is not provenance proof.
+  if (exposedCaps.saveArtifact) {
+    reg.register(
+      'download_artifact',
+      toolDeclaration('download_artifact', () => ({
+        title: 'Save ChatGPT file',
+        description:
+          'Save one file ChatGPT generated or attached to a path inside an approved folder. ' +
+          'The file value is supplied by ChatGPT itself — never invent download_url or file_id values. ' +
+          'The destination must not already exist and its parent folder must already exist. ' +
+          'Use for images, PDFs, archives and other files ChatGPT produces; never recreate such files with apply_patch or exec_command.',
+        inputSchema: z
+          .object({
+            file: z
+              .strictObject({
+                download_url: z.string(),
+                file_id: z.string(),
+                mime_type: z.string().nullable().optional(),
+                file_name: z.string().nullable().optional(),
+                name: z.string().nullable().optional(),
+                size: z.number().int().nonnegative().nullable().optional()
+              })
+              .describe('Native file value injected by ChatGPT.'),
+            path: pathArg.describe(
+              'Destination inside an approved folder: a virtual /<root>/... path or an absolute native path. ' +
+                'Relative paths resolve against this chat\'s folder. The destination must name a file that does not already exist.'
+            )
+          })
+          .strict(),
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        _meta: { 'openai/fileParams': ['file'] }
+      })),
+      async ({ file, path: requestedPath }) =>
+        guard('download_artifact', async () => {
+          if (!caps.saveArtifact) {
+            return fail(
+              'TOOL_DISABLED: download_artifact is disabled by the current Chat On Steroids permissions. Ask the user to enable saving ChatGPT files in the app.'
+            );
+          }
+          try {
+            const saved = await downloadArtifactFile(ctx.roots, requestedPath, file, {
+              maxFileBytes: getConfig().artifacts.maxFileBytes
+            });
+            noteChanges([{ path: saved.virtual, added: 0, removed: 0, approximate: true }]);
+            logInfo(`tool download_artifact ${saved.virtual} (${formatBytes(saved.size)}, ${saved.sha256})`);
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Saved ${saved.virtual} (${formatBytes(saved.size)}, ${saved.sha256}).`
+                }
+              ],
+              structuredContent: { path: saved.virtual, size: saved.size, sha256: saved.sha256 }
+            };
+          } catch (error) {
+            if (
+              error instanceof ArtifactFetchError ||
+              error instanceof ArtifactTargetError ||
+              error instanceof SandboxError
+            ) {
+              return fail(`download_artifact failed: ${error.message}`);
+            }
+            throw error;
+          }
+        })
+    );
+  }
+
   // ------------------------------------------------------- plan and finish
 
   if (reg.sessionToolsExposed) {
+    registerSessionSearchReadTool(reg);
+  }
+  if (reg.planToolsExposed) {
     registerPlanTool(reg);
   }
   if (reg.ctx.exposedFinishTool ?? getConfig().ui.finishTool === true) {

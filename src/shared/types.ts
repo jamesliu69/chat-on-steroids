@@ -36,6 +36,7 @@ export const CAPABILITIES = [
   'move',
   'deleteFile',
   'command',
+  'saveArtifact',
   'screen',
   'control',
   'clipboardRead',
@@ -65,6 +66,7 @@ export const WRITE_CAPABILITIES: readonly Capability[] = [
   'move',
   'deleteFile',
   'command',
+  'saveArtifact',
   'control',
   'clipboardWrite'
 ];
@@ -401,6 +403,11 @@ export interface McpSettings {
   persistentUrls?: boolean;
 }
 
+export interface ArtifactSettings {
+  /** Per-file byte ceiling enforced before, during and after the download stream. */
+  maxFileBytes: number;
+}
+
 /** The opt-in local control API for an agent watching this app (`src/main/control-api.ts`). */
 export interface ControlApiSettings {
   /** Serve the loopback API and write its token to userData. Off unless the user turns it on. */
@@ -429,6 +436,7 @@ export interface Config {
   sessions: SessionSettings;
   compaction: CompactionSettings;
   multiAgent: MultiAgentSettings;
+  artifacts: ArtifactSettings;
   commandAllowlist: CommandAllowlistSettings;
   goal: GoalSettings;
   mcp: McpSettings;
@@ -737,7 +745,7 @@ export interface UpdateStatus {
 export type UpdateAllResult = 'restarting' | 'manual' | 'checking-connectors' | 'cancelled';
 
 /** Where an installation that cannot update itself gets the new version by hand. */
-export const RELEASES_PAGE = 'https://github.com/totec448-spec/chat-on-steroids/releases/latest';
+export const RELEASES_PAGE = 'https://github.com/jamesliu69/chat-on-steroids/releases/latest';
 
 /**
  * Whether `candidate` is a later release than `current`, compared as three numbers.
@@ -831,6 +839,7 @@ export const DEFAULT_CAPABILITIES: Capabilities = {
   move: false,
   deleteFile: false,
   command: false,
+  saveArtifact: false,
   screen: false,
   control: false,
   clipboardRead: false,
@@ -847,6 +856,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   move: 'Move / rename',
   deleteFile: 'Delete files',
   command: 'Run commands',
+  saveArtifact: 'Save ChatGPT files',
   screen: 'See the screen',
   control: 'Control mouse and keyboard',
   clipboardRead: 'Read clipboard',
@@ -871,6 +881,7 @@ export const CAPABILITY_DETAILS: Record<Capability, string> = {
   move: 'Move or rename, both ends inside approved folders.',
   deleteFile: 'Permanent — there is no Recycle Bin.',
   command: 'Run anything as you. NOT limited to approved folders.',
+  saveArtifact: 'Save images and files ChatGPT generates into an approved folder.',
   screen: 'Browser tabs, DOM, screenshots, console and network; native windows where supported.',
   control: 'Browser navigation, input and page JavaScript; native mouse and keyboard where supported.',
   clipboardRead: 'Read the current clipboard text.',
@@ -895,6 +906,7 @@ const CAPABILITY_TOOLS: Record<Capability, readonly string[]> = {
   move: ['apply_patch'],
   deleteFile: ['apply_patch'],
   command: ['exec_command', 'write_stdin'],
+  saveArtifact: ['download_artifact'],
   screen: ['observe'],
   control: ['computer'],
   clipboardRead: ['computer'],

@@ -43,7 +43,7 @@ export { CONNECTOR_BRAND };
 
 export interface SurfaceDefinition {
   id: SurfaceId;
-  /** MCP server name. Stable; ChatGPT keys its cached metadata off it. */
+  /** Base MCP server name. ChatGPT keys cached metadata off the final, instance-scoped name. */
   serverName: string;
   /**
    * Exactly what the user should type as the connector name in ChatGPT.
@@ -104,12 +104,13 @@ const CORE: SurfaceDefinition = {
     'Read and edit code and text files on this computer, and run commands in a real terminal. ' +
     'Use for: opening and reading files, searching a repository, applying patches, creating, renaming and deleting files, ' +
     'running builds, tests, linters, git, npm and shell commands, continuing long-running or interactive terminal sessions, ' +
-    'and saving images and files ChatGPT generates onto this computer. ' +
+    'saving images and files ChatGPT generates onto this computer, and searching and reading local recordings ' +
+    'of previous or concurrently running ChatGPT work. ' +
     'Also displays task plans and — when the user has ' +
     'enabled it — spawns and coordinates worker agents, subagents or a parallel swarm across several ChatGPT conversations.',
   cardSummary: 'Files, patches and terminal.',
   required: true,
-  tools: ['read', 'view_image', 'find', 'apply_patch', 'save_image', 'exec_command', 'write_stdin', 'update_plan', 'agents', 'session_finish', 'exec']
+  tools: ['read', 'view_image', 'find', 'apply_patch', 'save_image', 'exec_command', 'write_stdin', 'download_artifact', 'session', 'update_plan', 'agents', 'session_finish', 'exec']
 };
 
 /**
@@ -173,6 +174,19 @@ export function configuredConnectorName(id: SurfaceId): string {
  */
 export function liveConnectorName(id: SurfaceId): string {
   return learnedConnectorName(id) ?? configuredConnectorName(id);
+}
+
+/**
+ * Gives one computer a stable MCP identity without letting another Chat On Steroids
+ * installation reuse the same ChatGPT metadata cache entry. OpenAI Core tunnel ids are
+ * already unique per connector and are explicitly non-secret, so they are the instance
+ * identity without adding another persisted machine id.
+ */
+export function scopedServerName(id: SurfaceId, scope?: string): string {
+  const base = surfaceDefinition(id).serverName;
+  if (!scope) return base;
+  const match = /^tunnel_([0-9a-f]{32})$/i.exec(scope);
+  return match ? `${base}-${match[1]!.toLowerCase()}` : base;
 }
 
 /** Platform/capability projection used by setup; each registrar enforces the same split. */

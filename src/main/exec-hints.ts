@@ -1437,7 +1437,8 @@ function rebuild(text: string, seps: readonly string[], map: (part: string) => s
 export function execRecoveryHints(
   command: string,
   outputText: string,
-  shellType: ShellType = 'powershell'
+  shellType: ShellType = 'powershell',
+  evidence: { powershellParseFailed?: boolean } = {}
 ): string[] {
   const hints: string[] = [];
   const powershell = shellType === 'powershell';
@@ -1547,6 +1548,7 @@ export function execRecoveryHints(
 
   const bashQuoteFailure = command.includes('\\"') && /The string (?:is missing the terminator|starting:)/i.test(outputText);
   const parserFailure =
+    evidence.powershellParseFailed === true ||
     /\bParserError\b/i.test(outputText) ||
     // The batch runner parses each item with ScriptBlock.Create; PowerShell wraps its
     // parser diagnostic in this exception instead of emitting FullyQualifiedErrorId.
@@ -1557,9 +1559,11 @@ export function execRecoveryHints(
     // lost this hint entirely and the model was left with a foreign-language exception and no
     // statement that nothing had parsed. Two things in that output are never translated: the
     // method name the batch runner calls, and the caret underline the parser draws under the
-    // offending token. Neither appears in ordinary program output, and requiring both keeps a
-    // command that merely prints the word Create from claiming a parse failure.
-    (/"Create"/.test(outputText) && /(?:^|\n)\s*\+\s*~{2,}/.test(outputText)) ||
+    // offending token. The words and quoting around the method name ARE translated (a Chinese
+    // install writes `呼叫 "Create" 時發生例外狀況`), so the method name is matched bare.
+    // Neither part appears in ordinary program output, and requiring both keeps a command that
+    // merely prints the word Create from claiming a parse failure.
+    (/\bCreate\b/.test(outputText) && /(?:^|\n)\s*\+\s*~{2,}/.test(outputText)) ||
     /FullyQualifiedErrorId\s*:\s*(?:TerminatorExpectedAtEndOfString|MissingArgument|MissingExpressionAfterToken|MissingFileSpecification|RedirectionNotSupported|UnexpectedToken|EmptyPipeElement)/i.test(
       outputText
     );

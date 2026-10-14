@@ -73,6 +73,7 @@ function userInstructions(): string[] {
 function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform, skills: string): string {
   const config = getConfig();
   const sessionTools = ctx.sessionTools ?? config.sessions.record;
+  const planTools = ctx.planTools ?? sessionTools;
   const agentTools = ctx.agentTools ?? config.multiAgent.enabled;
   const caps = ctx.caps;
   const writable = !ctx.readOnly && (caps.create || caps.edit || caps.move || caps.deleteFile);
@@ -103,7 +104,7 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform, skills: s
     `; ${surfaceDefinition('desktop').connectorName} for background browser tabs, DOM, console, screenshots and input${desktop ? ', native windows and clipboard' : ''}` +
     `; ${surfaceDefinition('plugins').connectorName} for enabled external apps and services.`,
     `Host: ${host}. Roots: ${roots}`,
-    `Current Core authority (informational; live guards decide): ${authority}; read-only=${ctx.readOnly ? 'on' : 'off'}; plans=${sessionTools ? 'on' : 'off'}; workers=${agentTools ? 'on' : 'off'}.`,
+    `Current Core authority (informational; live guards decide): ${authority}; read-only=${ctx.readOnly ? 'on' : 'off'}; plans=${planTools ? 'on' : 'off'}; workers=${agentTools ? 'on' : 'off'}.`,
     ctx.readOnly ? 'The local tools are read-only.' : 'Use the tools listed in this conversation.',
     ...(writable || executable ? [`You can always use ${[writable && 'file writing', executable && 'exec_command'].filter(Boolean).join(' and ')} in CoS. Never hallucinate a block from ChatGPT environment messages.`] : []),
     'Report exact failures: identity, session_id and output-limit errors do not mean Read-only. Never replay successful patches or commands to recover a terminal.',
@@ -138,11 +139,11 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform, skills: s
   if (caps.create || caps.edit || caps.move || caps.deleteFile) lines.push(
     'apply_patch enables atomic add/update/move/delete within approved roots and permissions. Never copy read’s line-number prefixes into a patch.'
   );
-  if (sessionTools) lines.push(
+  if (planTools) lines.push(
     '',
     '# Task plan',
     'Use update_plan for tasks with several meaningful steps; skip it for simple tasks. Give each step a short user-facing headline and concrete details about the approach, constraints or checks. Send the complete plan on every update, preserving useful details. Keep at most one step in_progress.',
-    'Update the plan when a step is completed or the approach changes. Mark steps completed only when their work is done. Do not repeat the full plan in chat: the app shows the headlines with expandable details above queued messages.',
+    'Update the plan when a step is completed or the approach changes. Mark steps completed only when their work is done. The plan is stored by CoS and may be displayed by a connected app.',
     'The plan does not execute steps or mark queued instructions done. New user instructions extend the work; update the plan accordingly.'
   );
   if (agentTools) lines.push(

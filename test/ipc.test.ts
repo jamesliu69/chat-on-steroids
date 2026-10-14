@@ -67,12 +67,13 @@ const {
   swarmStateForCaller
 } = await import('../src/main/agents.js');
 const { registerIpc, cleanSessionName } = await import('../src/main/ipc.js');
+const { initSkillsPath, skillsDirectory } = await import('../src/main/skills.js');
 const { openInPreferredBrowser } = await import('../src/main/browser.js');
 const bridgeModule = await import('../src/main/bridge.js');
 const { app, nativeTheme, safeStorage, shell, dialog } = await import('electron');
 const { extensionDownloadUrl } = await import('../src/main/version.js');
 const { resetWorkspaces, setWorkspaceFor, workspaceEntries } = await import('../src/main/workspace.js');
-const { faultGate, makeTempDir, removeTempDir } = await import('./helpers.js');
+const { DIR_LINK, faultGate, makeTempDir, removeTempDir } = await import('./helpers.js');
 
 let dir: string;
 let currentWindow: {
@@ -299,7 +300,7 @@ it('rejects stale profile tunnel edits after A to B to A while accepting unrelat
   expect(getConfig().setupProfiles).toHaveLength(1);
 });
 
-it.each([true, false])('forwards canonical input commitment even when a legacy writer proposes recording=%s', async recording => {
+it.each([true, false])('respects recording=%s while projecting a delivered input receipt', async recording => {
   const input = await import('../src/main/session/input.js');
   const store = await import('../src/main/session/store.js');
   const previous = await readDurable('session-input');
@@ -315,13 +316,19 @@ it.each([true, false])('forwards canonical input commitment even when a legacy w
     const result = await handlers.get('sessions:outbox')!(null, undefined) as any;
     expect(result.ok).toBe(true);
     const row = result.data[0];
-    expect(getConfig().sessions).toMatchObject({ record: true, retainDays: 0 });
-    expect(row.historyAnchored).toBe(true);
+    expect(getConfig().sessions).toMatchObject({ record: recording, retainDays: 30 });
     expect(row.historyRecorded).not.toBe(true);
-    expect((await readDurable<any[]>('session-input'))![0].historyAnchored).toBe(true);
     const canonical = (await store.readEvents(session.id)).filter(event => event.kind === 'user_message');
-    expect(canonical).toHaveLength(1);
-    expect(canonical[0]).toMatchObject({ inputId: id, time: 200 });
+    if (recording) {
+      expect(row.historyAnchored).toBe(true);
+      expect((await readDurable<any[]>('session-input'))![0].historyAnchored).toBe(true);
+      expect(canonical).toHaveLength(1);
+      expect(canonical[0]).toMatchObject({ inputId: id, time: 200 });
+    } else {
+      expect(row.historyAnchored).toBeUndefined();
+      expect((await readDurable<any[]>('session-input'))![0].historyAnchored).toBeUndefined();
+      expect(canonical).toHaveLength(0);
+    }
   } finally {
     await writeDurableNow('session-input', previous ?? []);
     input.resetInputForTests();
@@ -586,6 +593,7 @@ beforeAll(async () => {
   initSecretsPath(dir);
   initSessionStore(dir);
   initDurableStore(dir);
+  await initSkillsPath(dir);
   onSwarmPersist(() => writeDurableSoon('ipc-swarm', snapshotSwarm()));
   onSwarmPersistNow((snapshot) => writeDurableNow('ipc-swarm', snapshot));
   onRetiredWorkersPersist(() => writeDurableSoon('ipc-retired-workers', snapshotRetiredWorkers()));
@@ -670,7 +678,6 @@ describe('explicit settings replace the published tool contract', () => {
       expect(beforeState.data.connectorRefresh.core).toEqual({ schemaId: before.schemaId, state: 'unknown' });
       const tool = kind === 'finish' ? 'session_finish' : 'exec_command';
       expect(before.tools.map(row => row.name)).toContain(tool);
-      expect(before.tools.map(row => row.name)).not.toContain('session');
       const current = getConfig();
       const patch = { ...current, ...(kind === 'finish'
         ? { ui: { ...current.ui, finishTool: false } }
@@ -680,7 +687,6 @@ describe('explicit settings replace the published tool contract', () => {
       const afterState = await handlers.get('state:get')!(null, undefined) as any;
       expect(afterState.data.connectorSchemas.core).toBe(after.schemaId);
       expect(after.tools.map(row => row.name)).not.toContain(tool);
-      expect(after.tools.map(row => row.name)).not.toContain('session');
       expect(after.schemaId).not.toBe(before.schemaId);
       const saved = getConfig();
       expect((await save({ ...saved, ui: { ...saved.ui, theme: 'dark' } })).ok).toBe(true);
@@ -855,6 +861,25 @@ describe('turning multi-agent mode off', () => {
 });
 
 describe('bounded IPC identities and OS launch results', () => {
+  it('refuses to list a replaced skills root', async () => {
+    const managed = skillsDirectory()!;
+    const original = path.join(dir, 'skills-original');
+    const replacement = path.join(dir, 'skills-replacement');
+    await fs.rename(managed, original);
+    await fs.mkdir(replacement);
+    await fs.symlink(replacement, managed, DIR_LINK);
+
+    try {
+      const reply = await handlers.get('skills:list')!(null, undefined) as { ok: boolean; error?: string };
+      expect(reply.ok).toBe(false);
+      expect(reply.error).toMatch(/skill.*(?:unsafe|safe directory|changed|unavailable)/i);
+    } finally {
+      await fs.unlink(managed);
+      await fs.rename(original, managed);
+      await fs.rmdir(replacement);
+    }
+  });
+
   it('reports shell.openPath failure instead of claiming the extension folder opened', async () => {
     vi.mocked(shell.openPath).mockResolvedValueOnce('Access is denied');
     const reply = (await handlers.get('bridge:openExtensionFolder')!(null, undefined)) as {

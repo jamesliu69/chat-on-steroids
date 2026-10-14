@@ -21,9 +21,52 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-Source alignment: **2026-09-17**, including the 2.1.14 release candidate. App/extension **2.1.14**,
+基準來源對齊：**2026-09-17**；本次合併：**2026-10-15**（本機 `0c4e05f2` 與 Fork
+`9de46290`）。App/extension **2.1.37**，
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
+
+### Fork customizations that must survive upstream merges
+
+This repository is the `jamesliu69/chat-on-steroids` fork. When merging or rebasing upstream,
+preserve the behaviors below unless the user explicitly asks to remove or replace one. Do not
+resolve a conflict by silently taking upstream when it would discard one of these contracts.
+
+1. **Raspberry Pi / headless MCP host.** Keep the non-Electron server entry point and lifecycle
+   under `src/server/`, including headless config, secrets, endpoint snapshots, graceful signal
+   handling and shutdown/flush behavior. The headless host must remain usable without opening a
+   desktop window.
+2. **Headless deployment helpers.** Keep the `server:*` npm scripts, tmux launcher/restart flow,
+   and Linux systemd user-service installer in `scripts/run-server-tmux.mjs`,
+   `scripts/install-server-service.mjs` and their shared launch utilities.
+3. **Windows portable distribution.** Keep `dist:win:portable`, portable x64/arm64 release
+   artifacts, and the tested-main Windows portable publication workflow
+   (`.github/workflows/latest-main.yml` plus the release-target/workflow integration).
+4. **Fork-owned releases and updates.** Homepage, update checks, manual release links and
+   standalone extension recovery/downloads must point to `jamesliu69/chat-on-steroids`, not
+   silently revert to `totec448-spec/chat-on-steroids`.
+5. **Generated-artifact download.** Keep the `saveArtifact` capability and
+   `download_artifact` MCP tool, including approved-root enforcement, streamed size limits,
+   safe target creation, hashing and recorder redaction. The default per-file ceiling is 20 MiB
+   unless current product requirements change it.
+6. **Session history MCP tool.** Keep the Core `session` tool implemented by
+   `src/main/mcp/session-tool.ts`, with bounded `search` and exact-session `read` operations
+   over recorded local sessions.
+7. **Fork identity/security fixes.** Preserve the stricter MCP caller/worker ownership and
+   attribution fences, dormant/retired worker identity handling, and extension Fiber
+   `postMessage` same-origin validation. Merge upstream improvements into these invariants
+   instead of replacing them with weaker ownership checks.
+8. **Fork policy defaults and lifecycle choices.** Automatic plugin refresh remains Off by
+   default; explicit recording/retention choices remain authoritative (fresh default: recording
+   On with 30-day retention, while the headless host may explicitly disable recording); and
+   Windows/Linux close-to-tray versus full-quit behavior must continue to follow the saved
+   `minimizeToTray` setting and the bounded shutdown sequence.
+
+After every upstream integration, verify these fork contracts explicitly. At minimum check
+`package.json`, `src/main/version.ts`, `src/main/update.ts`, `src/main/config.ts`,
+`src/main/mcp/`, `src/server/`, `extension/content.js`, the release workflows, and the
+targeted tests for server/headless, portable packaging, plugin refresh, session/artifact tools,
+extension security and update routing.
 
 ## 1. What the whole app is meant to do
 
@@ -75,8 +118,8 @@ losing the project, history, workers or queued instructions when a chat grows to
 | Goal objective | The requested finish line for one chat. It persists independently of a provider attempt. |
 | Goal / Loop | Mutually exclusive modes of one driver. Goal can decide no further message is needed; Loop continues within scope. |
 | Generated workflow / checkpoints | User instructions owned by the outbox; delivered at real finish/completion boundaries. |
-| `update_plan` | The agent's displayed progress plan. It does not execute or consume queue entries. |
-| `session_finish` | Astra's explicit near-finish hold/notice boundary; does not mean the whole task is already verified. |
+| `update_plan` | The agent's CoS-stored progress plan, optionally shown in the desktop UI. It does not execute or consume queue entries. |
+| `session_finish` | Explicit near-finish hold/notice boundary available to a user-requested model; Astra also uses it for automatic continuation. It does not mean the whole task is already verified. |
 | Prime / worker | One owning conversation and its reusable subordinate chats. Several prime families may run independently. |
 | Decision helper / planner | A role-specific chat that produces a continuation decision or workflow; it must not execute the reference task. |
 | Code-mode `exec` | Bounded JavaScript composition of one MCP surface's tools. `exec_command` runs an OS process. |
@@ -194,7 +237,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | --- | --- | --- |
 | Roots | None. | Root-requiring capabilities cannot be published usefully until a root is approved. |
 | Tool capabilities | Current `defaultConfig()` starts all Core capability flags on; read-only off. | Omitted legacy flags use conservative `DEFAULT_CAPABILITIES`. Malformed existing config is conservative recovery, not fresh consent. |
-| Recording | Always on; history is kept until a chat is deleted. | Config load normalizes the legacy `sessions.record`/`retainDays` to `true`/`0` (`config.ts`); `pruneSessions` is a no-op. Only an explicit chat delete or confirmed image-storage cleanup removes history. |
+| Recording | On with 30-day retention. | Explicit recording and retention choices remain authoritative. Recording Off disables dependent Goal behavior instead of silently enabling recording; the headless host may explicitly normalize recording Off. |
 | Context / compaction | Advisory 400,000; limit rounded from advisory × 4/3; auto-compaction on at advisory. | Estimated local units. Automatic execution additionally requires live work, current ownership and eligible model/role. |
 | Multi-agent | On, 2 simultaneous slot-holding workers **per family**, configured hard max 8; global worker admission cap Off (`0`, configurable through 64). | Legacy absent enabled/allow-unattributed fields remain false; an absent global cap remains Off. Existing choices stay exact. |
 | Automatic worker worktrees | Off. | `multiAgent.autoWorktrees` requires explicit opt-in on fresh and migrated configs. Existing isolated worker leases retain their own workspace when the setting is disabled. |
@@ -210,8 +253,8 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Desktop | Windows on; macOS retains its off default and separate native OS consent; Linux supports extension browser control. | Existing screen/control grants also govern browser tools; unsupported native clipboard remains masked. No new per-tab permission dialog. |
 | Shell/UI | Dark theme, minimize to tray, no automatic connector connection/login startup by default. | Optional browser/finish/plan choices are resolved by current config and their consumer, not invented from absent fields. |
 | Command policy | Off, in Allowlist mode, with no rules. | Missing legacy settings stay Off; a missing mode defaults to Allowlist. Rules and mode persist while Off. An enabled empty Allowlist rejects every launch; an enabled empty Denylist permits simple supported commands. |
-| Plugin auto-refresh | On. | Configs written before the setting existed read Off (schema default); conservative recovery also turns it off. While it is off and `ui.autoRefreshPluginsAsked` is not set, the window offers it once (`pluginRefresh:offer`); either answer sets `autoRefreshPluginsAsked`, which a settings save never clears. Local status/discovery never claims ChatGPT refreshed its connector snapshot. |
-| Turn-done notifications | On (`ui.turnNotifications`, missing means on). | Codex's turn-completion notification. `turn-notifications.ts` watches session changes and notifies once per newer `lastTurnEndAt` of a top-level chat whose outcome is `completed` and has no new active turn, while the window is unfocused. Seeded from the session list at startup, so older turns never notify. Workers, helpers, chats whose Goal/Loop switch is on, and chats that got a Session-finish or stuck notice in the last 2 minutes stay quiet. The body is the answer's first paragraph as plain text (140 characters); a click opens the chat. |
+| Plugin auto-refresh | Off. | Fresh, legacy and conservative-recovery configs start Off. While it is off and `ui.autoRefreshPluginsAsked` is not set, the window offers it once (`pluginRefresh:offer`); either answer sets `autoRefreshPluginsAsked`, which a settings save never clears. An explicit saved On/Off choice survives. Local status/discovery never claims ChatGPT refreshed its connector snapshot. |
+| Turn-done notifications | On (`ui.turnNotifications`, missing means on). | Codex's turn-completion notification. `turn-notifications.ts` watches session changes and notifies once per newer `lastTurnEndAt` of a top-level chat whose outcome is `completed` and has no new active turn, while the window is unfocused. Seeded from the session list at startup, so older turns never notify. Completion and answer evidence come from recorded session state, so recording Off also means no turn-done notification. Workers, helpers, chats whose Goal/Loop switch is on, and chats that got a Session-finish or stuck notice in the last 2 minutes stay quiet. The body is the answer's first paragraph as plain text (140 characters); a click opens the chat. |
 | Fresh turns for long work | Every 30 minutes (`ui.rotateTurnMinutes`: 0 off, 20/30/45/60; missing or malformed means 30). | #1402. Measured: turns up to ~35 minutes ended cleanly, 37–64 minutes almost always broke; Stop + "continue" by hand never did. `turn-rotation.ts` `considerTurnRotation` runs on each attributed tool call (`noteCallAttribution`, after its `grantActivity`) for the chat's exact running turn. Once that turn's own `turn_start` is `rotateTurnMinutes` old, `input.ts` `fileRotationInput` files one `purpose: 'rotation'` direct-turn message (`rotationMessage()`, Core mention kept) into exactly that turn. The native send makes ChatGPT end the turn as interrupted and continue in a fresh one; the call in flight keeps its result. Never for Pro, worker or helper chats, or chats with Goal/Loop armed (`goalArmedFor`), which decide on turn ends; never for a blocked chat, beside another pending message, or into a different turn. One per turn: a refused filing retries after 1 minute, one the page did not take after 5. A rotation row is not `manualInput`: a page that cannot take it during the turn drops it rather than keeping it for after the turn, and the timeline raises no delivery notice for it. A message of the user's own cancels a rotation that was never handed out. |
 | Follow-up behavior | Join the running turn (`ui.followUp: 'steer'`; a broken value loads as that). | Codex's "Follow-up behavior". Each running turn starts the composer's delivery choice from this default (`queue` selects After this turn); a choice made in the send menu lasts for that turn. Cmd/Ctrl+Shift+Enter sends the other way (`sendComposer('auto' \| 'after-turn')`); with no running turn it is an ordinary send. |
 | Enter key | Enter sends (`ui.enterSends`, missing means true). | Codex's "Enter key behavior". With `false`, Enter adds a line in the composer and Cmd/Ctrl+Enter sends; Shift+Enter always adds a line and Cmd/Ctrl+Shift+Enter keeps sending the other way (Follow-up behavior). |
@@ -260,6 +303,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Appearance | `src/shared/appearance.ts`, `src/main/appearance-schema.ts`, `src/renderer/appearance.ts`: bounded saved colors/typography, field-wise Settings merge, immediate semantic CSS projection. `window-layout.ts` shares native caption/backing colors. |
 | Native Desktop | `src/main/computer/{index,helper,browser-chords,windows-api,windows-capture,windows-apps,windows-keys}.ts`, `src/shared/windows-computer.ts`, `mcp/tools-desktop-{windows,macos}.ts`, `native/macos-desktop-helper/*`, `native/macos-desktop-addon/*`. |
 | Direct browser control | `src/main/browser-control.ts`, `mcp/tools-browser.ts`, `src/shared/browser-control.ts`, `extension/browser-control{,-page}.js`: short-lived RPCs, session-owned debugger tabs, bounded DOM/diagnostics and background input. |
+| Headless MCP host | `src/server/{runtime,secrets,host,index}.ts`: Linux ARM64 plain-Node Core host configuration and ordered lifecycle; `scripts/{server-launch-utils,install-server-service,run-server-tmux}.mjs`: shared path policy, systemd user unit and tmux launch. |
 | Delivery/build | `src/main/{update,extension-path,version,logger,durable}.ts`, `electron.vite.config.ts`, `electron-builder.yml`, `scripts/*`, `.github/workflows/*`, `vitest.config.ts`. |
 
 ### One durable fact, one authoritative owner
@@ -382,6 +426,10 @@ long-lived timer, process, socket, subscription and writer needs a shutdown owne
 timeouts do not replace a bound on the whole teardown. Ordinary reconnect/disconnect must not
 drop an accepted mutation just to finish quickly; final shutdown has its explicit drain budget.
 
+### Headless Core host
+
+`src/server/index.ts` is a separate Node entrypoint emitted as `out/main/server.js`. It accepts only Linux ARM64, owns a dedicated server data directory, installs the read-only server secret provider before secret reads, and reuses the existing Core registrar, capability guards, sandbox, terminal manager, tunnel, plugin manager, durable store and bounded shutdown. Keep Electron, renderer, browser bridge and native Desktop out of this dependency path. Server normalization disables conversation recording, Desktop/browser behavior, Goal/Loop, automatic compaction, finish injection and browser workers; Core `update_plan` remains enabled independently. `endpoint.json` contains only endpoint origins; bearer URLs live in mode-`0600` `endpoint-private.json` and are revealed only by the explicit `server endpoint` command. External Plugins remain governed by their existing explicit installation and connector rules. The service and tmux launchers pass fixed absolute paths as argv and never put credential values in a unit or command line. See `docs/setup.md#headless-raspberry-pi-5-server` for operator steps; source/build checks do not prove native Pi or provider acceptance.
+
 ## 6. MCP surfaces, instructions and code mode
 
 **Intent:** ChatGPT discovers capabilities in three comprehensible groups and every invocation
@@ -389,13 +437,13 @@ still checks live policy. Schema visibility is never the security boundary.
 
 | Surface | Advertised operations under current eligibility |
 | --- | --- |
-| Core — `chat-on-steroids-core` | `read`, `view_image`, `find` when command execution is off, `apply_patch`, `exec_command`/`write_stdin`, `update_plan`, `agents`, `session_finish`, code-mode `exec`. |
+| Core — `chat-on-steroids-core` | `read`, `view_image`, `find` when command execution is off, `apply_patch`, `exec_command`/`write_stdin`, `download_artifact`, bounded recording `session` search/read, `update_plan`, `agents`, `session_finish`, code-mode `exec`. |
 | Desktop — `chat-on-steroids-desktop` | All Chromium extension hosts: `browser_tabs`, `browser_snapshot`, `browser_screenshot`, `browser_console`, `browser_network`, `browser_navigate`, `browser_action`, `browser_evaluate`. Windows additionally exposes 13 Window2 operations, clipboard and `exec` with `sky`; macOS adds `observe`/`computer`. Surface `exec` composes browser tools too. |
 | Plugins — `chat-on-steroids-plugins` | Enabled external tools with their upstream names and schemas, plus code-mode `exec` when that composition name is available. |
 
 `read` needs read/browse/metadata as appropriate; images need read; patch checks each hunk's
 create/edit/move/delete permission; command controls both terminal tools.
-Recording controls `update_plan`; multi-agent controls `agents`;
+Desktop session recording controls `update_plan`; the headless Core host can enable task plans independently while keeping conversation recording off. Multi-agent controls `agents`;
 the finish setting controls `session_finish`. Windows publishes four observation methods under
 screen access, nine input/launch methods under control, and clipboard methods under their own
 permissions. Multiline `type_text` additionally requires clipboard write. macOS `computer`
@@ -747,6 +795,10 @@ open at admission; calls sharing a request serialize in admission order and each
 session serializes its writes. Different chats must not wait behind one global grace timer.
 Already-proven calls await their own recording; unresolved recordings may settle after response.
 
+壓縮的全域身分等待條件必須與 `compactingConversation()` 一致：交接要求已進入
+`dispatched-unresolved`／`sent` 或後續階段才適用。僅建立或準備送出的 ticket 不得讓
+其他未識別請求白等；已封鎖對話與已開始交接的 exact-identity 保護仍須保留。
+
 After a local identity refusal, `kernel.ts` appends one **Identity recovered** notice to an
 eligible outer tool result once exact request/conversation/session proof is available. Refusal
 sites mark their result explicitly (`failIdentity` or `IdentityLostError`); arbitrary error
@@ -893,6 +945,10 @@ stays the whole history). The renderer asks once when a project is first expande
 those rows; a page of workers shows no chat, so it reads on while the project is open and still
 looks empty. "Show more" continues with the project's cursor once everything loaded is shown. It
 never selects a chat, and a failed read is retried on the next expand.
+Each page retains its project-history owner. Removed or replaced owners and successful explicit
+session rename/delete commits revoke pending pages; ordinary catalog reads do not. A newer
+accepted catalog page preserves its newer/equal summaries and withdraws missing rows within its
+covered range without starving genuinely older project rows. Only admitted rows update pressure.
 
 `projects.ts` owns a bounded catalog of canonical absolute local folders with stable UUIDs.
 Adding uses the native folder selection/approved-root flow, resolves the real directory and
@@ -1607,7 +1663,7 @@ composition retain their ordinary editing behavior.
   the composer cannot delete the checkpoints. Edit/delete/reorder uses the ordinary queue.
   Failed admission keeps the editable result for retry in its originating session.
 - **Displayed `update_plan`:** `plan-tool.ts` writes one whole `plan.json` under the exact
-  caller's local session. Short headlines, bounded details and statuses appear above the queue;
+  caller's local session, or a request-scoped plan until chat identity arrives. Short headlines, bounded details and statuses appear above the queue;
   at most one step is in progress. Older calls/retired frontends cannot overwrite newer state.
   Completion animates then dismisses the card; completed reloads stay hidden while the document
   and history remain. Prepared handoffs freeze the saved plan's explanation, steps, details
@@ -1629,8 +1685,9 @@ republish an old enqueue-time model as a fresh observed switch.
 ### Astra's finish boundary
 
 `shared/chat-models.ts` recognizes exact Astra/Pro identities; substring guesses are forbidden.
-`session_finish` is exposed by the finish setting and requested in executor prompts only under
-the applicable Astra policy. Workers still use `agents action=finish`.
+`session_finish` is exposed by the finish setting. A user prompt may request it with any model;
+automatic executor prompts request it only under the applicable Astra policy. Workers still use
+`agents action=finish`.
 
 `shared/finish.ts::finishInstruction()` is the single prompt for browser and tool delivery:
 complete implementation first, call when roughly the configured 3/5 minutes of final checking
@@ -1881,8 +1938,11 @@ footer and in-place badge updates keep streaming reactions from shifting message
 or reloading attachment previews. Old history gains badges when natively reobserved.
 
 Continuous recording serves the local transcript, exact identity and continuation infrastructure.
-There is no model-facing session lookup tool. `update_plan` remains recording-backed; historical
-lookup tool calls remain displayable in existing transcripts.
+The fork's Core `session` tool searches and reads explicit local recordings while recording is
+enabled. It does not infer a caller, grant execution authority, or expose the process manager.
+Its bounded pages and cursors preserve exact stored tool results and report unavailable overflow.
+Desktop `update_plan` remains recording-backed; the headless host can expose request-scoped plan
+storage without recording conversations.
 
 Desktop session lists use stable `(updatedAt,id)` pagination. Each session selection loads a
 recent tail and opens at the bottom after its current load renders, including A -> B -> A;
@@ -3013,7 +3073,7 @@ holds and queues a bounded exact-turn native Stop command. Native confirmation i
 the app does not manufacture a final answer or infer cancellation from a click/turn_end.
 The desktop logs admission with its exact session, conversation, turn and command. An empty
 or repeated form submit cannot request Stop: the submitting control must be the button while
-it displays Stop/Cancel. End turn only releases an Astra finish hold.
+it displays Stop/Cancel. End turn only releases an exact finish hold.
 Stop elects an existing exact tab, including a loading document, or opens the missing chat
 once under the same durable command. Its absolute two-minute deadline covers browser loading
 without renewing on retries. Browser election is saved before opening; lost receipts, navigation
@@ -3725,6 +3785,12 @@ PowerShell event loop checks the owning app's PID each second so a crashed/kille
 app cannot leave an orphan recording. `scripts/fixtures/smoke-dictation-parent-windows.cjs`
 parses the whole script with PowerShell and runs its loop without a microphone. No audio enters IPC or storage;
 macOS/Linux hide this Windows-only control.
+WinRT constraint compilation and StartAsync each have a 15-second bound and require Completed.
+Their waits and startup publication recheck the existing parent PID and Stop marker. Cancellation,
+Stop and owner loss exit without fallback; availability failures and timeouts may fall back only
+while ownership remains valid. Permission denial still forbids fallback, and modern cancellation
+and disposal precede legacy startup. Synthetic startup tests exercise these boundaries without
+opening a microphone; they do not establish live audio recognition or legacy microphone acceptance.
 
 Interface icons use one system: the bundled Phosphor font (`renderer/icons.css`, built from
 `@phosphor-icons/web`). Code names an icon by meaning (`icon('i-retry')`) and `dom.ts` `ICONS`
@@ -3732,6 +3798,10 @@ alone picks its glyph; static markup names the glyph class. `--ico` sizes the la
 `--glyph` the drawing, which stays 17px in compact controls except carets and small dismiss
 marks. Do not add hand-drawn SVG icons; the sprite keeps only the product mark.
 `test/icon-font.test.ts` checks names, package codepoints and stray SVG.
+
+`renderer/pets.ts` owns the library cards. Bundled descriptions bind to the mounted node and
+follow the selected language; imported descriptions remain their author's literal text, even
+when they match a catalog key. Search matches the displayed bundled description in that language.
 
 `renderer/pet-machine.ts` owns the optional Tur Tur Sahur companion's gesture,
 animation and autonomous-action state. `renderer/pet.ts` projects it with Pointer
@@ -3757,6 +3827,13 @@ On Windows the desktop Pets host must receive a bounded native shape before it i
 shown, and it stays bounded to the visible pet/tray/menu regions while click-through.
 The `pet-overlay:bounds` projection advertises that idle-shape requirement to the
 renderer; Linux/macOS retain their existing full click-through visual-surface contract.
+
+`main/pet-overlay.ts` owns the optional Desktop Pets window. On Windows,
+`main/pet-window-focus.ts` observes foreground transfers while that window exists and makes one
+OS-governed attempt to return focus to the previous live window after a pet drag. If the native
+Koffi binding cannot load, pets remain available and only focus return is unavailable.
+`test/pet-window-focus.test.ts` covers ownership, and `scripts/verify-pet-toggle.cjs` exercises
+hide/show and pointer input in Electron.
 
 `renderer/main.ts` owns the shell/setup/settings; `chat.ts` owns sessions, composer and timeline.
 Projects, workers, plans, model choice, usage and plugins have focused modules (§4). The renderer
@@ -3789,7 +3866,7 @@ DOM surface into Setup while Setup is shown, so there is never a second permissi
 store. Any choice completes the step; read-only or a mix without create/edit/command still ends
 on all set, but Ready marks the access row and says how to change it. A recovered (unreadable)
 settings file reports `settingsRecovered` until read-only is switched off. The unavailable
-Desktop card links to the same step. Fresh installs start with automatic plugin refresh on;
+Desktop card links to the same step. Fresh installs start with automatic plugin refresh off;
 older and recovered configs keep it off. `scripts/verify-setup-access.cjs` checks the shared
 surface, the saves and Ready in the production renderer.
 
@@ -4052,8 +4129,13 @@ same persisted preference. `translate="no"` protects text and attributes, includ
 language names. Japanese has its own system-font fallbacks and CJK wrapping. Changing language
 repaints owned labels while retaining drafts/selections; never translate authored messages,
 provider text or file paths. Catalog checks cover all source keys and numbered placeholders;
+the worker delivery line (`chat.ts`) and disabled dock reasons (`workspace-docks.ts`) are bound
+to their mounted nodes too. Feature names in sentences follow each catalog's control labels.
 `dom.run()` translates catalogued IPC errors before displaying a toast; unknown error strings
-and successful payloads stay literal.
+and successful payloads stay literal. With no saved preference or available storage, the app
+follows the system language, falling back to English when unsupported. A saved preference wins.
+A saved `zh-CN` preference remains Simplified Chinese; the companion also
+ships its `zh_CN` catalog.
 Settings search folds both query and labels with the selected locale, including Turkish İ/ı.
 `scripts/verify-setup-guide.cjs` exercises narrow/zoomed layouts and native keyboard selection.
 Bindings live only in a WeakMap keyed by their DOM node. Language changes walk the current
@@ -4154,9 +4236,12 @@ silent baseline; a different one shows the reminder until its X is clicked.
 `AppState.confirmedConnectorSchemas` carries, per surface, the schema ChatGPT confirmed after a
 refresh click or found already current (`confirmedPluginSchemas()`, an in-memory copy of
 `completedSchemaId` from `state/plugin-refresh.json`, kept current on every read and write); a current schema confirmed there counts as acknowledged, so
-the reminder disappears once automatic plugin refresh lands. The reminder is hidden in
-Settings, stacks with update/extension notices and never marks a refresh complete or starts a
-browser action.
+the reminder disappears once automatic plugin refresh lands. It names only changed, unconfirmed
+surfaces, using their proven ChatGPT names before configured names, and explains how to select
+them and choose Refresh tools. Its explicit Open ChatGPT plugins button uses the fixed link
+opener to visit `https://chatgpt.com/settings/plugins-settings`; opening the page does not
+acknowledge the reminder or claim the tools were refreshed. The reminder is hidden in Settings,
+stacks with update/extension notices and never starts a browser action without a user click.
 
 ### Project Files workspace
 
@@ -4986,10 +5071,11 @@ Tests: `report-scrub.test.ts`, `diagnostics-report.test.ts` and `ipc.test.ts` (n
 Source, bundle, package, installed bytes and live behavior are separate gates (§3). The app id
 is `com.chatonsteroids.app`. Native release targets are Windows x64/arm64 NSIS, macOS x64/arm64
 DMG+ZIP and Linux x64/arm64 AppImage+DEB. Windows is per-user-capable and `asInvoker`; replacing
-the package preserves userData. Synchronize package/main/extension versions deliberately.
+the package preserves userData. This fork also builds a Windows x64 portable executable.
+Synchronize package/main/extension versions deliberately.
 
 `electron-vite` builds main/preload/renderer into `out/`; extension files ship directly without
-a bundler. `electron-builder.yml` puts executable tunnel/rg, extension and required native
+a bundler. It emits `out/main/server.js` as a separate plain-Node Core host. `electron-builder.yml` puts executable tunnel/rg, extension and required native
 payloads outside asar. `extension-path.ts` transactionally mirrors the packaged extension to
 stable `userData/extension`, never an ephemeral AppImage mount.
 `stage-firefox-extension.mjs` can manually derive a Firefox test tree from that same canonical
@@ -5017,10 +5103,11 @@ upstream binaries while retaining that distribution's checksum or notices.
 | Build owner | Contract |
 | --- | --- |
 | `scripts/package.mjs` | Icons → bundle → explicit target resources/native staging → builder with publishing disabled. |
+| `src/server/index.ts`, `scripts/server-launch-utils.mjs`, `scripts/install-server-service.mjs`, `scripts/run-server-tmux.mjs` | Plain-Node Core entrypoint, shared path validation, credential-free systemd unit and literal-argv tmux launcher. |
 | `packaging-targets.mjs`, `packaging-versions.mjs` | Supported OS/arch vocabulary and pinned target checksums; fetchers share these authorities. |
-| `prepare-packaging-native.mjs` | Exact target node-pty/Sharp/tree-sitter from verified package material; host leftovers cannot win. |
+| `prepare-packaging-native.mjs` | Exact target node-pty/Sharp/tree-sitter and Windows Koffi from verified package material; host leftovers cannot win. |
 | `prepare-macos-desktop-helper.mjs` | Thin target Swift dylib + matching N-API addon; packaged in-process permission identity. |
-| `smoke-packaged-runtime.mjs`, `smoke-macos-{bundle,gui}.mjs` | In-place resource/native-stack checks, Mac bundle/seal and real GUI startup evidence. |
+| `smoke-packaged-runtime.mjs`, `smoke-macos-{bundle,gui}.mjs` | In-place resource/native-stack checks including Windows Koffi, Mac bundle/seal and real GUI startup evidence. |
 | `generate-third-party-notices.mjs`, `package-native-sources.mjs` | Production notices and corresponding native source inventory/archive; exact lockfile/catalog provenance. |
 | `verify-public-history.mjs`, `check-release-absent.mjs` | Public-history/privacy gate and positive proof that publishing will not overwrite a release. |
 

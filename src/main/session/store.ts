@@ -119,6 +119,8 @@ interface AttachmentCatalog {
   orderedIds: string[];
   current: Map<string, Set<string>>;
   historical: Map<string, Set<string>>;
+  /** Number of retained historical chat attachments whose session has moved elsewhere. */
+  supersededAttachments: number;
   /**
    * Whether this pass actually read every folder it enumerated.
    *
@@ -2722,6 +2724,7 @@ function indexSummary(catalog: AttachmentCatalog, summary: SessionSummary): void
   catalog.summaries.set(summary.id, { ...summary, chatIds: [...summary.chatIds], agents: [...summary.agents] });
   if (summary.conversationId) addAttachment(catalog.current, summary.conversationId, summary.id);
   for (const chatId of summary.chatIds) addAttachment(catalog.historical, chatId, summary.id);
+  catalog.supersededAttachments += summary.chatIds.filter((chatId) => chatId !== summary.conversationId).length;
 }
 
 function unindexSummary(catalog: AttachmentCatalog, summary: SessionSummary): void {
@@ -2730,6 +2733,10 @@ function unindexSummary(catalog: AttachmentCatalog, summary: SessionSummary): vo
   if (orderedAt >= 0) catalog.orderedIds.splice(orderedAt, 1);
   if (summary.conversationId) removeAttachment(catalog.current, summary.conversationId, summary.id);
   for (const chatId of summary.chatIds) removeAttachment(catalog.historical, chatId, summary.id);
+  catalog.supersededAttachments = Math.max(
+    0,
+    catalog.supersededAttachments - summary.chatIds.filter((chatId) => chatId !== summary.conversationId).length
+  );
 }
 
 function insertSummaryOrder(catalog: AttachmentCatalog, summary: SessionSummary): void {
@@ -2786,7 +2793,7 @@ function publishClosedSummary(summary: SessionSummary): void {
 }
 
 function newAttachmentCatalog(): AttachmentCatalog {
-  return { summaries: new Map(), orderedIds: [], current: new Map(), historical: new Map(), complete: true };
+  return { summaries: new Map(), orderedIds: [], current: new Map(), historical: new Map(), supersededAttachments: 0, complete: true };
 }
 
 /**
@@ -3099,6 +3106,11 @@ export async function conversationWasSuperseded(conversationId: string): Promise
     if (summary?.chatIds.includes(conversationId) && summary.conversationId !== conversationId) return true;
   }
   return false;
+}
+
+/** Whether any retained session still has a historical frontend attachment. */
+export async function hasSupersededConversationAttachments(): Promise<boolean> {
+  return (await ensureAttachmentCatalog()).supersededAttachments > 0;
 }
 
 /**
@@ -3904,7 +3916,9 @@ async function deleteSelectedImage(file: StoredImageFile): Promise<number> {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') await fs.rename(quarantine, target);
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error instanceof Error ? error : new Error(String(error));
+      }
     }
   }
 }

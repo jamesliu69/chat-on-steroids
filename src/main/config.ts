@@ -23,6 +23,7 @@ import {
   GOAL_PROVIDERS,
   GOAL_REASONING_LEVELS,
   WRITE_CAPABILITIES,
+  type ArtifactSettings,
   type Capabilities,
   DESKTOP_CAPABILITIES,
   type CompactionSettings,
@@ -59,10 +60,9 @@ export const browserBridgePortSchema = z.union([z.literal('auto'), z.literal(BRO
  * Defaults for the newer sections, in one place so the schema and defaultConfig()
  * cannot drift apart.
  *
- * Recording is always ON and retained without an age limit. Everything the app is actually
- * for — the readable timeline, Compact & resume, and agent attribution — reads that durable
- * history. It writes only to this app's own data folder and uploads nothing. The separate
- * bounded image store keeps its own quota and explicit cleanup controls.
+ * Recording starts ON. Everything the app is actually for — the readable timeline, Compact
+ * & resume, and agent attribution — reads the recorded history. Existing explicit privacy
+ * and retention choices remain authoritative.
  *
  * Existing configs still keep every explicit permission choice. Fresh installs are different:
  * the Home screen is meant to start fully usable, so every tool permission and the agents
@@ -102,7 +102,7 @@ const recordingStorageLimit = z.number()
 
 const DEFAULT_SESSIONS: SessionSettings = {
   record: true,
-  retainDays: 0,
+  retainDays: 30,
   advisoryTokens: DEFAULT_CONTEXT_WINDOW,
   // Derived, never typed. The Chat panel writes `limit = threshold × 4/3` on every save,
   // so a default that did not already satisfy that relation would be a state the UI cannot
@@ -292,6 +292,14 @@ const commandAllowlistRuleSchema = z.string().max(MAX_COMMAND_ALLOWLIST_RULE_CHA
   if (message) ctx.addIssue({ code: 'custom', message });
 });
 
+/**
+ * Per-file ceiling for `download_artifact`. The stream enforces it at every stage
+ * (see artifact-fetch/artifact-target), so a lying Content-Length helps nothing.
+ */
+const DEFAULT_ARTIFACTS: ArtifactSettings = {
+  maxFileBytes: 20 * 1024 * 1024
+};
+
 const configSchema = z.object({
   // A config written by hand — or by a build before `/skills` was reserved — must not be
   // able to claim a reserved virtual root. Renamed rather than rejected: a single bad root
@@ -389,10 +397,6 @@ const configSchema = z.object({
       limitTokens: z.number().int().min(10_000).max(4_000_000).optional().default(DEFAULT_SESSIONS.limitTokens),
       storageLimitGiB: recordingStorageLimit.catch(DEFAULT_RECORDING_STORAGE_GIB)
     })
-    // `record` and `retainDays` remain readable for old configs and wire compatibility, but
-    // they are no longer user choices. Normalizing here covers disk load, renderer saves,
-    // extension/config writers and direct updateConfig callers at one boundary.
-    .transform((sessions) => ({ ...sessions, record: true, retainDays: 0 }))
     .optional()
     .default({ ...DEFAULT_SESSIONS, storageLimitGiB: DEFAULT_RECORDING_STORAGE_GIB }),
   compaction: z
@@ -449,6 +453,18 @@ const configSchema = z.object({
       endSleepingWorkerProcesses: DEFAULT_MULTI_AGENT.endSleepingWorkerProcesses ?? false,
       archiveWorkerChats: DEFAULT_MULTI_AGENT.archiveWorkerChats ?? false
     }),
+  artifacts: z
+    .object({
+      maxFileBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(256 * 1024 * 1024)
+        .optional()
+        .default(DEFAULT_ARTIFACTS.maxFileBytes)
+    })
+    .optional()
+    .default({ ...DEFAULT_ARTIFACTS }),
   // An empty model id is repaired rather than rejected: the id is free text from a
   // provider listing that changes weekly, and a config that lost it must still load with
   // every root and permission in it intact.
@@ -579,16 +595,16 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform, rele
     readOnly: false,
     commandAllowlist: { ...DEFAULT_COMMAND_ALLOWLIST, rules: [] },
     tunnel: { kind: 'openai', tunnelId: '', desktopTunnelId: '', binaryPath: '' },
-    // Fresh installs refresh changed connector tools on their own: a permission chosen in Setup
-    // changes the tool list, and nothing else tells a new user to refresh the plugin in ChatGPT.
-    // Older configs keep the schema default (off).
-    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, keepAwake: true, keepScreenAwake: false, cosBrowserMinimize: 'taskbar', turnNotifications: true, rotateTurnMinutes: 30, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: true, autoSelectSkills: false, backgroundChats: true, backgroundPlacement: 'window', followUp: 'steer', enterSends: true, browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true,
+    // The fork requires explicit opt-in to automatic connector refresh. Fresh and legacy
+    // installs start Off; a saved explicit choice remains authoritative.
+    ui: { minimizeToTray: true, autoConnect: false, startAtLogin: false, keepAwake: true, keepScreenAwake: false, cosBrowserMinimize: 'taskbar', turnNotifications: true, rotateTurnMinutes: 30, privacyScreenshots: false, theme: 'dark', autoRefreshPlugins: false, autoSelectSkills: false, backgroundChats: true, backgroundPlacement: 'window', followUp: 'steer', enterSends: true, browserBridgePort: 'auto', autoContinue: true, followOutput: true, mentionCore: true,
       // The built-in browser is opt-in: Chrome with the companion stays the default for new and
       // existing installs alike, and the built-in one runs only once someone chooses it.
       chatBrowser: 'chrome' },
     sessions: { ...DEFAULT_SESSIONS },
     compaction: { ...DEFAULT_COMPACTION },
     multiAgent: { ...FIRST_LAUNCH_MULTI_AGENT },
+    artifacts: { ...DEFAULT_ARTIFACTS },
     goal: { ...DEFAULT_GOAL },
     mcp: { ...DEFAULT_MCP },
     controlApi: { ...DEFAULT_CONTROL_API }
@@ -618,6 +634,15 @@ function conservativeRecoveryConfig(): Config {
 }
 
 /**
+ * Goal reads the local recorded transcript. Preserve an explicit recording-off choice and
+ * disable the dependent feature instead of silently widening the user's privacy setting.
+ */
+function enforceFeatureDependencies(config: Config): Config {
+  if (config.sessions.record || !config.goal.enabled) return config;
+  return { ...config, goal: { ...config.goal, enabled: false } };
+}
+
+/**
  * Moves any exactly-as-shipped Goal prompt, from any past version, onto the current default.
  *
  * All three prompts — the gate, the driver and the loop — are editable and persisted, so
@@ -644,6 +669,7 @@ function adoptCurrentGoalPrompt(config: Config): Config {
 
 let configPath = '';
 let current: Config = defaultConfig();
+let runtimeConfigOverride: Config | null = null;
 // This run started from conservativeRecoveryConfig. Setup says so beside its access choice, because
 // read-only with no reason given reads as a broken app. Lasts until read-only is switched off.
 let recovered = false;
@@ -656,8 +682,35 @@ export function settingsRecovered(): boolean {
 // cannot race on config.json.tmp or overwrite each other's newer state.
 let mutationQueue: Promise<void> = Promise.resolve();
 
-export function initConfigPath(userDataDir: string): void {
-  configPath = path.join(userDataDir, 'config.json');
+export interface ConfigIoOptions {
+  /**
+   * The dedicated headless server has no browser companion, so its normalized config
+   * deliberately disables browser-dependent session recording.
+   */
+  allowDisabledRecording?: boolean;
+}
+
+function requestedDisabledRecording(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const sessions = (value as Record<string, unknown>)['sessions'];
+  if (typeof sessions !== 'object' || sessions === null) return false;
+  return (sessions as Record<string, unknown>)['record'] === false;
+}
+
+function preserveDisabledRecording(
+  parsed: Config,
+  source: unknown,
+  options: ConfigIoOptions
+): Config {
+  if (!options.allowDisabledRecording || !requestedDisabledRecording(source)) return parsed;
+  return {
+    ...parsed,
+    sessions: {
+      ...parsed.sessions,
+      record: false,
+      retainDays: 0
+    }
+  };
 }
 
 /**
@@ -678,19 +731,28 @@ async function keepUnreadable(raw: string): Promise<void> {
   }
 }
 
-export async function loadConfig(): Promise<Config> {
+export function initConfigPath(userDataDir: string): void {
+  configPath = path.join(userDataDir, 'config.json');
+  runtimeConfigOverride = null;
+}
+
+export async function loadConfig(options: ConfigIoOptions = {}): Promise<Config> {
   let raw: string | null = null;
   try {
     raw = await fs.readFile(configPath, 'utf8');
     // Windows PowerShell 5.1 and older Notepad start UTF-8 files with a byte-order mark; it is not JSON.
-    const parsed = configSchema.safeParse(JSON.parse(raw.replace(/^\uFEFF/, '')));
+    const source = JSON.parse(raw.replace(/^\uFEFF/, '')) as unknown;
+    const parsed = configSchema.safeParse(source);
     if (!parsed.success) {
       logError('Settings file was invalid and has been reset to defaults');
       await keepUnreadable(raw);
       current = conservativeRecoveryConfig();
       recovered = true;
     } else {
-      current = adoptCurrentGoalPrompt(adoptWiderWindow(adoptAutoCompaction(recalibrateTokens(parsed.data))));
+      const loaded = preserveDisabledRecording(parsed.data, source, options);
+      current = enforceFeatureDependencies(
+        adoptCurrentGoalPrompt(adoptWiderWindow(adoptAutoCompaction(recalibrateTokens(loaded))))
+      );
       // Duplicate root names would make a virtual path ambiguous.
       const seen = new Set<string>();
       current.roots = current.roots.filter((r) => {
@@ -780,7 +842,11 @@ function adoptWiderWindow(config: Config): Config {
 }
 
 export function getConfig(): Config {
-  return current;
+  return runtimeConfigOverride ?? current;
+}
+
+export function setRuntimeConfigOverride(config: Config | null): void {
+  runtimeConfigOverride = config === null ? null : configSchema.parse(config);
 }
 
 /**
@@ -824,12 +890,16 @@ async function persistConfig(parsed: Config): Promise<Config> {
 export function updateConfig(
   update: (latest: Config) => Config | Promise<Config>,
   afterPublish?: (next: Config, previous: Config) => void | Promise<void>,
-  publish?: (next: Config, previous: Config, persist: () => Promise<Config>) => Promise<Config>
+  publish?: (next: Config, previous: Config, persist: () => Promise<Config>) => Promise<Config>,
+  options: ConfigIoOptions = {}
 ): Promise<Config> {
   const operation = mutationQueue.then(async () => {
     const previous = current;
     // Validate before reserving external resources. The optional publisher owns their rollback.
-    const proposed = configSchema.parse(await update(previous));
+    const requested = await update(previous);
+    const proposed = enforceFeatureDependencies(
+      preserveDisabledRecording(configSchema.parse(requested), requested, options)
+    );
     const persist = () => persistConfig(proposed);
     const next = await (publish ? publish(proposed, previous, persist) : persist());
     // Keep dependent durable retirement inside the same settings transaction;
@@ -845,6 +915,6 @@ export function updateConfig(
 }
 
 /** Replaces the complete config. Prefer updateConfig for read-modify-write changes. */
-export function saveConfig(next: Config): Promise<Config> {
-  return updateConfig(() => next);
+export function saveConfig(next: Config, options: ConfigIoOptions = {}): Promise<Config> {
+  return updateConfig(() => next, undefined, undefined, options);
 }

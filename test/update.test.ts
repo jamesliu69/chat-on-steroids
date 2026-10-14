@@ -48,8 +48,8 @@ vi.mock('electron', () => ({
 }));
 vi.mock('../src/main/logger.js', () => ({ logInfo: () => undefined, logWarn: () => undefined }));
 
-const { APP_VERSION } = await import('../src/main/version.js');
-const { isNewer } = await import('../src/shared/types.js');
+const { APP_VERSION, extensionDownloadUrl } = await import('../src/main/version.js');
+const { isNewer, RELEASES_PAGE } = await import('../src/shared/types.js');
 const {
   applyStagedUpdate,
   checkForUpdates,
@@ -101,10 +101,10 @@ function github(options: {
       if (options.fail === 'release') return new Response('nope', { status: 503 });
       return new Response(JSON.stringify({ tag_name: `v${version}` }), { status: 200 });
     }
-    if (url === 'https://github.com/totec448-spec/chat-on-steroids/releases/latest') {
+    if (url === 'https://github.com/jamesliu69/chat-on-steroids/releases/latest') {
       if (typeof options.page === 'number') return new Response(null, { status: options.page });
       const landed = new Response(null, { status: 200 });
-      Object.defineProperty(landed, 'url', { value: options.page ?? `https://github.com/totec448-spec/chat-on-steroids/releases/tag/v${version}` });
+      Object.defineProperty(landed, 'url', { value: options.page ?? `https://github.com/jamesliu69/chat-on-steroids/releases/tag/v${version}` });
       return landed;
     }
     if (name === 'SHA256SUMS.txt') {
@@ -159,10 +159,10 @@ describe('the file Get update opens for an installation that cannot update itsel
   });
   it('links that file for the announced version, and the release page otherwise', () => {
     expect(manualDownloadUrl('2.1.17', 'Chat-On-Steroids-macOS-arm64.dmg'))
-      .toBe('https://github.com/totec448-spec/chat-on-steroids/releases/download/v2.1.17/Chat-On-Steroids-macOS-arm64.dmg');
-    expect(manualDownloadUrl(null, 'Chat-On-Steroids-macOS-arm64.dmg')).toBe('https://github.com/totec448-spec/chat-on-steroids/releases/latest');
-    expect(manualDownloadUrl('2.1.17', null)).toBe('https://github.com/totec448-spec/chat-on-steroids/releases/latest');
-    expect(manualDownloadUrl('../evil', 'x.dmg')).toBe('https://github.com/totec448-spec/chat-on-steroids/releases/latest');
+      .toBe('https://github.com/jamesliu69/chat-on-steroids/releases/download/v2.1.17/Chat-On-Steroids-macOS-arm64.dmg');
+    expect(manualDownloadUrl(null, 'Chat-On-Steroids-macOS-arm64.dmg')).toBe('https://github.com/jamesliu69/chat-on-steroids/releases/latest');
+    expect(manualDownloadUrl('2.1.17', null)).toBe('https://github.com/jamesliu69/chat-on-steroids/releases/latest');
+    expect(manualDownloadUrl('../evil', 'x.dmg')).toBe('https://github.com/jamesliu69/chat-on-steroids/releases/latest');
   });
 });
 
@@ -217,6 +217,20 @@ describe('which installations update themselves', () => {
 });
 
 describe('finding a newer release', () => {
+  it('uses this fork as the release authority for app and matching-extension updates', async () => {
+    const { fetch } = github();
+    await asPlatform('win32', undefined, () => checkForUpdates());
+    expect(fetch.mock.calls.map(([input]) => String(input))).toEqual([
+      'https://api.github.com/repos/jamesliu69/chat-on-steroids/releases/latest',
+      `https://github.com/jamesliu69/chat-on-steroids/releases/download/v${NEXT}/SHA256SUMS.txt`,
+      `https://github.com/jamesliu69/chat-on-steroids/releases/download/v${NEXT}/${WINDOWS_ASSET}`
+    ]);
+    expect(RELEASES_PAGE).toBe('https://github.com/jamesliu69/chat-on-steroids/releases/latest');
+    expect(extensionDownloadUrl('2.1.12')).toBe(
+      'https://github.com/jamesliu69/chat-on-steroids/releases/download/v2.1.12/Chat-On-Steroids-Extension.zip'
+    );
+  });
+
   it('reads a release tag, and refuses anything that is not one', () => {
     expect(releaseVersion('v2.1.0')).toBe('2.1.0');
     expect(releaseVersion('2.1.0')).toBe('2.1.0');
@@ -464,7 +478,7 @@ describe('one pass at a time, and one more next time the app opens', () => {
     const { fetch } = github({ fail: 'release' });
     await checkForUpdates();
     expect(updateStatus().error).toContain('503');
-    expect(fetch.mock.calls.map(([url]) => String(url))).not.toContain('https://github.com/totec448-spec/chat-on-steroids/releases/latest');
+    expect(fetch.mock.calls.map(([url]) => String(url))).not.toContain('https://github.com/jamesliu69/chat-on-steroids/releases/latest');
   });
 
   it('retries the next time the app opens after a download that stopped', async () => {
@@ -685,6 +699,9 @@ describe('a check or download that goes wrong on a bad connection', () => {
     await vi.advanceTimersByTimeAsync(59_000);
     expect(online.asked).toEqual([]);
     await vi.advanceTimersByTimeAsync(2_000);
+    // checkedAt is published before download/staging completes. Join that same pass so its
+    // remaining filesystem work cannot cross the next fixture's reset and fetch ownership.
+    await checkForUpdates();
     await vi.waitFor(() => expect(updateStatus().checkedAt).not.toBeNull());
     expect(updateStatus().error).toBeNull();
     const calls = online.asked.length;
@@ -702,7 +719,7 @@ describe('a check or download that goes wrong on a bad connection', () => {
     fetch.mockImplementation(async (input: string | URL) => String(input).endsWith(WINDOWS_ASSET) ? new Response(stalled, { status: 200 }) : answer(input));
     let done = false;
     const pass = asPlatform('win32', undefined, () => checkForUpdates()).then(() => { done = true; });
-    await vi.waitFor(() => expect(updateStatus().stage).toBe('downloading'));
+    await vi.waitFor(() => expect(updateStatus().stage, updateStatus().error ?? undefined).toBe('downloading'));
     await vi.advanceTimersByTimeAsync(59_000);
     expect(done).toBe(false);
     await vi.advanceTimersByTimeAsync(2_000);
@@ -711,4 +728,3 @@ describe('a check or download that goes wrong on a bad connection', () => {
     expect(updateStatus().error).toContain('no data for 60 seconds');
   });
 });
-

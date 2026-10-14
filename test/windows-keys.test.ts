@@ -11,7 +11,7 @@ describe.runIf(process.platform === 'win32')('Windows native key resolution', ()
     const directory = await mkdtemp(path.join(tmpdir(), 'cos-key-resolution-'));
     try {
       const file = path.join(directory, 'keys.ps1');
-      await writeFile(file, `$ErrorActionPreference='Stop'
+      await writeFile(file, `\uFEFF$ErrorActionPreference='Stop'
 Add-Type -TypeDefinition @'
 using System;
 ${WINDOWS_KEYS_SOURCE}

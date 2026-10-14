@@ -389,6 +389,7 @@ it('joins dump-shaped paired tool sources through the real recorder into worker 
       page.window.postMessage = (data: any) => { if (data.source === 'clf-fiber-reply') evidence = data; };
       page.window.eval(script);
       page.window.dispatchEvent(new page.window.MessageEvent('message', { source: page.window as any,
+        origin: page.window.location.origin,
         data: { source: 'clf-fiber-ask', nonce: 'native-source-join' } }));
       expect(evidence.turns[0].calls[0]).toMatchObject({ messageId: call, requestId, tool: 'agents', answered: true });
       expect(JSON.stringify(evidence)).not.toContain('PRIVATE_ARGUMENT');

@@ -7,6 +7,7 @@ let dom: JSDOM;
 beforeEach(() => {
   vi.resetModules();
   dom = new JSDOM('<textarea id="input"></textarea><details open><button id="skills" type="button">Skills</button><button id="add" type="button">+</button></details><div id="picker" hidden></div><div id="selected" hidden></div>', { url: 'https://local.test' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Event: dom.window.Event, Node: dom.window.Node });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; };

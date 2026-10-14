@@ -377,4 +377,3 @@ describe('text of a tunnel-client log field', () => {
     expect(tunnelEventText(null)).toBe('');
   });
 });
-

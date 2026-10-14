@@ -7,7 +7,9 @@ import { strFromU8, unzipSync } from 'fflate';
 /** The files release.yml publishes, in its SHA256SUMS.txt order. */
 export const RELEASE_FILES = [
   'Chat-On-Steroids-Setup-x64.exe',
+  'Chat-On-Steroids-Portable-x64.exe',
   'Chat-On-Steroids-Setup-arm64.exe',
+  'Chat-On-Steroids-Portable-arm64.exe',
   'Chat-On-Steroids-macOS-x64.dmg',
   'Chat-On-Steroids-macOS-x64.zip',
   'Chat-On-Steroids-macOS-arm64.dmg',

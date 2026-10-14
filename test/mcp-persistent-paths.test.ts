@@ -18,6 +18,7 @@ vi.mock('../src/main/secrets.js', () => ({
 
 const { forgetSurfaceTokens, loadSurfaceTokens, rememberSurfaceTokens } = await import('../src/main/mcp/persistent-paths.js');
 const { startMcpServer } = await import('../src/main/mcp/server.js');
+const { scopedServerName } = await import('../src/main/mcp/surfaces.js');
 const { defaultConfig, initConfigPath } = await import('../src/main/config.js');
 
 const token = (c: string) => c.repeat(43);
@@ -50,10 +51,28 @@ it('serves each surface on the kept token, and a fresh one for a surface without
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clf-mcp-paths-'));
   initConfigPath(dir);
   const cfg = defaultConfig();
-  const endpoint = await startMcpServer(() => ({ roots: [], caps: cfg.capabilities, readOnly: true }), { core: token('a') });
+  const scope = 'test-tunnel-scope';
+  const endpoint = await startMcpServer(
+    () => ({ roots: [], caps: cfg.capabilities, readOnly: true }),
+    { kept: { core: token('a') }, serverNameScope: scope }
+  );
   try {
     expect(new URL(endpoint.urls.core).pathname).toBe(`/mcp/core/${token('a')}`);
     expect(new URL(endpoint.urls.desktop).pathname).toMatch(/^\/mcp\/desktop\/[A-Za-z0-9_-]{43}$/);
     expect(endpoint.urls.desktop).not.toContain(token('b'));
+    const response = await fetch(endpoint.urls.core, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } }
+      })
+    });
+    const body = await response.text();
+    const data = body.match(/^data:\s*(.+)$/m)?.[1];
+    const initialized = data ? JSON.parse(data) as { result?: { serverInfo?: { name?: string } } } : null;
+    expect(initialized?.result?.serverInfo?.name).toBe(scopedServerName('core', scope));
   } finally { await endpoint.stop(); }
 });

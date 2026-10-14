@@ -19,6 +19,9 @@ beforeAll(async () => {
     Element: dom.window.Element,
     Node: dom.window.Node
   });
+  // Pin English so assertions on app-authored fallback strings stay locale-independent.
+  const { setLanguage } = await import('../src/renderer/i18n.js');
+  setLanguage('en');
   ({ renderedMessage, renderedMarkdown } = await import('../src/renderer/chat.js'));
 });
 

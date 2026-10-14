@@ -13,6 +13,7 @@ it('shows the managed library, imports both source shapes, filters and removes o
     <span id="skillsCount"></span><div id="skillsInstalled"></div>
   </body>`, { url: 'https://skills.test/' });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   for (const [key, value] of Object.entries({ window: w, document: w.document, HTMLElement: w.HTMLElement, HTMLButtonElement: w.HTMLButtonElement, HTMLDialogElement: w.HTMLDialogElement })) vi.stubGlobal(key, value);
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
@@ -113,6 +114,7 @@ it('links a matching local skill from its card without replacing it or hiding Gi
     <span id="skillsCount"></span><div id="skillsInstalled"></div>
   </body>`, { url: 'https://skills.test/' });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   for (const [key, value] of Object.entries({ window: w, document: w.document, HTMLElement: w.HTMLElement, HTMLButtonElement: w.HTMLButtonElement, HTMLDialogElement: w.HTMLDialogElement })) vi.stubGlobal(key, value);
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
@@ -148,6 +150,7 @@ it('automatically checks an installed GitHub skill on page open without installi
     <span id="skillsCount"></span><div id="skillsInstalled"></div>
   </body>`, { url: 'https://skills.test/' });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   for (const [key, value] of Object.entries({ window: w, document: w.document, HTMLElement: w.HTMLElement, HTMLButtonElement: w.HTMLButtonElement, HTMLDialogElement: w.HTMLDialogElement })) vi.stubGlobal(key, value);
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
@@ -180,6 +183,7 @@ it('offers recommended skills that are not installed yet and installs one on req
     <section id="skillsRecommendedSection" hidden><span id="skillsRecommendedCount"></span><div id="skillsRecommended"></div></section>
   </body>`, { url: 'https://skills.test/' });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   for (const [key, value] of Object.entries({ window: w, document: w.document, HTMLElement: w.HTMLElement, HTMLButtonElement: w.HTMLButtonElement, HTMLDialogElement: w.HTMLDialogElement })) vi.stubGlobal(key, value);
   let skills: ManagedSkill[] = [];
   const installRecommendedSkill = vi.fn(async (id: string) => {

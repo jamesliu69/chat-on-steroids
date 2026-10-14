@@ -31,6 +31,7 @@ import { flushLogBeforeExit, initLogFile, logError, logInfo, logWarn, snapshotLo
 import { unifiedExecManager } from './codex/manager.js';
 import { workspaceTerminalsExited } from './workspace-terminal.js';
 import { initSecretsPath, keychainReadPending } from './secrets.js';
+import { initTunnelResourceRoot } from './tunnel/locate.js';
 import { mainText, mainTextTranslations, onMainTextsChange, restoreMainTextTranslations } from './main-texts.js';
 import { isMainText } from '../shared/main-texts.js';
 import { executableFingerprint, initKeychainNotice } from './keychain-notice.js';
@@ -417,6 +418,7 @@ void app.whenReady().then(async () => {
     snapshotLogOnCrash(`${origin}: ${error.stack ?? error.message}`);
   });
   initConfigPath(userData);
+  initTunnelResourceRoot(app.getAppPath());
   initConnectorProofPath(userData);
   initWorkerArchivePath(userData);
   initBrowserProofPath(userData);
@@ -705,9 +707,9 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   if (!ownsAppRuntime(hasSingleInstanceLock)) return;
-  // macOS convention: closing the last window is not quitting the application. The Dock/menu
-  // bar stay alive and `activate` recreates it. Windows/Linux retain the explicit close-to-tray
-  // preference; Cmd+Q / app.quit bypasses this event and still enters the shutdown sequence.
+  // macOS keeps running after its last window closes (Dock reactivation); Windows/Linux
+  // follow the explicit close-to-tray preference. An explicit quit (Cmd+Q / application
+  // menu / tray menu) bypasses this event and still enters shutdown.
   if (shouldQuitOnWindowAllClosed(process.platform, getConfig().ui.minimizeToTray)) app.quit();
 });
 

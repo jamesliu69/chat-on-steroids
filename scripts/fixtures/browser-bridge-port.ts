@@ -13,7 +13,10 @@ import { startBridge, stopBridge, shutdownBridge, bridgePort, bridgeStatus, brow
   setBrowserOpener } from '../../src/main/bridge.js';
 import { registerIpc } from '../../src/main/ipc.js';
 
-const run = process.argv[2];
+// The verifier bundles this fixture directly into its isolated run directory. Derive every
+// writable path from that trusted bundle location instead of accepting a filesystem root from
+// the command line.
+const run = __dirname;
 app.setPath('userData', path.join(run, 'runtime'));
 const report: { checks: string[]; unavailable: number[]; error?: string; extensionStatus?: unknown } = { checks: [], unavailable: [] };
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

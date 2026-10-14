@@ -7,6 +7,7 @@ let dom: JSDOM;
 beforeEach(() => {
   vi.resetModules();
   dom = new JSDOM(readFileSync('src/renderer/index.html', 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Node: dom.window.Node });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };
@@ -38,9 +39,10 @@ it('does not require local storage and never uses a browser or approval action',
   vi.spyOn(dom.window.Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
   vi.spyOn(dom.window.Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
   const { initToolApprovalNotice } = await import('../src/renderer/tool-approval.js');
+  const { t } = await import('../src/renderer/i18n.js');
   let opening!: () => void;
   initToolApprovalNotice(listener => { opening = listener; return () => {}; });
   opening(); const dialog = document.querySelector('.tool-approval-dialog') as HTMLDialogElement;
   expect(dialog.open).toBe(true); dialog.close(); opening(); expect(dialog.open).toBe(false);
-  expect(dialog.textContent).toContain('does not approve a tool call');
+  expect(dialog.textContent).toContain(t('This is separate from the plugin’s permissions, and this reminder does not approve a tool call.'));
 });

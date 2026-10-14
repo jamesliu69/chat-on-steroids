@@ -15,6 +15,7 @@ afterEach(() => { dom?.window.close(); vi.useRealTimers(); vi.unstubAllGlobals()
 
 it('chooses the week start from a weekday menu, keeps exact counts, and restores the weekday after reload', async () => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const data: UsageOverview = { contextTokenCap: 256_000, tokens: 0, models: [], days: [], sessions: 1,
     limits: [
@@ -80,6 +81,7 @@ it('chooses the week start from a weekday menu, keeps exact counts, and restores
 
 it.each(['7', '-1', '1.5', 'invalid', ''])('ignores invalid persisted weekday %j', async saved => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   dom.window.localStorage.setItem('cos.usage.weekStart', saved);
   const { initUsage } = await import('../src/renderer/usage.js'); initUsage();
@@ -89,6 +91,7 @@ it.each(['7', '-1', '1.5', 'invalid', ''])('ignores invalid persisted weekday %j
 
 it('explains a pending background rebuild and replaces transport failure with a retryable status', async () => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   let reject!: (error: Error) => void;
   Object.assign(dom.window, { api: {
@@ -109,6 +112,7 @@ it('explains a pending background rebuild and replaces transport failure with a 
 
 it.each([256_000, 400_000])('shows the calculated %i context cap and edits formula preferences without reloading recordings', async (contextTokenCap) => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const models = [
     { model: 'gpt-5.6', reasoningEffort: 'high', assumed: true, tokens: 1e6 },
@@ -163,6 +167,7 @@ it.each([256_000, 400_000])('shows the calculated %i context cap and edits formu
 
 it('shows the Sol picker alias rate and preserves an explicitly cleared rate after reload', async () => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const models = [{ model: 'gpt-5-6-thinking', reasoningEffort: 'high', assumed: false, tokens: 427245 }];
   const data: UsageOverview = { contextTokenCap: 256_000, messages: { through: Date.now(), days: [] }, tokens: 427245, models, days: [{ date: '2026-09-07', tokens: 427245, models }], sessions: 1, limits: [] };
@@ -186,6 +191,7 @@ it('shows the Sol picker alias rate and preserves an explicitly cleared rate aft
 
 it('combines equivalent recorded names in the table while keeping raw rate edits and partial unknown cost', async () => {
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const models = ['5.6', 'gpt-5-6-thinking', 'gpt-5.6-sol'].map(model => ({ model, reasoningEffort: 'high', assumed: false, tokens: 1e6 }));
   const data: UsageOverview = { contextTokenCap: 256_000, messages: { through: Date.now(), days: [] }, tokens: 3e6, models, days: [{ date: '2026-09-08', tokens: 3e6, models }], sessions: 1, limits: [] };
@@ -208,6 +214,7 @@ it('combines equivalent recorded names in the table while keeping raw rate edits
 it.each(['2026-09-28', '2026-10-01', '2027-01-01', '2028-02-29'])('draws an annual Monday-first calendar ending %s, with twelve month labels and a legend', async date => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(`${date}T12:00:00`));
   dom = new JSDOM(readFileSync(new URL('../src/renderer/index.html', import.meta.url), 'utf8'), { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('localStorage', dom.window.localStorage);
   const key = (ago: number) => { const date = new Date(); date.setDate(date.getDate() - ago); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
   const models = [{ model: 'gpt-5.6-sol', reasoningEffort: 'high', assumed: false, tokens: 1e6 }];

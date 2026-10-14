@@ -235,7 +235,9 @@ import { sessionWorkingAt } from '../shared/session-activity.js';
 import { requestCorrelation } from './session/correlation.js';
 import { completeImageExport, IMAGE_EXPORT_BODY_BYTES, pendingImageExports } from './image-export.js';
 import { bindAgentWorkspace } from './workspace.js';
-import { extensionUpdateOffer, prepareExtensionUpdate, shippedExtensionBuild } from './extension-path.js';
+// Load the desktop-only extension owner when this browser bridge starts. Core's plain-Node
+// host imports the bridge's inert routing helpers but never starts its browser listener.
+let extensionPaths: typeof import('./extension-path.js') | null = null;
 
 /** Fixed candidates so the extension can find the app without being told a port. */
 export const DEFAULT_PORTS = BROWSER_BRIDGE_AUTO_PORTS;
@@ -648,7 +650,7 @@ function staleCompanion(req: http.IncomingMessage): boolean {
   // leave every new chat unclaimed (measured 2026-10-14), so the chosen Firefox keeps working.
   if (req.headers['x-extension-engine'] === 'gecko' && getConfig().ui.chatBrowser === 'firefox') return false;
   const stamp = extensionBuildOf(req);
-  const shipped = shippedExtensionBuild();
+  const shipped = extensionPaths?.shippedExtensionBuild() ?? null;
   if (!stamp || !shipped || stamp === shipped) return false;
   const current = extensionBuildSeenAt.get(shipped);
   return current !== undefined && Date.now() - current < STALE_COMPANION_WINDOW_MS;
@@ -1263,7 +1265,7 @@ function noteExtensionVersion(req: http.IncomingMessage): void {
     // service worker it already had, so an extension folder replaced under a live browser
     // reports the new version and runs the old code — and every symptom after that points
     // somewhere else. Said once per announcement, and only when both ends reported a stamp.
-    const shipped = shippedExtensionBuild();
+    const shipped = extensionPaths?.shippedExtensionBuild() ?? null;
     if (shipped && stamp && stamp !== shipped) {
       // Expected after every app update: the extension updates itself once no chat is busy.
       // Only an extension loaded from some other folder stays behind and needs a manual reload.
@@ -2503,13 +2505,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   // an agent or an active Goal" (almost always true on a busy install), is what a reload could
   // cut short; the pages report their own in-flight turns to the extension directly.
   const extensionUpdateReply = (running: string | null) => {
-    const offer = extensionUpdateOffer(running);
+    const offer = extensionPaths?.extensionUpdateOffer(running) ?? null;
     return offer ? { ...offer, busy: runningToolCalls() > 0 } : null;
   };
   // The extension is idle and about to reload into the build this app ships: bring the folder
   // Chrome loads from up to date first, and say whether it now holds that build.
   if (route === '/extension/update' && req.method === 'POST') {
-    const prepared = prepareExtensionUpdate(extensionBuildOf(req));
+    const prepared = extensionPaths?.prepareExtensionUpdate(extensionBuildOf(req)) ?? null;
     if (prepared?.ready) logInfo(`bridge: extension folder updated to build ${prepared.build}; the extension reloads itself now`);
     else if (prepared) logWarn(`bridge: could not update the extension folder to build ${prepared.build}`);
     return json(res, 200, prepared ?? { ready: false }, origin);
@@ -5175,13 +5177,54 @@ export async function sweepStaleSwarm(now = Date.now()): Promise<boolean> {
   const silent = await inspectSilentChats(now);
   // An unfinished source files Continue; only a canonical final files Goal/Loop.
   await fileSilenceTickets(silent.spent, now);
+  // A confirmed silence reload is stronger than wall-clock silence: Chrome carried out this
+  // exact turn's one recovery action, the full post-reload window elapsed, and no new work
+  // replaced its receipt. Only that evidence may release an attached active Worker here.
+  const spentWorkersChanged = observationWritesInFlight === 0
+    ? await sleepSpentSilenceWorkers(silent.spent)
+    : false;
   // All undelivered tickets share this pass, including Continue filed by the silence pass.
   const goalsQueued = await inspectOwedPickups(now);
   const compactionsQueued = await inspectOwedCompactions(now);
 
   const silenceChanged = silent.queued || silent.spent.length > 0 || goalsQueued || compactionsQueued;
   finishSilentChats(silent.spent, silent.inspected);
-  return silenceChanged || brokerChanged;
+  return silenceChanged || brokerChanged || spentWorkersChanged;
+}
+
+/**
+ * Release attached Workers only after their exact one-shot silence recovery was confirmed and
+ * then exhausted. Plain inactivity is deliberately insufficient: a native tool-free generation
+ * can remain live without publishing another recorder event.
+ */
+async function sleepSpentSilenceWorkers(spent: readonly string[]): Promise<boolean> {
+  let changed = false;
+  for (const runId of activeRunIds()) {
+    if (swarmTransferActive(runId)) continue;
+    const state = swarmState(runId);
+    if (!state.running) continue;
+    const stoppedWorkers: string[] = [];
+    for (const conversationId of spent) {
+      const repair = repairsInFlight.get(conversationId);
+      if (repair?.reason !== 'silence' || repair.state !== 'done') continue;
+      const worker = state.agents.find(
+        (agent) => agent.role === 'worker' && agent.state === 'active' && agent.conversationId === conversationId
+      );
+      if (!worker || runningToolProgress(conversationId) !== null) continue;
+      const slept = sleepWorker(
+        worker.id,
+        'Its confirmed silence recovery completed and the full post-reload window expired without new work.',
+        runId
+      );
+      if (!slept) continue;
+      if (slept.report) await recordAgentMessage(slept.report, 'sent', slept.info.conversationId);
+      stoppedWorkers.push(worker.id);
+    }
+    if (!stoppedWorkers.length) continue;
+    await wakeQueuedStoppedWorkers(stoppedWorkers, runId);
+    changed = true;
+  }
+  return changed;
 }
 
 /** Captures one incarnation for all post-await lifecycle checks. */
@@ -5191,7 +5234,9 @@ async function sweepOwnedSwarm(runId: string, now: number): Promise<boolean> {
     return false;
   }
 
-  // The existing broker clock handles attached and detached workers alike.
+  // A detached worker has no page left to establish durable turn quiescence, so the broker
+  // silence clock is its bounded escape hatch. Attached workers are released only by the
+  // durable terminal/quiescence proof below.
   const stoppedWorkers: string[] = [];
 
   // Block is the user's stop for that chat, and a worker whose chat is blocked is not working
@@ -5500,6 +5545,11 @@ export function publishBridgePortChange(next: Config, previous: Config, persist:
 async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promise<number | null> {
   bridgeRecovering = true;
   try {
+    extensionPaths ??= await import('./extension-path.js');
+    if (epoch !== bridgeLifecycleEpoch || bridgeShutdownRequested) {
+      bridgeRecovering = false;
+      return prepared ? closeCancelledBridgeStart(prepared.instance, prepared.actual) : null;
+    }
     prepared ??= await prepareBridgeListener(bridgePortSelection(getConfig().ui.browserBridgePort).candidates, epoch);
   } catch (error) {
     bridgeRecovering = false;

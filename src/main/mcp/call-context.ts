@@ -71,6 +71,8 @@ export interface CallCaller {
   conversationId: string | null;
   /** Durable local session principal carried by the same exact request proof. */
   sessionId?: string | null;
+  /** Admission deliberately committed this unresolved caller to Unattributed. */
+  unattributedFrozen?: boolean;
   /** Selected agent family. This selects state only after the broker checks its owner. */
   runId?: string;
 }
@@ -282,6 +284,15 @@ export function currentAgent(): string | null {
 /** Who the running call was proven to be. Empty outside a call. */
 export function currentCaller(): CallCaller {
   return storage.getStore()?.caller ?? { transportKey: null, requestId: null, conversationId: null };
+}
+
+/** Prevents late browser proof from reassigning a mutation already admitted as Unattributed. */
+export function freezeCurrentCallerUnattributed(): void {
+  const context = storage.getStore();
+  if (!context) return;
+  context.caller.unattributedFrozen = true;
+  context.caller.conversationId = null;
+  context.caller.sessionId = null;
 }
 
 /** Asks for `agent` to be bound to this call's conversation once it can be identified. */

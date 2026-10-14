@@ -54,8 +54,10 @@ app.whenReady().then(async () => {
     assert.equal(ready, true);
     const results = [];
     for (const [width, height, zoom, language, theme] of [
-      [1100, 900, 1, 'en', 'dark'], [800, 650, 1, 'en', 'dark'], [1100, 900, 1, 'de', 'dark'],
+      [1100, 900, 1, 'en', 'dark'], [800, 650, 1, 'en', 'dark'],
+      [1100, 900, 1, 'de', 'dark'],
       [1100, 900, 1.5, 'zh-CN', 'light'], [640, 720, 1, 'zh-CN', 'dark'],
+      [1100, 900, 1.5, 'zh-TW', 'light'], [640, 720, 1, 'zh-TW', 'dark'],
       [800, 650, 1, 'es', 'dark'], [800, 650, 1, 'zh-TW', 'light'],
       [1100, 900, 1, 'ja', 'dark'], [1100, 900, 1.5, 'ja', 'light'], [640, 720, 1, 'ja', 'dark'],
       [1100, 900, 1, 'tr', 'dark'], [1100, 900, 1.5, 'tr', 'light'], [640, 720, 1, 'tr', 'dark'],

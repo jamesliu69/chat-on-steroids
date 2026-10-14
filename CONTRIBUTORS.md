@@ -50,6 +50,16 @@ Listed alphabetically by GitHub handle. "Adapted" means the implementation chang
 | [@ventianima-lab](https://github.com/ventianima-lab) | Preserving the exact message, conversation and page-epoch identity accepted by a desktop-send ACK when later canonical text differs, so the same send retains its turn-start boundary: adapted from the [code and regression tests in #185](https://github.com/totec448-spec/chat-on-steroids/issues/185#issuecomment-5647883368). This narrow repair does not reconstruct earlier missing history or resolve every symptom in the issue. |
 | [@yahiaal](https://github.com/yahiaal) | Publishing larger Plugins catalogs within the existing schema byte budget: [#216](https://github.com/totec448-spec/chat-on-steroids/pull/216), adapted to include the optional local code-mode tool in refresh observation and legacy enrollment. |
 
+The September 28 direct upstream merge retains the original commits for
+[@Haz4rdovisk](https://github.com/Haz4rdovisk)'s Windows Pets input and focus repair
+([#537](https://github.com/totec448-spec/chat-on-steroids/pull/537)) and
+[@Maximapple](https://github.com/Maximapple)'s app-created chat titles
+([#552](https://github.com/totec448-spec/chat-on-steroids/pull/552)), Pets focus fallback
+([#553](https://github.com/totec448-spec/chat-on-steroids/pull/553)), 2.1.17 release preparation
+([#554](https://github.com/totec448-spec/chat-on-steroids/pull/554)), changelog completion
+([#550](https://github.com/totec448-spec/chat-on-steroids/pull/550)) and finish-tool guidance
+([#557](https://github.com/totec448-spec/chat-on-steroids/pull/557)).
+
 The September 12 repair snapshot also adapts [@Maximapple](https://github.com/Maximapple)'s
 destination loading guard ([#164](https://github.com/totec448-spec/chat-on-steroids/pull/164)),
 expired automatic resume claim release ([#165](https://github.com/totec448-spec/chat-on-steroids/pull/165)),
@@ -211,6 +221,12 @@ and its [remounted-answer follow-up](https://github.com/totec448-spec/chat-on-st
 [@Gauthammaster2012Code](https://github.com/Gauthammaster2012Code) reported the plan-collapse
 affordance issue in [#191](https://github.com/totec448-spec/chat-on-steroids/issues/191).
 
+The September 29 upstream merge preserves original commits and authorship for
+[@Haz4rdovisk](https://github.com/Haz4rdovisk)'s per-exchange work-duration line
+([#732](https://github.com/totec448-spec/chat-on-steroids/pull/732)) and
+[@Maximapple](https://github.com/Maximapple)'s reasoning-effort slider update
+([#735](https://github.com/totec448-spec/chat-on-steroids/pull/735)).
+
 Contributions also include reproductions, independent testing, designs and patches that are still under review or were superseded. Thank you to:
 
 - [@ventianima-lab](https://github.com/ventianima-lab) for detailed request-attribution and delivery investigations and controller, stream-observation and tab-reuse proposals, including [#108](https://github.com/totec448-spec/chat-on-steroids/issues/108), [#124](https://github.com/totec448-spec/chat-on-steroids/pull/124), [#159](https://github.com/totec448-spec/chat-on-steroids/pull/159) and [#170](https://github.com/totec448-spec/chat-on-steroids/pull/170).
@@ -229,3 +245,11 @@ This is a growing attribution record, not a complete list of everyone who has he
 Keep original authorship when merging a contribution. When adapting or consolidating contributed work, name the original author and PR, and preserve appropriate `Co-authored-by` trailers using the contributor's public GitHub noreply identity. Reports and review deserve explicit acknowledgment without inventing code authorship. See [CONTRIBUTING.md](CONTRIBUTING.md#credit-and-attribution).
 
 The September 2026 attribution correction adds a new public record and retroactive co-author credit for incorporated work. It does not rewrite released commits or imply that contributors authored the correction's prose. GitHub's automatic contributor displays are separate from this maintained record.
+
+## October 13 upstream integration
+
+The fork merges upstream through `2f1a5812ccf2b9d667f4ec8ba589bb15a56c2ed2`,
+including [@Maximapple](https://github.com/Maximapple)'s diagnostics memory report
+[#1400](https://github.com/totec448-spec/chat-on-steroids/pull/1400).
+Original authorship remains in the merged history; the fork integration adapts conflict
+resolutions and renderer test fixtures while retaining its ownership and deployment contracts.

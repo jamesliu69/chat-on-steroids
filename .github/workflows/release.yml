@@ -98,6 +98,25 @@ jobs:
       - name: Package
         run: npm run ${{ matrix.script }}
 
+      - name: Package Windows portable executable
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $builder = Join-Path $PWD 'node_modules/electron-builder/out/cli/cli.js'
+          node $builder --win portable --${{ matrix.arch }} --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder portable target failed with exit code $LASTEXITCODE"
+          }
+          $portableFiles = @(
+            Get-ChildItem -LiteralPath 'release' -File -Filter '*.exe' |
+              Where-Object { $_.Name -notlike 'Chat-On-Steroids-Setup-*' }
+          )
+          if ($portableFiles.Count -ne 1) {
+            $names = ($portableFiles | ForEach-Object Name) -join ', '
+            throw "Expected one generated Windows portable executable, found $($portableFiles.Count): $names"
+          }
+          Move-Item -LiteralPath $portableFiles[0].FullName -Destination (Join-Path $PWD 'release/Chat-On-Steroids-Portable-${{ matrix.arch }}.exe')
+
       - name: Smoke packaged runtime natively
         run: node scripts/smoke-packaged-runtime.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 

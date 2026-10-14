@@ -13,6 +13,7 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 beforeEach(() => {
   dom = new JSDOM(readFileSync('src/renderer/index.html', 'utf8'), { url: 'http://localhost' });
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  setLanguage('en');
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };
   state = { schemaRevision: 1, catalog: [{ id: 'memory', icon: 'memory', color: '#aaa', name: 'Memory', description: 'Knowledge graph', source: { kind: 'npm', package: 'memory' }, homepage: 'https://example.org', license: 'MIT', instructions: ['Install Node.js.'], fields: [{ key: 'TOKEN', label: 'API token', secret: true, required: true }] }], plugins: [{ id: 'one', name: '<img src=x onerror=alert(1)>', source: { kind: 'command', command: 'node' }, config: {}, credentialKeys: ['TOKEN'], longestCallSeconds: 120, version: '1', license: 'MIT', enabled: true, status: 'ready', installedAt: 1, tools: [] }] };
@@ -209,6 +210,38 @@ it('keeps plugin connection setup local, preserves a draft and saves through the
   expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ tunnel: expect.objectContaining({ tunnelId: 'core-concurrent', pluginsTunnelId: 'plugins-new' }) }), expect.objectContaining({ tunnel: expect.objectContaining({ tunnelId: 'core-concurrent', pluginsTunnelId: 'plugins-original' }) }));
   expect(document.querySelector('[data-panel="setup"] #pluginsTunnelId')).toBeNull();
   expect(document.querySelector('#pluginDialog .plugin-tools')).toBeNull();
+});
+
+it('stores a Plugins setup API key in the currently selected setup profile', async () => {
+  const next = {
+    hasApiKey: false,
+    config: {
+      tunnel: {
+        kind: 'openai',
+        profileId: 'work-profile',
+        profileName: 'Work',
+        profileEpoch: 3,
+        tunnelId: 'core-work',
+        desktopTunnelId: '',
+        pluginsTunnelId: ''
+      },
+      setupProfiles: [{ id: 'default', name: 'Default', tunnelId: 'core-default', desktopTunnelId: '', pluginsTunnelId: '' }],
+      ui: { theme: 'dark' }
+    },
+    status: { surfaces: [{ id: 'plugins', state: 'offline', tools: [], connectorName: 'Chat On Steroids Plugins', description: 'External tools', lastRequestAt: null }] }
+  } as unknown as AppState;
+  initPlugins(); applyPluginsState(next); await tick();
+  document.getElementById('pluginsSetupLink')!.click();
+  const password = document.querySelector<HTMLInputElement>('#pluginDialog input[type=password]')!;
+  const tunnel = document.querySelector<HTMLInputElement>('#pluginDialog #pluginsTunnelId')!;
+  password.value = 'work-key';
+  tunnel.value = 'tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  api.setApiKey!.mockResolvedValue({ ok: true, data: next });
+  api.saveSettings!.mockResolvedValue({ ok: true, data: next });
+  api.connect!.mockResolvedValue({ ok: true, data: next });
+  [...document.querySelectorAll<HTMLButtonElement>('#pluginDialog button')].find(node => node.textContent === 'Save & connect')!.click();
+  await tick();
+  expect(api.setApiKey).toHaveBeenCalledWith('work-key', 'work-profile');
 });
 
 it('explains starting enabled runtimes and tool publication conflicts', async () => {

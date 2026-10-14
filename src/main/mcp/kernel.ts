@@ -110,7 +110,7 @@ import { requestCorrelation } from '../session/correlation.js';
 import { summarizeRunningCall } from '../session/summarize.js';
 import { anyChatBlocked, BLOCKED_CHAT_REFUSAL, isChatBlocked } from '../session/blocked-chats.js';
 import { STRICT_CHAT_REFUSAL, conversationAccessRefusal, strictChatAllowlistEnabled } from '../session/conversation-access.js';
-import { anyContinuationOpen, compactingConversation } from '../session/continuation.js';
+import { anyCompactingConversation, compactingConversation } from '../session/continuation.js';
 import {
   acknowledgeBackgroundExecOutput,
   backgroundExecRecoveryNotices,
@@ -123,6 +123,7 @@ import {
   conversationAttachment,
   findSessionByConversation,
   getSession,
+  hasSupersededConversationAttachments,
   requestBelongsToActiveTurn,
   requestTurnOwnershipCutoff
 } from '../session/store.js';
@@ -223,6 +224,10 @@ export interface ToolContext {
   privacyScreenshots?: boolean;
   /** Whether session recording is live right now. Defaults to the live setting. */
   sessionTools?: boolean;
+  /** Whether task-plan storage is live, independently from conversation recording. */
+  planTools?: boolean;
+  /** The setting label to show if an already-exposed plan tool is now disabled. */
+  planToolsDisabledSetting?: string;
   /** Whether multi-agent mode is live right now. Defaults to the live setting. */
   agentTools?: boolean;
   /**
@@ -232,6 +237,7 @@ export interface ToolContext {
    * failure rather than a tidy error. Default to the live values.
    */
   exposedSessionTools?: boolean;
+  exposedPlanTools?: boolean;
   exposedAgentTools?: boolean;
   /**
    * Whether `find` must stay registered for the lifetime of the endpoint.
@@ -443,6 +449,7 @@ function callerConversation(tool: string, startedAt: number, requestId: string |
 
 /** Publishes both halves of one exact request proof into the call context. */
 function setCallerConversation(context: CallContext, conversationId: string | null): void {
+  if (conversationId && context.caller.unattributedFrozen) return;
   context.caller.conversationId = conversationId;
   const exact = conversationId ? requestCorrelation(context.caller.requestId) : null;
   context.caller.sessionId = exact?.conversationId === conversationId ? exact.sessionId : null;
@@ -751,25 +758,44 @@ async function dispatchTracked(
       await awaitFreshCallOrigin(name, startedAt, identityWindow(wait), { requestId })
     );
   }
-  // A run that ended leaves an explicit short-lived lease tombstone for each open worker
-  // chat. Resolve exact request identity before ordinary tools too while such leases exist;
-  // otherwise an explicit-workdir exec could keep mutating after its worker was retired.
-  if (!context.caller.conversationId && hasRetiredWorkerLeases() && requestId) {
+  // Retired and dormant worker histories remain identity fences after their active run ends.
+  // Mutation-capable tools and the agents control surface need the full exact-id window because
+  // acting as the wrong historical owner can mutate or disclose another family. Ordinary
+  // read-only calls get only a brief preference window: that is long enough to catch page proof
+  // already in flight (and revive an exact dormant worker), without making an unrelated allowed
+  // read wait the full identity window merely because old worker history exists.
+  const historicalMutation = mutationNeedsHistoricalIdentity(name, surface);
+  const historicalLease = hasRetiredWorkerLeases() || hasDormantWorkerLeases();
+  if (!context.caller.conversationId && historicalLease && requestId) {
+    const historicalWait = historicalMutation || name === 'agents'
+      ? IDENTITY_EVIDENCE_MS
+      : HISTORICAL_READ_EVIDENCE_MS;
     setCallerConversation(
       context,
-      await awaitFreshCallOrigin(name, startedAt, identityWindow(IDENTITY_EVIDENCE_MS), { requestId })
+      await awaitFreshCallOrigin(name, startedAt, identityWindow(historicalWait), { requestId })
     );
   }
-  // Dormant histories are long-lived identity fences, not active slot claims. An old worker tab
-  // may still issue a stale server-side call after its run parked, and without exact request-id
-  // attribution an absolute read/exec would otherwise look like an unrelated ordinary chat and
-  // run successfully. Resolve the exact mate for every call while such worker conversations
-  // exist, just as we do for short-lived retired worker leases.
-  if (!context.caller.conversationId && hasDormantWorkerLeases() && requestId) {
-    setCallerConversation(
-      context,
-      await awaitFreshCallOrigin(name, startedAt, identityWindow(IDENTITY_EVIDENCE_MS), { requestId })
-    );
+  if (
+    !context.caller.conversationId &&
+    allowUnattributed &&
+    requestId &&
+    !context.caller.unattributedFrozen &&
+    !anyChatBlocked() &&
+    !anyCompactingConversation()
+  ) {
+    const mutationRisk = mutationNeedsHistoricalIdentity(name, surface);
+    const staleIdentityRisk =
+      mutationRisk && (swarmRunning() || await hasSupersededConversationAttachments());
+    if (staleIdentityRisk) {
+      setCallerConversation(
+        context,
+        await awaitFreshCallOrigin(name, startedAt, UNATTRIBUTED_IDENTITY_GUARD_MS, { requestId })
+      );
+      if (!context.caller.conversationId) {
+        context.caller.unattributedFrozen = true;
+        context.caller.sessionId = null;
+      }
+    }
   }
   // And the user's own block, which needs identity resolved to the same depth as everything
   // above and used to be the one rule here that read it without ever waiting.
@@ -792,7 +818,7 @@ async function dispatchTracked(
   // A chat being compacted is refused on the same terms, so it waits on the same terms.
   if (
     !context.caller.conversationId &&
-    (strictChatAllowlistEnabled() || anyChatBlocked() || anyContinuationOpen()) &&
+    (strictChatAllowlistEnabled() || anyChatBlocked() || anyCompactingConversation()) &&
     requestId
   ) {
     setCallerConversation(
@@ -940,7 +966,7 @@ async function dispatchTracked(
   // 2026-09-01 that is exactly what happened — the "stopped" turn kept calling tools, the
   // handoff prompt was typed into it, and the model spent eleven more minutes on its task,
   // applying patches, before it got round to the brief. So the refusal lives here, where
-  // every call passes: from the moment the continuation is filed until its commit hands the
+  // every call passes: from handoff dispatch until the continuation commit hands the
   // chat over to `superseded`, chat A gets no tool at all, and each refusal tells the model
   // the only thing it can usefully do is write the brief.
   const compacting = !conversationPolicyRefusal && compactingConversation(context.caller.conversationId) !== null;
@@ -1166,6 +1192,7 @@ async function dispatchTracked(
     requestId: context.caller.requestId,
     conversationId: context.caller.conversationId,
     sessionId: context.caller.sessionId ?? null,
+    attributionFrozen: context.caller.unattributedFrozen === true,
     endsActivity: isFinish && !result.isError
   });
   // Exact request-id identity needs no browser wait, so make its durable session append part
@@ -1213,6 +1240,15 @@ function needsWorkspaceIdentity(name: string, args: unknown): boolean {
     return swarmRunning() || workdir === undefined || relative(workdir);
   }
   return false;
+}
+
+/** Tools whose unresolved caller may cross a mutation boundary before late proof arrives. */
+function mutationNeedsHistoricalIdentity(name: string, surface: SurfaceId): boolean {
+  if (surface === 'plugins') return true;
+  if (surface === 'desktop') {
+    return !['list_windows', 'get_window', 'list_apps', 'get_window_state', 'read_clipboard'].includes(name);
+  }
+  return ['exec', 'exec_command', 'write_stdin', 'apply_patch', 'download_artifact'].includes(name);
 }
 
 /**
@@ -1408,6 +1444,8 @@ export interface SurfaceRegistrar {
   exposedCaps: Capabilities;
   sessionToolsLive: boolean;
   sessionToolsExposed: boolean;
+  planToolsLive: boolean;
+  planToolsExposed: boolean;
   agentToolsLive: boolean;
   agentToolsExposed: boolean;
   /** Whether `find` is part of this endpoint's surface. See ToolContext.exposedFind. */
@@ -1442,13 +1480,15 @@ export interface SurfaceRegistrar {
 export function createRegistrar(server: McpServer | null, ctx: ToolContext, surface: SurfaceId, observe?: (name: string, config: { description: string; inputSchema: z.ZodType; annotations?: ToolAnnotations }) => void): SurfaceRegistrar {
   const caps = ctx.caps;
   const exposedCaps = ctx.exposedCaps ?? caps;
-  // These two do not follow a capability checkbox: they are whole features the user
-  // switches on in the app, and neither touches the filesystem. Like the capability
-  // tools they are exposed monotonically and disabled at the handler, so switching a
-  // feature off does not delete a tool a cached ChatGPT snapshot still believes in.
+  // Session recording and multi-agent are app-level features. Plans normally follow
+  // recording but the headless host can enable them independently. Feature tools are
+  // exposed monotonically and disabled at the handler, so switching one off does not
+  // delete a tool a cached ChatGPT snapshot still believes in.
   const sessionToolsLive = ctx.sessionTools ?? getConfig().sessions.record;
+  const planToolsLive = ctx.planTools ?? sessionToolsLive;
   const agentToolsLive = ctx.agentTools ?? getConfig().multiAgent.enabled;
   const sessionToolsExposed = ctx.exposedSessionTools ?? sessionToolsLive;
+  const planToolsExposed = ctx.exposedPlanTools ?? planToolsLive;
   const agentToolsExposed = ctx.exposedAgentTools ?? agentToolsLive;
   const findExposed = ctx.exposedFind ?? (!exposedCaps.command && exposedCaps.search);
   const names: string[] = [];
@@ -1460,6 +1500,8 @@ export function createRegistrar(server: McpServer | null, ctx: ToolContext, surf
     exposedCaps,
     sessionToolsLive,
     sessionToolsExposed,
+    planToolsLive,
+    planToolsExposed,
     agentToolsLive,
     agentToolsExposed,
     findExposed,
@@ -1553,6 +1595,12 @@ export const IDENTITY_EVIDENCE_MS = evidenceWindow(15_000);
 
 /** Brief exact-proof preference before allowed Desktop calls fall back to request-scoped state. */
 export const UNATTRIBUTED_DESKTOP_EVIDENCE_MS = evidenceWindow(250);
+
+/** Brief exact-proof preference for read-only calls while dormant/retired worker history exists. */
+export const HISTORICAL_READ_EVIDENCE_MS = evidenceWindow(100);
+
+/** Brief fence for unresolved mutation callers when retained ownership could identify a stale chat. */
+export const UNATTRIBUTED_IDENTITY_GUARD_MS = evidenceWindow(500);
 
 /**
  * The same window again for the two `agents` actions whose refusal cannot be retried cheaply.

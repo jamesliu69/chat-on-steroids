@@ -166,7 +166,7 @@ describe('cross-platform packaging targets', () => {
 
   it('builds canaries only for the targets most installs use, and releases for all of them', () => {
     expect(releaseTargets('common').include.map((target: { name: string }) => target.name)).toEqual(['Windows x64', 'macOS arm64', 'Linux x64']);
-    expect(releaseTargets('common').files).toEqual(['Chat-On-Steroids-Setup-x64.exe', 'Chat-On-Steroids-macOS-arm64.dmg',
+    expect(releaseTargets('common').files).toEqual(['Chat-On-Steroids-Setup-x64.exe', 'Chat-On-Steroids-Portable-x64.exe', 'Chat-On-Steroids-macOS-arm64.dmg',
       'Chat-On-Steroids-macOS-arm64.zip', 'Chat-On-Steroids-Linux-x64.AppImage', 'Chat-On-Steroids-Linux-x64.deb',
       'Chat-On-Steroids-Extension.zip', 'Chat-On-Steroids-Native-Sources.tar.gz']);
     expect(() => releaseTargets('some')).toThrow();
@@ -314,11 +314,13 @@ describe('cross-platform packaging targets', () => {
     expect(matrix).toEqual([
       {
         name: 'Windows x64', platform: 'win32', arch: 'x64', runner: 'windows-2025',
-        script: 'dist:x64', artifact: 'package-windows-x64', files: 'release/Chat-On-Steroids-Setup-x64.exe'
+        script: 'dist:x64', artifact: 'package-windows-x64',
+        files: 'release/Chat-On-Steroids-Setup-x64.exe\nrelease/Chat-On-Steroids-Portable-x64.exe'
       },
       {
         name: 'Windows arm64', platform: 'win32', arch: 'arm64', runner: 'windows-11-arm',
-        script: 'dist:arm64', artifact: 'package-windows-arm64', files: 'release/Chat-On-Steroids-Setup-arm64.exe'
+        script: 'dist:arm64', artifact: 'package-windows-arm64',
+        files: 'release/Chat-On-Steroids-Setup-arm64.exe\nrelease/Chat-On-Steroids-Portable-arm64.exe'
       },
       {
         name: 'macOS x64', platform: 'darwin', arch: 'x64', runner: 'macos-15-intel',
@@ -343,6 +345,9 @@ describe('cross-platform packaging targets', () => {
     ]);
     expect(parsed.jobs.package['runs-on']).toBe('${{ matrix.runner }}');
     expect(workflow).toContain('name: chat-on-steroids-candidate-${{ github.run_id }}');
+    expect(workflow).toContain('name: Package Windows portable executable');
+    expect(workflow).toContain('--win portable --${{ matrix.arch }} --publish never');
+    expect(workflow).toContain('Chat-On-Steroids-Portable-${{ matrix.arch }}.exe');
     expect(workflow).not.toContain('Package Firefox extension groundwork');
     expect(workflow).not.toContain('npm run extension:firefox:stage');
     expect(workflow).not.toContain('Chat-On-Steroids-Firefox.zip');
@@ -519,8 +524,12 @@ describe('cross-platform packaging targets', () => {
     expect(builder.deb.depends).toContain('libatspi2.0-0 | libatspi2.0-0t64');
     expect(builder.linux.syncDesktopName).toBe(true);
     expect(builder.linux.maintainer).toMatch(/^Chat On Steroids <[^>]+@users\.noreply\.github\.com>$/);
+    expect(builder.linux.extraResources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: 'resources/packaging/tunnel/linux/${arch}', to: 'tunnel' }),
+      expect.objectContaining({ from: 'resources/packaging/rg/linux/${arch}', to: 'rg' })
+    ]));
     expect(pkg.desktopName).toBe('com.chatonsteroids.app.desktop');
-    expect(pkg.homepage).toBe('https://github.com/totec448-spec/chat-on-steroids');
+    expect(pkg.homepage).toBe('https://github.com/jamesliu69/chat-on-steroids');
     expect(iconScript).toContain("build', 'icon.png'), pngFor(1024)");
 
     const packageScript = readFileSync(path.join(root, 'scripts', 'package.mjs'), 'utf8');
@@ -559,6 +568,48 @@ describe('cross-platform packaging targets', () => {
       expect(document).toContain('--no-sandbox');
       expect(document).toMatch(/unprivileged user namespaces/i);
     }
+  });
+
+  it('keeps fork downloads and matching native sources under one release authority while crediting upstream', () => {
+    const readme = readFileSync(path.join(root, 'README.md'), 'utf8');
+    const nativeLicenseReadme = readFileSync(path.join(root, 'docs', 'licenses', 'native', 'README.md'), 'utf8');
+    const bundledNotices = readFileSync(path.join(root, 'THIRD-PARTY-NOTICES.txt'), 'utf8');
+    const issueTemplate = yamlFile('.github/ISSUE_TEMPLATE/config.yml');
+    const fork = 'https://github.com/jamesliu69/chat-on-steroids';
+    const upstream = 'https://github.com/totec448-spec/chat-on-steroids';
+
+    for (const asset of [
+      'Chat-On-Steroids-Setup-x64.exe',
+      'Chat-On-Steroids-macOS-arm64.dmg',
+      'Chat-On-Steroids-Linux-x64.deb'
+    ]) {
+      expect(readme).toContain(`${fork}/releases/latest/download/${asset}`);
+    }
+    expect(readme).toContain(`${fork}/releases/latest`);
+    expect(nativeLicenseReadme).toContain(`${fork}/releases`);
+    expect(bundledNotices).toContain(`${fork}/releases`);
+    expect(issueTemplate.contact_links).toContainEqual(expect.objectContaining({
+      name: 'Security vulnerability',
+      url: `${fork}/security/advisories/new`
+    }));
+    expect(readme).not.toContain(`${upstream}/releases`);
+    expect(nativeLicenseReadme).not.toContain(`${upstream}/releases`);
+    expect(bundledNotices).not.toContain(`${upstream}/releases`);
+    expect(readme).toContain(`<a href="${upstream}">upstream project</a>`);
+  });
+
+  it('refuses release-writing workflows outside this fork', () => {
+    const latestMainWorkflow = yamlFile('.github/workflows/latest-main.yml');
+    const publishWorkflow = readFileSync(path.join(root, '.github', 'workflows', 'publish.yml'), 'utf8');
+
+    expect(latestMainWorkflow.jobs.publish.if).toBe(
+      "github.repository == 'jamesliu69/chat-on-steroids' && " +
+      "github.event.workflow_run.event == 'push' && " +
+      "github.event.workflow_run.head_branch == 'main' && " +
+      'github.event.workflow_run.head_repository.full_name == github.repository && ' +
+      "github.event.workflow_run.conclusion == 'success'"
+    );
+    expect(publishWorkflow).toContain("if: github.repository == 'jamesliu69/chat-on-steroids'");
   });
 
   it('keeps the static AppImage sandbox fallback conditional and duplicate-safe', () => {
@@ -787,7 +838,7 @@ Load command 11
     expect(workflow.slice(preflight, candidate)).toContain('npm run verify:tunnel-current');
     expect(workflow.slice(preflight, candidate)).toContain('Verify release metadata agrees');
     expect(workflow.slice(preflight, candidate)).toContain("APP_VERSION = '([^']+)'");
-    expect(workflow.slice(preflight, candidate)).toContain('has no release title');
+    expect(workflow.slice(preflight, candidate)).toContain('must disclose unsigned and unnotarized');
     expect(workflow.slice(candidate, publish)).toContain('needs: preflight');
     expect(workflow.slice(publish)).toContain('node scripts/check-release-absent.mjs');
     expect(workflow.slice(publish).match(/npm run verify:tunnel-current/g)).toHaveLength(1);
@@ -839,6 +890,22 @@ Load command 11
     expect(check.permissions).toEqual({ contents: 'read' });
   });
 
+  it('publishes the tested main Windows x64 portable build to a stable prerelease', () => {
+    const workflow = readFileSync(path.join(root, '.github', 'workflows', 'latest-main.yml'), 'utf8');
+
+    expect(workflow).toContain('workflow_run:');
+    expect(workflow).toContain('workflows: [CI]');
+    expect(workflow).toContain('branches: [main]');
+    expect(workflow).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(workflow).toContain('ref: ${{ github.event.workflow_run.head_sha }}');
+    expect(workflow).toContain('npm run dist:x64');
+    expect(workflow).toContain('node $builder --win portable --x64 --publish never');
+    expect(workflow).toContain('release/Chat-On-Steroids-Portable-x64.exe');
+    expect(workflow).toContain('gh release delete latest-main --cleanup-tag --yes');
+    expect(workflow).toContain('gh release create latest-main');
+    expect(workflow).toContain('--prerelease');
+    expect(workflow).toContain('--target "${{ github.event.workflow_run.head_sha }}"');
+  });
   it('keeps version metadata aligned and validates artifacts independently of editorial release notes', () => {
     const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string };
     const lock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
@@ -860,6 +927,8 @@ Load command 11
     const artifacts = [
       'Chat-On-Steroids-Setup-x64.exe',
       'Chat-On-Steroids-Setup-arm64.exe',
+      'Chat-On-Steroids-Portable-x64.exe',
+      'Chat-On-Steroids-Portable-arm64.exe',
       'Chat-On-Steroids-macOS-x64.dmg',
       'Chat-On-Steroids-macOS-x64.zip',
       'Chat-On-Steroids-macOS-arm64.dmg',

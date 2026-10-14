@@ -142,7 +142,7 @@ const GROUPS: Group[] = [
     title: "Change files",
     icon: 'i-pencil',
     blurb: "Create, edit, move, delete and save ChatGPT files, inside those folders only.",
-    caps: ['create', 'edit', 'move', 'deleteFile']
+    caps: ['create', 'edit', 'move', 'deleteFile', 'saveArtifact']
   },
   {
     id: 'desktop',
@@ -191,7 +191,8 @@ let setupOpenStep: string | null = null;
 let setupSteps: string[] = [];
 let setupOpen: string | null = null;
 let setupProfileBusy = false;
-let setupKeySave: Promise<boolean> = Promise.resolve(true);
+let setupKeySave: Promise<boolean> | null = null;
+let setupKeySaveFailed = false;
 
 // ------------------------------------------------------------------- tabs
 
@@ -1314,12 +1315,18 @@ async function changeSetupProfile(action: 'add' | 'select' | 'remove', id?: stri
   setupProfileBusy = true; paintSetupProfiles(state);
   try {
     await settingsSaveQueue;
-    if (!(await setupKeySave)) return;
+    const pendingKeySave = setupKeySave;
+    if (pendingKeySave) await pendingKeySave;
+    const apiKey = $<HTMLInputElement>('apiKey');
+    // A failed write retains its draft for retry, but the failure itself is not a
+    // permanent profile lock. Clearing the unsaved draft makes profile navigation safe.
+    if (setupKeySaveFailed && apiKey.value.trim() !== '') { apiKey.focus(); return; }
     const next = await run(action === 'add' ? api.addSetupProfile(name)
       : action === 'remove' ? api.removeSetupProfile(id!) : api.selectSetupProfile(id!));
     if (!next) return;
     requestedSettings = null;
-    $<HTMLInputElement>('apiKey').value = '';
+    apiKey.value = '';
+    setupKeySaveFailed = false;
     if (action === 'add') {
       if (nameInput.value.trim() === name) nameInput.value = '';
       $<HTMLDialogElement>('setupProfileDialog').close();
@@ -1552,7 +1559,7 @@ function apply(next: AppState): void {
   paintUpdate(next);
   paintUpdateReadiness(next, updateAllError);
   paintPluginRefreshRecovery(next);
-  paintPluginRefreshReminder(next.connectorSchemas ?? {}, next.confirmedConnectorSchemas ?? {});
+  paintPluginRefreshReminder(next.connectorSchemas ?? {}, next.confirmedConnectorSchemas ?? {}, next.status.surfaces);
   paintRecordingStorageNotice(next.recordingStorageFull === true);
   // A new size changes the "used of" line at once, not only when Settings opens again.
   if (previousState && previousState.config.sessions.storageLimitGiB !== next.config.sessions.storageLimitGiB) void paintRecordingStorageUsage();
@@ -1674,7 +1681,9 @@ function apply(next: AppState): void {
     previousState?.config.ui.privacyScreenshots
   );
   $('privacyScreenshotsSetting').hidden = !(next.platform?.desktopAutomation ?? true);
-  if (next.platform?.family === 'macos') {
+  if (!config.ui.minimizeToTray) {
+    ui($('backgroundRunningCopy'), 'textContent', () => t("The app quits completely when you close the window."));
+  } else if (next.platform?.family === 'macos') {
     ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use its plugins in ChatGPT. It stays available from the menu bar and Dock when you close the window."));
     ui($('minimizeToTrayCopy'), 'textContent', () => t("Hide the window to the menu bar when closed"));
     ui($('cosBrowserMinimizeTaskbar'), 'textContent', () => t("Dock"));
@@ -2620,7 +2629,7 @@ function storeSetupApiKeyDraft(): Promise<boolean> {
   const submitted = input.value;
   if (submitted === '') return Promise.resolve(true);
   const owner = state?.config.tunnel.profileId;
-  setupKeySave = (async () => {
+  const save = (async () => {
     const next = await run(api.setApiKey(submitted, owner));
     if (next) {
     // Do not erase a newer value typed while safeStorage/IPC was still resolving the previous
@@ -2631,9 +2640,15 @@ function storeSetupApiKeyDraft(): Promise<boolean> {
       }
       toast(t('API key stored'));
     }
+    setupKeySaveFailed = next === null;
     return next !== null;
   })();
-  return setupKeySave;
+  setupKeySave = save;
+  void save.then(
+    () => { if (setupKeySave === save) setupKeySave = null; },
+    () => { setupKeySaveFailed = true; if (setupKeySave === save) setupKeySave = null; }
+  );
+  return save;
 }
 $('apiKey').addEventListener('blur', () => { void storeSetupApiKeyDraft(); });
 

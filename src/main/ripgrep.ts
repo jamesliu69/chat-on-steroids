@@ -35,10 +35,13 @@ function pathCandidate(): string | null {
 }
 
 /** Locate the bundled ripgrep first, then an existing user installation as a dev fallback. */
-export function locateRipgrep(): string | null {
+export function locateRipgrep(serverRoot = process.cwd()): string | null {
   const fileName = ripgrepExecutableName();
   const packaged = process.resourcesPath ? path.join(process.resourcesPath, 'rg', fileName) : null;
   if (packaged && isExecutableFile(packaged)) return packaged;
+
+  const serverResource = path.join(serverRoot, 'resources', 'rg', fileName);
+  if (isExecutableFile(serverResource)) return serverResource;
 
   const dev = path.resolve(__dirname, '..', '..', 'resources', 'rg', fileName);
   if (isExecutableFile(dev)) return dev;

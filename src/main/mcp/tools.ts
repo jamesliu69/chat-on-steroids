@@ -28,12 +28,18 @@ import { toVirtualPath } from '../sandbox.js';
 import { logWarn } from '../logger.js';
 import { withManagedSkills } from '../skill-access.js';
 
-export function buildServer(ctx: ToolContext, surface: SurfaceId, observe?: (connectorName: string, version: string, instructions: string, tools: PluginToolSchema[]) => void, liveContext: () => ToolContext = () => ctx): McpServer {
+export function buildServer(
+  ctx: ToolContext,
+  surface: SurfaceId,
+  observe?: (connectorName: string, version: string, instructions: string, tools: PluginToolSchema[]) => void,
+  liveContext: () => ToolContext = () => ctx,
+  serverName = surfaceDefinition(surface).serverName
+): McpServer {
   if (surface === 'core') ctx = withManagedSkills(ctx);
   const definition = surfaceDefinition(surface);
   const instructions = serverInstructions(ctx, surface);
   const server = new McpServer(
-    { name: definition.serverName, version: APP_VERSION },
+    { name: serverName, version: APP_VERSION },
     { capabilities: { tools: {} }, instructions }
   );
 

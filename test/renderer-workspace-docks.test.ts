@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createWorkspaceDocks } from '../src/renderer/workspace-docks.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 
 let dom: JSDOM;
 afterEach(() => dom?.window.close());
@@ -8,6 +9,7 @@ afterEach(() => dom?.window.close());
 function setup() {
   dom = new JSDOM('<div class="app"><div class="app-topbar"></div><main data-panel="chat"><article class="is-session"><header class="chat-head"><span class="state"></span></header></article></main></div>', { pretendToBeVisual: true });
   Object.assign(globalThis, { document: dom.window.document, window: dom.window });
+  setLanguage('en');
   const host = document.querySelector<HTMLElement>('main')!;
   return { host, docks: createWorkspaceDocks(host) };
 }
@@ -217,4 +219,3 @@ it('keeps a greyed-out tab\'s reason in the app\'s language when the language ch
   setLanguage('en');
   expect(quick.title).toBe('Open a project to use Files and Review');
 });
-

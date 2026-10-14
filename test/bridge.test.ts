@@ -2091,7 +2091,7 @@ describe('activity feed', () => {
     } })).status).toBe(400);
   });
 
-  it('keeps existing details and records new history after a legacy writer proposes recording off', async () => {
+  it('keeps existing details but records no new history after recording is explicitly turned off', async () => {
     await pair();
     const conversationId = '67676767-5656-4545-3434-232323232323';
     await request('POST', '/events', { body: { conversationId, events: [
@@ -2108,7 +2108,7 @@ describe('activity feed', () => {
     const previous = getConfig();
     try {
       await saveConfig({ ...previous, sessions: { ...previous.sessions, record: false } });
-      expect(getConfig().sessions).toMatchObject({ record: true, retainDays: 0 });
+      expect(getConfig().sessions).toMatchObject({ record: false, retainDays: 30 });
       const detail = await request('POST', '/activity/detail', { body: {
         conversationId, callId: row.callId, detailRevision: row.detailRevision
       } });
@@ -2119,8 +2119,7 @@ describe('activity feed', () => {
         { kind: 'turn_start', time: Date.now() + 1, turnId: 'recorded-after-legacy-off' }
       ] } });
       const after = await readEvents(feed.body.sessionId);
-      expect(after).toHaveLength(before.length + 1);
-      expect(after.at(-1)).toMatchObject({ kind: 'turn_start', turnId: 'recorded-after-legacy-off' });
+      expect(after).toEqual(before);
     } finally {
       await saveConfig(previous);
     }

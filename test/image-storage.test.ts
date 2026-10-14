@@ -224,4 +224,3 @@ it('reports a full recording store once, and clears the report when space is fre
   expect(changes).toEqual([true, false]);
   stop();
 });
-

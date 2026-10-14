@@ -33,11 +33,13 @@ const mocks = vi.hoisted(() => {
     reports: new Map<string, (report: Record<string, unknown>) => void>(),
     initialTunnelState: 'connected',
     starts: 0,
+    contextProvider: null as null | (() => { planTools?: boolean; sessionTools?: boolean; planToolsDisabledSetting?: string }),
     prewarm: vi.fn(async () => undefined),
     endpointStop: vi.fn(async (_options?: { forceAfterMs?: number }): Promise<void> => undefined),
     publication: vi.fn((surface: string, observe: (name: string, version: string, instructions: string, tools: unknown[]) => void) => observe(`Chat On Steroids ${surface}`, '1', 'instructions', [])),
     endpointStartGate: null as Promise<void> | null,
     endpointStartReached: vi.fn(),
+    endpointStartOptions: undefined as undefined | { kept?: Record<string, string>; serverNameScope?: string },
     endpointContexts: [] as Array<() => unknown>,
     tunnelStartGate: null as Promise<void> | null,
     tunnelStartReached: vi.fn(),
@@ -61,8 +63,10 @@ vi.mock('../src/main/logger.js', () => ({ logError: vi.fn(), logInfo: vi.fn(), l
 vi.mock('../src/main/mcp/server.js', () => ({
   lastRequestAt: () => null,
   tunnelProbeHeaders: () => ({}),
-  startMcpServer: vi.fn(async (getContext: () => unknown) => {
-    mocks.endpointContexts.push(getContext);
+  startMcpServer: vi.fn(async (getContext?: () => { planTools?: boolean; sessionTools?: boolean; planToolsDisabledSetting?: string }, options?: { kept?: Record<string, string>; serverNameScope?: string }) => {
+    mocks.contextProvider = getContext ?? null;
+    mocks.endpointStartOptions = options;
+    mocks.endpointContexts.push(getContext!);
     mocks.endpointStartReached();
     if (mocks.endpointStartGate) await mocks.endpointStartGate;
     return {
@@ -114,16 +118,33 @@ vi.mock('../src/main/tunnel/index.js', () => ({
 }));
 
 describe('connection surface state', () => {
+  it('publishes headless plans without enabling session recording', async () => {
+    const connection = await import('../src/main/connection.js');
+    await connection.connect({ planTools: true });
+    await connection.connect();
+
+    expect(connection.getStatus().surfaces.find((surface) => surface.id === 'core')?.tools).toContain('update_plan');
+    expect(mocks.contextProvider?.()).toMatchObject({
+      planTools: true,
+      sessionTools: false,
+      planToolsDisabledSetting: 'Headless server task plans'
+    });
+    expect(mocks.config.sessions.record).toBe(false);
+    await connection.disconnect();
+  });
+
   beforeEach(() => {
     vi.useRealTimers();
     mocks.report = null;
     mocks.reports.clear();
     mocks.initialTunnelState = 'connected';
     mocks.starts = 0;
+    mocks.contextProvider = null;
     mocks.prewarm.mockClear();
     mocks.endpointStop.mockClear();
     mocks.publication.mockClear();
     mocks.endpointStartReached.mockClear();
+    mocks.endpointStartOptions = undefined;
     mocks.endpointContexts.length = 0;
     mocks.endpointStartGate = null;
     mocks.tunnelStartReached.mockClear();
@@ -156,6 +177,20 @@ describe('connection surface state', () => {
     mocks.config.tunnel.pluginsTunnelId = '';
     mocks.config.tunnel.binaryPath = '';
     vi.resetModules();
+  });
+
+  it('scopes the MCP server identity to the Core OpenAI tunnel so different computers cannot share cached metadata', async () => {
+    mocks.config.tunnel.kind = 'openai';
+    mocks.config.tunnel.tunnelId = 'tunnel_11111111111111111111111111111111';
+    const connection = await import('../src/main/connection.js');
+
+    await connection.connect();
+
+    expect(mocks.endpointStartOptions).toEqual({
+      kept: {},
+      serverNameScope: 'tunnel_11111111111111111111111111111111'
+    });
+    await connection.disconnect();
   });
 
   it.each(['offline', 'auth-failed', 'tunnel-unavailable'])('notifies once when an established tunnel reports %s, and re-arms only on connected', async state => {
@@ -1030,12 +1065,12 @@ describe('persistent connector URLs', () => {
     paths.kept = { core: 'k'.repeat(43) }; paths.remembered.length = 0;
     mocks.config.mcp.persistentUrls = true;
     await connection.connect();
-    expect(start.mock.calls.at(-1)![1]).toEqual({ core: 'k'.repeat(43) });
+    expect(start.mock.calls.at(-1)![1]).toEqual({ kept: { core: 'k'.repeat(43) } });
     expect(paths.remembered.at(-1)).toMatchObject({ core: 'http://127.0.0.1:45678/mcp/core/core-token' });
     await connection.disconnect();
     mocks.config.mcp.persistentUrls = false; paths.remembered.length = 0;
     await connection.connect();
-    expect(start.mock.calls.at(-1)![1]).toEqual({});
+    expect(start.mock.calls.at(-1)![1]).toEqual({ kept: {} });
     expect(paths.remembered).toEqual([]);
     await connection.disconnect();
   });

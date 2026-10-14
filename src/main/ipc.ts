@@ -1944,7 +1944,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       });
     },
     changed: () => push('session:changed'),
-    recordDelivered: (entry, anchorCommitted) => getConfig().sessions.record ? recordDeliveredInput(entry, anchorCommitted) : Promise.resolve(true),
+    // Recording Off keeps delivered outbox receipts visible but must not claim canonical
+    // history was written. Returning false leaves historyRecorded/historyAnchored unset so a
+    // later explicit Recording On can retry the idempotent canonical publication.
+    recordDelivered: (entry, anchorCommitted) => getConfig().sessions.record
+      ? recordDeliveredInput(entry, anchorCommitted)
+      : Promise.resolve(false),
     prepareText: async (entry, limits, authored) => {
       const control = entry.conversationId ? goalSwitchFor(entry.conversationId) : getConfig().goal;
       const mode = entry.automation ?? (control.enabled ? control.mode : 'off');

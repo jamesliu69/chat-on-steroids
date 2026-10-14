@@ -100,6 +100,7 @@ beforeEach(() => {
   vi.stubGlobal('document', dom.window.document);
   vi.stubGlobal('HTMLElement', dom.window.HTMLElement);
   vi.stubGlobal('HTMLButtonElement', dom.window.HTMLButtonElement);
+  setLanguage('en');
   host = document.getElementById('host')!;
   toggle = document.getElementById('toggle') as HTMLButtonElement;
   attached = [];

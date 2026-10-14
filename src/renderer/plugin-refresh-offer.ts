@@ -6,9 +6,8 @@ import { t } from './i18n.js';
 let busy = false;
 
 /**
- * Asks once to turn Automatic plugin refresh on. Installs from before the setting existed have it
- * saved as off, usually without anyone having chosen that; new installs have it on and never see
- * this. Either answer is kept by the main process, so the card does not come back.
+ * Asks once to turn Automatic plugin refresh on while the saved/default choice is off.
+ * Either answer is kept by the main process, so the card does not come back.
  */
 export function paintPluginRefreshOffer(
   state: AppState,

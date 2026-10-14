@@ -68,13 +68,18 @@ function Release-AppCom($value) {
   }
 }
 
+function Test-RootedFilePath([string]$value) {
+  if ([string]::IsNullOrWhiteSpace($value) -or $value -notmatch '^(?:[A-Za-z]:[\\/]|[\\/])') { return $false }
+  try { return [IO.Path]::IsPathRooted($value) } catch { return $false }
+}
+
 function Get-AppCatalogIdentity($item) {
   $launchId = [string]$item.Path
   $nativeId = ''; $targetPath = ''
   try { $value = $item.ExtendedProperty('System.AppUserModel.ID'); if ($value -is [string]) { $nativeId = $value } } catch { }
   try { $value = $item.ExtendedProperty('System.Link.TargetParsingPath'); if ($value -is [string]) { $targetPath = $value } } catch { }
-  if (!$targetPath -and [IO.Path]::IsPathRooted($launchId) -and $launchId.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $targetPath = $launchId }
-  if ($targetPath -and $targetPath.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::IsPathRooted($targetPath)) {
+  if (!$targetPath -and (Test-RootedFilePath $launchId) -and $launchId.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $targetPath = $launchId }
+  if ($targetPath -and $targetPath.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase) -and (Test-RootedFilePath $targetPath)) {
     try { $targetPath = [IO.Path]::GetFullPath($targetPath) } catch { $targetPath = '' }
   } else { $targetPath = '' }
   $id = if ($nativeId) { $nativeId } elseif ($targetPath) { $targetPath.ToLowerInvariant() } else { $launchId }

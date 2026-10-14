@@ -1,11 +1,10 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { app } from 'electron';
-vi.mock('electron', () => ({ app: { getAppPath: vi.fn(() => process.cwd()) } }));
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   commonBinaryDirsForPlatform,
+  initTunnelResourceRoot,
   locateBinary,
   resetTunnelLocatorCacheForTests,
   tunnelExecutableName
@@ -28,7 +27,7 @@ afterEach(async () => {
     value: originalResourcesPath
   });
   resetTunnelLocatorCacheForTests();
-  vi.mocked(app.getAppPath).mockReturnValue(process.cwd());
+  initTunnelResourceRoot(process.cwd());
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -40,7 +39,7 @@ describe('tunnel binary location', () => {
     await mkdir(dir, { recursive: true });
     const binary = path.join(dir, tunnelExecutableName('tunnel-client'));
     await executable(binary, 'development');
-    vi.mocked(app.getAppPath).mockReturnValue(root);
+    initTunnelResourceRoot(root);
     Object.defineProperty(process, 'resourcesPath', { configurable: true, value: path.join(root, 'electron-resources') });
     expect(locateBinary('tunnel-client')).toBe(binary);
   });

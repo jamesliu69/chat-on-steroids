@@ -27,7 +27,12 @@ import { localhostHostValidation, localhostOriginValidation, toNodeHandler } fro
 import { getConfig } from '../config.js';
 import { logError, logInfo, logWarn } from '../logger.js';
 import { buildServer, resetToolClock, type ToolContext } from './tools.js';
-import { SURFACE_IDS, configuredConnectorName, type SurfaceId } from './surfaces.js';
+import {
+  SURFACE_IDS,
+  configuredConnectorName,
+  scopedServerName,
+  type SurfaceId
+} from './surfaces.js';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -83,7 +88,9 @@ function jsonError(res: http.ServerResponse, status: number, error: string): voi
   const body = JSON.stringify({ error });
   res.writeHead(status, {
     'content-type': 'application/json',
-    'content-length': Buffer.byteLength(body)
+    // Keep the body framed even when a loopback MCP intermediary strips Content-Length.
+    // Node emits the chunk boundaries; advertising chunked for a raw JSON body is invalid.
+    'transfer-encoding': 'chunked'
   });
   res.end(body);
 }
@@ -216,8 +223,14 @@ interface SurfaceExposure {
   finishTool: boolean;
   caps: ToolContext['caps'] | null;
   sessionTools: boolean;
+  planTools: boolean;
   agentTools: boolean;
   find: boolean | null;
+}
+
+interface McpServerOptions {
+  kept?: Partial<Record<SurfaceId, string>>;
+  serverNameScope?: string;
 }
 
 /**
@@ -234,7 +247,7 @@ const surfaceExposure = new Map<SurfaceId, SurfaceExposure>();
 function exposureFor(surface: SurfaceId): SurfaceExposure {
   let state = surfaceExposure.get(surface);
   if (!state) {
-    state = { finishTool: false, caps: null, sessionTools: false, agentTools: false, find: null };
+    state = { finishTool: false, caps: null, sessionTools: false, planTools: false, agentTools: false, find: null };
     surfaceExposure.set(surface, state);
   }
   return state;
@@ -260,7 +273,7 @@ export function forgetExposedSurface(): void {
   surfaceExposure.clear();
 }
 
-export async function startMcpServer(getContext: () => ToolContext, kept: Partial<Record<SurfaceId, string>> = {}): Promise<McpEndpoint> {
+export async function startMcpServer(getContext: () => ToolContext, options: McpServerOptions = {}): Promise<McpEndpoint> {
   // A per-session token in the path is what authorises callers. It is regenerated on
   // every app start, so a URL that leaks stops working when the app restarts, unless the
   // user opted into keeping it (`mcp.persistentUrls`, see persistent-paths.ts): then the
@@ -274,10 +287,13 @@ export async function startMcpServer(getContext: () => ToolContext, kept: Partia
   // secret because the two connectors are configured separately in ChatGPT and may be
   // shared, revoked or re-pasted at different times; a single token would make "give me
   // Desktop" and "give me everything" the same act.
-  const surfacePaths = SURFACE_IDS.map((id) => ({
-    id,
-    basePath: `/mcp/${id}/${kept[id] && /^[A-Za-z0-9_-]{43}$/.test(kept[id]!) ? kept[id] : randomBytes(32).toString('base64url')}`
-  }));
+  const surfacePaths = SURFACE_IDS.map((id) => {
+    const token = options.kept?.[id];
+    return {
+      id,
+      basePath: `/mcp/${id}/${token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : randomBytes(32).toString('base64url')}`
+    };
+  });
 
   // ChatGPT can keep a cached tools/list snapshot for the lifetime of a connector
   // session. If a permission is disabled after that snapshot was loaded, removing the
@@ -301,16 +317,20 @@ export async function startMcpServer(getContext: () => ToolContext, kept: Partia
     }
     const config = getConfig();
     const sessionTools = live.sessionTools ?? config.sessions.record;
+    const planTools = live.planTools ?? sessionTools;
     const agentTools = live.agentTools ?? config.multiAgent.enabled;
     exposed.finishTool = exposed.finishTool || config.ui.finishTool === true;
     exposed.sessionTools = exposed.sessionTools || sessionTools;
+    exposed.planTools = exposed.planTools || planTools;
     exposed.agentTools = exposed.agentTools || agentTools;
     return {
       ...live,
       sessionTools,
+      planTools,
       agentTools,
       exposedCaps: { ...exposed.caps },
       exposedSessionTools: exposed.sessionTools,
+      exposedPlanTools: exposed.planTools,
       exposedFinishTool: exposed.finishTool,
       exposedAgentTools: exposed.agentTools,
       exposedFind: exposed.find
@@ -322,12 +342,17 @@ export async function startMcpServer(getContext: () => ToolContext, kept: Partia
   // advertised: the Core handler has no `computer` registered at all, so a call for it
   // fails as an unknown tool inside the protocol layer, with nothing here to "helpfully"
   // forward it to the other surface.
+  // ChatGPT caches connector metadata by serverInfo.name. Scoping the name with the
+  // Core tunnel id keeps two computers' connectors from sharing one cache identity.
+  const serverNames = Object.fromEntries(
+    SURFACE_IDS.map((id) => [id, scopedServerName(id, options.serverNameScope)])
+  ) as Record<SurfaceId, string>;
   const routes = surfacePaths.map((surface) => ({
     ...surface,
     prmPath: `${PRM_PREFIX}${surface.basePath}`,
     url: '',
     handler: toNodeHandler(
-      createMcpHandler(() => buildServer(stableContext(surface.id), surface.id, undefined, () => stableContext(surface.id))),
+      createMcpHandler(() => buildServer(stableContext(surface.id), surface.id, undefined, () => stableContext(surface.id), serverNames[surface.id])),
       { onerror: (error) => logError(`MCP handler error (${surface.id}): ${error.message}`) }
     )
   }));
@@ -500,7 +525,7 @@ export async function startMcpServer(getContext: () => ToolContext, kept: Partia
     port: address.port,
     url: urls.core,
     urls,
-    publication: (surface, observe) => { void buildServer(stableContext(surface), surface, observe).close(); },
+    publication: (surface, observe) => { void buildServer(stableContext(surface), surface, observe, () => stableContext(surface), serverNames[surface]).close(); },
     stop: (options = {}) => {
       if (!stopping) {
         // Publish the admission fence before closing any sockets or receiving late bodies.

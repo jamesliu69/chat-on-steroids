@@ -104,6 +104,7 @@ it('does not overwrite a focused dirty settings field on an unsolicited state pu
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   installDialog(dom.window);
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   w.HTMLElement.prototype.animate = vi.fn() as any;
   Object.assign(globalThis, {
     window: w,
@@ -125,7 +126,7 @@ it('does not overwrite a focused dirty settings field on an unsolicited state pu
     readOnly: true,
     capabilities: {
       browse: true, search: true, read: true, metadata: true,
-      create: false, edit: false, move: false, deleteFile: false, command: false,
+      create: false, edit: false, move: false, deleteFile: false, command: false, saveArtifact: false,
       screen: false, control: false, clipboardRead: false, clipboardWrite: false
     },
     commandAllowlist: { enabled: false, mode: 'allow' as const, rules: [] as string[] },
@@ -286,6 +287,7 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   installDialog(dom.window);
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   w.HTMLElement.prototype.animate = vi.fn() as any;
   Object.assign(globalThis, {
     window: w,
@@ -306,7 +308,7 @@ it('serializes settings intent so rapid toggles and later UI changes cannot undo
     readOnly: false,
     capabilities: {
       browse: true, search: true, read: true, metadata: true,
-      create: true, edit: true, move: true, deleteFile: true, command: true,
+      create: true, edit: true, move: true, deleteFile: true, command: true, saveArtifact: true,
       screen: true, control: true, clipboardRead: true, clipboardWrite: true
     },
     commandAllowlist: { enabled: false, mode: 'allow' as const, rules: [] as string[] },
@@ -443,6 +445,7 @@ async function mountChat(
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   installDialog(dom.window);
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   w.HTMLElement.prototype.animate = vi.fn() as any;
   Object.assign(globalThis, { Event: w.Event });
   Object.assign(globalThis, {
@@ -464,7 +467,7 @@ async function mountChat(
     readOnly: false,
     capabilities: {
       browse: true, search: true, read: true, metadata: true,
-      create: true, edit: true, move: true, deleteFile: true, command: true,
+      create: true, edit: true, move: true, deleteFile: true, command: true, saveArtifact: true,
       screen: true, control: true, clipboardRead: true, clipboardWrite: true
     },
     commandAllowlist: { enabled: false, mode: 'allow' as const, rules: [] as string[] },
@@ -1535,6 +1538,32 @@ it('shows the current host Desktop tools without rebuilding permission controls 
   mounted.push(mounted.state);
   expect(names()).toEqual(windowsNames);
   expect(mounted.calls).toHaveLength(0);
+});
+
+it('does not let a failed API-key save permanently block setup profile changes', async () => {
+  const setApiKey = vi.fn().mockResolvedValue({ ok: false, error: 'temporary secure storage failure' });
+  const selectSetupProfile = vi.fn();
+  const mounted = await mountChat({}, [], { setApiKey, selectSetupProfile });
+  const doc = mounted.window.document;
+  doc.getElementById('setupProfileMenu')!.hidePopover = vi.fn();
+  const initial = structuredClone(mounted.state);
+  initial.config.tunnel.profileId = 'default';
+  initial.config.tunnel.profileName = 'Default';
+  initial.config.tunnel.profileEpoch = 0;
+  initial.config.setupProfiles = [{ id: 'work', name: 'Work', tunnelId: '', desktopTunnelId: '', pluginsTunnelId: '' }];
+  mounted.push(initial);
+  selectSetupProfile.mockResolvedValue({ ok: true, data: {
+    ...initial,
+    config: { ...initial.config, tunnel: { ...initial.config.tunnel, profileId: 'work', profileName: 'Work', profileEpoch: 1 },
+      setupProfiles: [{ id: 'default', name: 'Default', tunnelId: '', desktopTunnelId: '', pluginsTunnelId: '' }] }
+  } });
+  const input = doc.getElementById('apiKey') as HTMLInputElement;
+  input.value = 'bad-key';
+  input.dispatchEvent(new mounted.window.Event('blur'));
+  await vi.waitFor(() => expect(setApiKey).toHaveBeenCalled());
+  input.value = '';
+  (doc.querySelector('[data-profile-id="work"]') as HTMLButtonElement).click();
+  await vi.waitFor(() => expect(selectSetupProfile).toHaveBeenCalledWith('work'));
 });
 
 it('preserves native Desktop permissions when saving unrelated settings on Linux', async () => {

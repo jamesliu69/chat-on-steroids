@@ -1,11 +1,14 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderRecoveryCountdowns } from '../src/renderer/recovery.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 
 let dom: JSDOM, host: HTMLElement;
 beforeEach(() => {
   dom = new JSDOM('<div id="recovery" hidden></div>');
   vi.stubGlobal('document', dom.window.document);
+  vi.stubGlobal('window', dom.window);
+  setLanguage('en');
   host = document.getElementById('recovery')!;
 });
 afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });

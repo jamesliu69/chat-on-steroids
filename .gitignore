@@ -31,8 +31,10 @@ bughunt-*/
 docs/evidence/
 docs/android-mcp-brainstorm/
 
-# Smoke-test scratch fixtures.
+# Smoke-test and local headless-server runtime data.
 smoke/
+.server-smoke/
+.server-live/
 smoke-switch.txt
 HANDOFF.md
 docs/handoff-*.md
@@ -40,6 +42,7 @@ docs/open-issues-*.md
 
 # One-off local experiment scratch.
 /.tmp/
+/.worktrees/
 one-cycle.ps1
 .one-cycle-*
 proof-*.txt
@@ -48,6 +51,16 @@ proof-*.txt
 /outputs/
 /.codex-remote-attachments/
 /docs/audit-user-requests-20260905-06.md
+/.tmp-ppt-inspect
+/.omc
+/.omo
+/.vitest
+.server-live/config.json
+.server-live/endpoint.json
+.server-live/openai-api-key
+.server-live/endpoint-private.json
 
 # Written by scripts/write-extension-stamp.mjs at packaging time; see that script.
 /extension/build-stamp.txt
+Chat-On-Steroids-Migration-20260927.md
+/release-portable

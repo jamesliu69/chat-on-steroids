@@ -34,6 +34,20 @@ $result=Get-WindowsApps @{limit=2}
     expect(complete.truncated).toBe(false);
   });
 
+  it('ignores AppsFolder namespace paths when deriving executable identities', async () => {
+    expect(await run(`
+class AppNamespaceItem {
+  [string]$Path; [string]$Name
+  AppNamespaceItem([string]$path,[string]$name) { $this.Path=$path; $this.Name=$name }
+  [object] ExtendedProperty([string]$name) { return $null }
+}
+$item=[AppNamespaceItem]::new('::{26EE0668-A00A-44D7-9371-BEB064C98683}','Settings')
+$identity=Get-AppCatalogIdentity $item
+if ($null -eq $identity -or $identity.id -cne $item.Path -or $identity.processPath) { throw 'Shell namespace path was treated as an executable path' }
+Write-Output 'APP_NAMESPACE_PATH_VERIFIED'
+`)).toBe('APP_NAMESPACE_PATH_VERIFIED');
+  });
+
   it('launches only an exact current item and rejects unknown or duplicate IDs before invocation', async () => {
     expect(await run(`
 class AppFixtureItem {

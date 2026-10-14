@@ -20,6 +20,7 @@ it('renders the plugin-style library and wires import, multi-enable, favorite, d
     <div id="petsInstalled"></div>
   </body>`, { url: 'https://pets.test/' });
   const w = dom.window;
+  w.localStorage.setItem('cos.ui.language', 'en');
   for (const [key, value] of Object.entries({ window: w, document: w.document, HTMLElement: w.HTMLElement, HTMLButtonElement: w.HTMLButtonElement, HTMLDialogElement: w.HTMLDialogElement })) vi.stubGlobal(key, value);
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new w.Event('close')); };
@@ -143,4 +144,3 @@ it('has a translation of every bundled pet description in every language', async
     for (const description of descriptions) expect(catalog[description], `${file}: ${description}`).toBeTruthy();
   }
 });
-

@@ -6,6 +6,7 @@ let cleanup: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.resetModules();
   dom = new JSDOM('<body></body>', { url: 'https://local.test/' });
+  dom.window.localStorage.setItem('cos.ui.language', 'en');
   Object.assign(globalThis, { window: dom.window, document: dom.window.document });
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')); };

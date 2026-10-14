@@ -55,8 +55,11 @@ app.whenReady().then(async () => {
     const results=[];
     for(const zoom of [1,1.17,1.5]) for(const width of [1100,600]) {
       win.setSize(width,800);win.webContents.setZoomFactor(zoom);
+      await until(`Math.abs(window.innerWidth - ${win.getContentSize()[0] / zoom}) < 2`);
+      await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await js('Promise.race([Promise.all(document.getAnimations().filter(animation=>Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>undefined))),new Promise(resolve=>setTimeout(resolve,1500))])');
       await js('window.reaction(null)');await until('!document.querySelector(".message-reaction")');
-      const measure=`(()=>{const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return [r.x,r.y,r.width,r.height]};return {bubble:rect('.user-message-text'),answer:rect('.ev-assistant_message'),scroll:document.getElementById('chatBody').scrollTop}})()`;
+      const measure=`(()=>{const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return [r.x,r.y,r.width,r.height]};return {bubble:rect('.user-message-text'),answer:rect('.ev-assistant_message'),scroll:document.getElementById('chatBody').scrollTop,height:document.getElementById('chatBody').clientHeight,innerWidth:window.innerWidth}})()`;
       // Resizing and zooming apply on the next layouts, not on return: read the geometry only once
       // two reads a frame apart agree. A first read mid-resize flaked under load (macOS) and on Windows.
       const settled=async()=>{let last=null;for(let i=0;i<50;i++){await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');const now=JSON.stringify(await js(measure));if(now===last)return JSON.parse(now);last=now;await new Promise(r=>setTimeout(r,40))}return JSON.parse(last)};

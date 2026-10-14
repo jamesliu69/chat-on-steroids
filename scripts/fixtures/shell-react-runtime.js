@@ -51,7 +51,8 @@ window.verifyCommittedShellReact = async (fiberSource, domSource) => {
     const nonce = `committed-react-${++serial}`;
     const timeout = setTimeout(() => { window.removeEventListener('message', receive); reject(Error('React scan reply absent')); }, 2000);
     const receive = event => {
-      if (event.source !== window || event.data?.source !== 'clf-fiber-reply' || event.data.nonce !== nonce) return;
+      if (event.source !== window || event.origin !== location.origin ||
+          event.data?.source !== 'clf-fiber-reply' || event.data.nonce !== nonce) return;
       clearTimeout(timeout); window.removeEventListener('message', receive); resolve(event.data);
     };
     window.addEventListener('message', receive); window.postMessage({ source: 'clf-fiber-ask', nonce }, location.origin);

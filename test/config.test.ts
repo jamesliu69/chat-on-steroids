@@ -96,7 +96,7 @@ describe('settings migration', () => {
     expect(loaded.readOnly).toBe(true); expect(loaded.capabilities.command).toBe(false);
     expect(loaded.ui.appearance).toBeUndefined();
   });
-  it('drops removed file-saving settings without changing other saved choices', async () => {
+  it('preserves fork file-saving settings without changing other saved choices', async () => {
     const config = defaultConfig();
     config.readOnly = true;
     config.capabilities.command = false;
@@ -107,13 +107,13 @@ describe('settings migration', () => {
     };
     await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(legacy), 'utf8');
     const loaded = await loadConfig();
-    expect(loaded).toMatchObject(config);
-    expect(loaded).not.toHaveProperty('artifacts');
-    expect(loaded.capabilities).not.toHaveProperty('saveArtifact');
+    expect(loaded).toMatchObject(legacy);
+    expect(loaded.artifacts).toEqual({ maxFileBytes: 20 * 1024 * 1024 });
+    expect(loaded.capabilities.saveArtifact).toBe(true);
     await saveConfig(loaded);
     const stored = JSON.parse(await fs.readFile(path.join(dir, 'config.json'), 'utf8'));
-    expect(stored).not.toHaveProperty('artifacts');
-    expect(stored.capabilities).not.toHaveProperty('saveArtifact');
+    expect(stored.artifacts).toEqual({ maxFileBytes: 20 * 1024 * 1024 });
+    expect(stored.capabilities.saveArtifact).toBe(true);
   });
 
   it('defaults background chats on for fresh and omitted settings while preserving saved choices', async () => {
@@ -202,9 +202,8 @@ describe('settings migration', () => {
     await saveConfig({ ...defaultConfig(), controlApi: { enabled: false, allowActions: true } });
     expect((await loadConfig()).controlApi).toEqual({ enabled: false, allowActions: false });
   });
-  it('refreshes plugins automatically on a fresh install, keeps legacy settings off and preserves explicit choices', async () => {
-    // A permission chosen in Setup changes the tool list; a new user has nothing else telling them to refresh.
-    expect(defaultConfig().ui.autoRefreshPlugins).toBe(true);
+  it('keeps fork plugin auto-refresh off on fresh and legacy installs and preserves explicit choices', async () => {
+    expect(defaultConfig().ui.autoRefreshPlugins).toBe(false);
     const legacy = defaultConfig(); delete legacy.ui.autoRefreshPlugins;
     await saveConfig(legacy);
     expect((await loadConfig()).ui.autoRefreshPlugins).toBe(false);
@@ -228,7 +227,7 @@ describe('settings migration', () => {
       expect((await loadConfig()).goal).toMatchObject({ backend, loopBackend: 'api' });
     }
   });
-  it('normalizes every writer and legacy file to recording on with no age expiry', async () => {
+  it('preserves explicit recording-off and retention choices while disabling dependent Goal', async () => {
     const legacy = {
       ...defaultConfig(),
       sessions: { ...defaultConfig().sessions, record: false, retainDays: 30 },
@@ -236,13 +235,13 @@ describe('settings migration', () => {
     };
 
     const saved = await saveConfig(legacy);
-    expect(saved.sessions).toMatchObject({ record: true, retainDays: 0 });
-    expect(saved.goal.enabled).toBe(true);
+    expect(saved.sessions).toMatchObject({ record: false, retainDays: 30 });
+    expect(saved.goal.enabled).toBe(false);
 
     await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(legacy), 'utf8');
     const loaded = await loadConfig();
-    expect(loaded.sessions).toMatchObject({ record: true, retainDays: 0 });
-    expect(loaded.goal.enabled).toBe(true);
+    expect(loaded.sessions).toMatchObject({ record: false, retainDays: 30 });
+    expect(loaded.goal.enabled).toBe(false);
   });
 
   it('preserves old settings when new safe-default capabilities and UI prefs are added', async () => {
@@ -580,7 +579,7 @@ describe('shipped defaults', () => {
     (platform !== 'darwin' && (capability === 'screen' || capability === 'control'));
 
   it('records sessions from first launch', () => {
-    expect(defaultConfig().sessions).toMatchObject({ record: true, retainDays: 0 });
+    expect(defaultConfig().sessions).toMatchObject({ record: true, retainDays: 30 });
   });
 
   it('keeps Chrome as the default browser on a first launch and moves no existing config', async () => {
@@ -713,12 +712,12 @@ describe('shipped defaults', () => {
     expect((await loadConfig()).multiAgent.autoWorktrees).toBe(false);
   });
 
-  it('does not persist obsolete recording-off or age-retention choices', async () => {
+  it('preserves explicit recording-off and age-retention choices', async () => {
     const config = defaultConfig();
     await saveConfig({ ...config, sessions: { ...config.sessions, record: false, retainDays: 3650 } });
-    expect((await loadConfig()).sessions).toMatchObject({ record: true, retainDays: 0 });
+    expect((await loadConfig()).sessions).toMatchObject({ record: false, retainDays: 3650 });
     const stored = JSON.parse(await fs.readFile(path.join(dir, 'config.json'), 'utf8'));
-    expect(stored.sessions).toMatchObject({ record: true, retainDays: 0 });
+    expect(stored.sessions).toMatchObject({ record: false, retainDays: 3650 });
   });
 
   it('applies the new default to a config written before the setting existed', async () => {

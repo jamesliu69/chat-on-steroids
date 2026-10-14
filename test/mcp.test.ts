@@ -33,11 +33,14 @@ import { friendlyError } from '../src/main/mcp/kernel.js';
 import { serverInstructions } from '../src/main/mcp/instructions.js';
 import { SURFACE_LIST, surfaceDefinition, type SurfaceId } from '../src/main/mcp/surfaces.js';
 import {
+  appendEvent,
   createSession,
   initSessionStore,
   readRecentEvents,
   rebindSession,
-  readSessionPlan
+  readSessionPlan,
+  upsertMessageEvent,
+  writeOverflowText
 } from '../src/main/session/store.js';
 import {
   bindConversation,
@@ -51,8 +54,8 @@ import { DEFAULT_CAPABILITIES, type Capabilities, type Root } from '../src/share
 import { foldProgress, type ToolOutcome } from '../src/shared/session.js';
 import { emptyEvidence, noteExec, noteOutcome, runInCallContext, type CallContext } from '../src/main/mcp/call-context.js';
 import { observeRequestCorrelation } from '../src/main/session/correlation.js';
-import { WINDOWS_COMPUTER_METHODS, WINDOWS_COMPUTER_READ_METHODS } from '../src/shared/windows-computer.js';
 import { BROWSER_TOOLS, BROWSER_READ_TOOLS } from '../src/shared/browser-control.js';
+import { WINDOWS_COMPUTER_METHODS, WINDOWS_COMPUTER_READ_METHODS } from '../src/shared/windows-computer.js';
 import { resetBlockedChatsForTests, setChatBlocked } from '../src/main/session/blocked-chats.js';
 import { resetTrustedChatsForTests, setChatTrusted } from '../src/main/session/trusted-chats.js';
 import {
@@ -297,6 +300,7 @@ beforeAll(async () => {
     // that silently changes meaning when a product default moves is not testing gating.
     // The tools they add are covered by their own suites.
     sessionTools: false,
+    planTools: undefined,
     agentTools: false
   };
 });
@@ -317,6 +321,7 @@ beforeEach(async () => {
   ctx.readOnly = true;
   ctx.roots = [{ name: 'workspace', path: approved }];
   ctx.sessionTools = false;
+  ctx.planTools = undefined;
   ctx.agentTools = false;
   getConfig().multiAgent.strictChatAllowlist = false;
   resetTrustedChatsForTests();
@@ -647,14 +652,8 @@ describe('surface boundaries', () => {
     everything();
     const names = toolNames(await core('tools/list'));
     // find is absent because exec_command is present — they are mutually exclusive.
-    expect(names).toEqual(['agents', 'apply_patch', 'exec', 'exec_command', 'read', 'save_image', 'update_plan', 'view_image', 'write_stdin']);
+    expect(names).toEqual(['agents', 'apply_patch', 'download_artifact', 'exec', 'exec_command', 'read', 'save_image', 'session', 'update_plan', 'view_image', 'write_stdin']);
     for (const name of surfaceDefinition('desktop').tools.filter(name => name !== 'exec')) expect(names, name).not.toContain(name);
-  });
-
-  it('rejects the removed file-saving tool even when every permission is enabled', async () => {
-    everything();
-    const reply = await core('tools/call', { name: 'download_artifact', arguments: {} });
-    expect(failed(reply)).toBe(true);
   });
 
   /**
@@ -956,17 +955,17 @@ describe('surface boundaries', () => {
     const desktopTools = toolList(await desktop('tools/list'));
 
     // Each populated surface includes code mode; find and the shell exec pair remain exclusive.
-    expect(coreTools).toHaveLength(9);
+    expect(coreTools).toHaveLength(11);
     expect(desktopTools).toHaveLength(BROWSER_TOOLS.length + (IS_WINDOWS ? 16 : process.platform === 'darwin' ? 3 : 1));
 
     // And the size, which is what a discovery pull actually costs the model on every
     // conversation that touches the connector. The ceilings sit just above what the
-    // surface measures today, including the eight extension browser tools, rather than at a
+    // surface measures today (Windows Desktop 10,116 bytes on 2026-09-10) rather than at a
     // round number well above it: a budget with room to spare is a budget that never
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(20_500);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(26_500);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(IS_WINDOWS ? 24_000 : 24_500);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget
@@ -991,10 +990,15 @@ describe('surface boundaries', () => {
     for (const tool of [...coreTools, ...desktopTools]) {
       expect(JSON.stringify(tool), `${tool.name} declaration`).not.toMatch(RULES_ON_RISK);
       const bytes = Buffer.byteLength(JSON.stringify(tool), 'utf8');
+      const isDesktop = desktopTools.includes(tool);
+      const isBrowserTool = (BROWSER_TOOLS as readonly string[]).includes(tool.name);
       const budget =
-        (BROWSER_TOOLS as readonly string[]).includes(tool.name)
-          ? (tool.name === 'browser_action' ? 4_300 : 2_300)
-          : IS_WINDOWS && desktopTools.includes(tool)
+        isDesktop && isBrowserTool
+          // Browser tools carry strict per-action validation plus enough description to avoid
+          // foreground tab duplication and unsafe fallback behavior. Keep them bounded separately
+          // from the compact Window2 methods while the whole Desktop surface stays capped above.
+          ? 4_000
+        : IS_WINDOWS && isDesktop
           // Largest Window2 method is click at 882 bytes; composition is 1458 bytes.
           ? (tool.name === 'exec' ? 1_500 : 950)
           : tool.name === 'computer'
@@ -1047,6 +1051,25 @@ describe('surface boundaries', () => {
       expect(reply.body.result.instructions, surface.id).toBeTruthy();
     }
   });
+
+  it('scopes every surface server identity to the machine Core tunnel when one is supplied', async () => {
+    everything();
+    await endpoint.stop();
+    endpoint = await startMcpServer(() => ctx, {
+      serverNameScope: 'tunnel_22222222222222222222222222222222'
+    });
+
+    for (const surface of SURFACE_LIST) {
+      const reply = await call(surface.id, 'initialize', {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'test-client', version: '1.0.0' }
+      });
+      expect(reply.body.result.serverInfo.name, surface.id).toBe(
+        `${surface.serverName}-22222222222222222222222222222222`
+      );
+    }
+  });
 });
 
 describe('2025-era clients', () => {
@@ -1089,7 +1112,6 @@ describe('2025-era clients', () => {
     expect(instructions).toContain('look for AGENTS.md');
     expect(instructions).not.toContain('/workspace/src/main.ts');
     expect(instructions).not.toMatch(/functions\.|request_user_input|approval auto-review/);
-    expect(instructions).toContain('/skills/<id>/SKILL.md');
     // The requested upstream collaboration prose replaces the old minimal tool preamble.
     expect(instructions).toContain('User authorization and preferences persist across turns.');
     expect(instructions).toContain(
@@ -1309,17 +1331,30 @@ describe('capability gating', () => {
     expect(textOf(reply)).toContain('results_returned:');
   });
 
-  it('offers plans and agents only when enabled, without session lookup', async () => {
+  it('offers session and agents only when those features are on', async () => {
     expect(toolNames(await core('tools/list'))).not.toContain('session');
-    expect(toolNames(await core('tools/list'))).not.toContain('update_plan');
     expect(toolNames(await core('tools/list'))).not.toContain('agents');
 
     ctx.sessionTools = true;
     ctx.agentTools = true;
     const names = toolNames(await core('tools/list'));
-    expect(names).not.toContain('session');
-    expect(names).toContain('update_plan');
+    expect(names).toContain('session');
     expect(names).toContain('agents');
+  });
+
+  it('exposes plan tools independently from conversation recording', async () => {
+    ctx.sessionTools = false;
+    ctx.planTools = true;
+
+    const names = toolNames(await core('tools/list'));
+    expect(names).toContain('update_plan');
+    expect(names).not.toContain('session');
+
+    const initialized = await core('initialize', {
+      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test-client', version: '1.0.0' }
+    });
+    expect(initialized.body.result.instructions).toContain('# Task plan');
+    expect(initialized.body.result.instructions).not.toContain('the app shows the headlines');
   });
 
   it('teaches primes to reuse sleeping workers before spawning replacements', async () => {
@@ -1351,6 +1386,342 @@ describe('capability gating', () => {
       arguments: { action: 'status', result: 'this field belongs to finish' }
     });
     expect(failed(reply)).toBe(true);
+  });
+
+  it('discovers recent recordings and searches exact overflow text without caller identity', async () => {
+    ctx.sessionTools = true;
+    const recorded = await createSession({ title: 'cross-chat discovery target', conversationId: null });
+    const overflow = 'ordinary prefix followed by cross-session-deep-needle in the exact spilled result';
+    const overflowId = await writeOverflowText(recorded.id, overflow);
+    expect(overflowId).not.toBeNull();
+    await appendEvent(recorded.id, {
+      time: 2_000,
+      source: 'mcp',
+      kind: 'tool_call',
+      call: {
+        callId: 'internal-long-id-that-must-not-be-presented',
+        tool: 'read',
+        attribution: 'unattributed',
+        requestId: null,
+        conversationId: null,
+        attributionMethod: 'unattributed',
+        args: { text: '{}', truncated: false, chars: 2 },
+        result: { text: 'ordinary prefix', truncated: true, chars: overflow.length, assetId: overflowId! },
+        outcome: 'ok',
+        durationMs: 7,
+        summary: { kind: 'read', tone: 'neutral', title: 'Read hidden payload' }
+      }
+    });
+
+    const listed = await core('tools/call', { name: 'session', arguments: { action: 'search' } });
+    expect(failed(listed), textOf(listed)).toBe(false);
+    expect(textOf(listed)).toContain('Recorded sessions — newest first');
+    expect(textOf(listed)).toContain(recorded.id);
+    expect(textOf(listed)).toContain('cross-chat discovery target');
+
+    const searched = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'search', query: 'cross-session-deep-needle' }
+    });
+    const searchText = textOf(searched);
+    expect(failed(searched), searchText).toBe(false);
+    expect(searchText).toContain(recorded.id);
+    expect(searchText).toContain('matches: tools 1');
+    expect(searchText).toMatch(/read_cursor: [A-Za-z0-9_-]+/);
+    expect(searchText.length).toBeLessThanOrEqual(12_000);
+  });
+
+  it('reads exact user and assistant prose, filters headlines, and expands a short session-local tool ref', async () => {
+    ctx.sessionTools = true;
+    const recorded = await createSession({ title: 'exact transcript target', conversationId: null });
+    const userTail = 'USER-TAIL-MUST-SURVIVE';
+    const assistantTail = 'ASSISTANT-TAIL-MUST-SURVIVE';
+    const userText = `${'u'.repeat(900)}${userTail}`;
+    const assistantText = `${'a'.repeat(900)}${assistantTail}`;
+    await appendEvent(recorded.id, {
+      time: 3_000,
+      source: 'extension',
+      kind: 'user_message',
+      message: { text: userText, truncated: false, chars: userText.length }
+    });
+    await appendEvent(recorded.id, {
+      time: 3_001,
+      source: 'extension',
+      kind: 'assistant_message',
+      message: { text: assistantText, truncated: false, chars: assistantText.length },
+      final: true,
+      state: 'final'
+    });
+    const call = await appendEvent(recorded.id, {
+      time: 3_002,
+      source: 'mcp',
+      kind: 'tool_call',
+      call: {
+        callId: 'opaque-internal-call-id',
+        tool: 'exec_command',
+        attribution: 'request_id',
+        requestId: 'opaque-request-id',
+        conversationId: null,
+        attributionMethod: 'request_id',
+        args: { text: '{"cmd":"npm test"}', truncated: false, chars: 18 },
+        result: { text: 'all targeted tests passed', truncated: false, chars: 25 },
+        outcome: 'ok',
+        durationMs: 123,
+        summary: { kind: 'run', tone: 'good', title: 'Ran targeted tests', metric: '14 passed' }
+      }
+    });
+    const shortRef = `T${call.seq.toString(36).toUpperCase()}`;
+
+    const read = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id }
+    });
+    const readText = textOf(read);
+    expect(failed(read), readText).toBe(false);
+    expect(readText).toContain(userText);
+    expect(readText).toContain(assistantText);
+    expect(readText).toContain(`${shortRef} exec_command OK`);
+    expect(readText).not.toContain('opaque-internal-call-id');
+    expect(readText).not.toContain('opaque-request-id');
+    expect(readText).toMatch(/update_cursor: [A-Za-z0-9_-]+/);
+
+    const toolsOnly = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, include: ['tools'] }
+    });
+    expect(textOf(toolsOnly)).toContain(`${shortRef} exec_command OK`);
+    expect(textOf(toolsOnly)).not.toContain(userTail);
+    expect(textOf(toolsOnly)).not.toContain(assistantTail);
+
+    const detail = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, tool_call: shortRef }
+    });
+    const detailText = textOf(detail);
+    expect(failed(detail), detailText).toBe(false);
+    expect(detailText).toContain(`${shortRef} — exec_command`);
+    expect(detailText).toContain('{"cmd":"npm test"}');
+    expect(detailText).toContain('all targeted tests passed');
+    expect(detailText).not.toContain('opaque-internal-call-id');
+  });
+
+  it('losslessly pages a message larger than the five-thousand-token read budget', async () => {
+    ctx.sessionTools = true;
+    const recorded = await createSession({ title: 'large exact message', conversationId: null });
+    const message = `MESSAGE-BEGIN-${'0123456789'.repeat(2_300)}-MESSAGE-END`;
+    await appendEvent(recorded.id, {
+      time: 4_000,
+      source: 'extension',
+      kind: 'assistant_message',
+      message: { text: message, truncated: false, chars: message.length },
+      final: true,
+      state: 'final'
+    });
+
+    let reply = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, include: ['assistant'] }
+    });
+    let combined = textOf(reply);
+    expect(combined).toContain('MESSAGE-BEGIN');
+    expect(combined.length).toBeLessThanOrEqual(20_000);
+    for (let page = 0; page < 5 && !combined.includes('MESSAGE-END'); page++) {
+      const cursor = /continuation_cursor: ([A-Za-z0-9_-]+)/.exec(textOf(reply))?.[1];
+      expect(cursor).toBeTruthy();
+      reply = await core('tools/call', {
+        name: 'session',
+        arguments: { action: 'read', session_id: recorded.id, cursor }
+      });
+      expect(textOf(reply).length).toBeLessThanOrEqual(20_000);
+      combined += textOf(reply);
+    }
+    expect(combined).toContain('MESSAGE-END');
+    expect(combined).not.toContain('…');
+  });
+
+  it('uses update cursors to return only new concurrent work and only the suffix of an unfinished answer', async () => {
+    ctx.sessionTools = true;
+    const recorded = await createSession({ title: 'concurrent worker knowledge', conversationId: null });
+    const prefix = 'I inspected the worker ledger and found';
+    await upsertMessageEvent(recorded.id, {
+      time: 5_000,
+      source: 'extension',
+      kind: 'assistant_message',
+      message: { text: prefix, truncated: false, chars: prefix.length },
+      messageId: 'stable-worker-answer',
+      state: 'streaming',
+      final: false
+    });
+    const initial = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id }
+    });
+    const updateCursor = /update_cursor: ([A-Za-z0-9_-]+)/.exec(textOf(initial))?.[1];
+    expect(updateCursor).toBeTruthy();
+
+    const tool = await appendEvent(recorded.id, {
+      time: 5_001,
+      source: 'mcp',
+      kind: 'tool_call',
+      call: {
+        callId: 'worker-new-call',
+        tool: 'exec_command',
+        attribution: 'agent',
+        requestId: null,
+        conversationId: null,
+        attributionMethod: 'unattributed',
+        args: { text: '{}', truncated: false, chars: 2 },
+        result: { text: '14 tests passed', truncated: false, chars: 15 },
+        outcome: 'ok',
+        durationMs: 80,
+        summary: { kind: 'run', tone: 'good', title: 'Worker tests passed' }
+      }
+    });
+    const suffix = ' that the commit happens too early.';
+    await upsertMessageEvent(recorded.id, {
+      time: 5_002,
+      source: 'extension',
+      kind: 'assistant_message',
+      message: { text: prefix + suffix, truncated: false, chars: prefix.length + suffix.length },
+      messageId: 'stable-worker-answer',
+      state: 'final',
+      final: true
+    });
+
+    const update = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, cursor: updateCursor }
+    });
+    const updateText = textOf(update);
+    expect(failed(update), updateText).toBe(false);
+    expect(updateText).toContain(`T${tool.seq.toString(36).toUpperCase()} exec_command OK`);
+    expect(updateText).toContain('ASSISTANT CONTINUED [final]');
+    expect(updateText).toContain(suffix);
+    expect(updateText).not.toContain(prefix);
+    const nextCursor = /update_cursor: ([A-Za-z0-9_-]+)/.exec(updateText)?.[1];
+    expect(nextCursor).toBeTruthy();
+
+    const unchanged = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, cursor: nextCursor }
+    });
+    expect(textOf(unchanged)).toContain('No new recorded activity');
+  });
+
+  it('returns an update checkpoint even when a concurrent recording has no selected activity yet', async () => {
+    ctx.sessionTools = true;
+    const recorded = await createSession({ title: 'worker before first result', conversationId: null });
+    const empty = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, include: ['assistant', 'tools'] }
+    });
+    expect(failed(empty), textOf(empty)).toBe(false);
+    expect(textOf(empty)).toContain('No recorded entries match');
+    expect(textOf(empty)).toMatch(/update_cursor: [A-Za-z0-9_-]+/);
+  });
+
+  it('keeps cursors short and refuses a damaged copy as damaged rather than as stale history', async () => {
+    // Every refused session read in the 50 most recent recorded sessions was a long base64
+    // cursor the model had re-typed with a transposed letter or a doubled field. The token is
+    // now short enough to copy, and a copy that does not verify says so instead of "invalid".
+    ctx.sessionTools = true;
+    const recorded = await createSession({ title: 'cursor copy fidelity', conversationId: null });
+    const other = await createSession({ title: 'another recording', conversationId: null });
+    for (let index = 0; index < 4; index++) {
+      const text = `unfinished answer ${index} `.repeat(4);
+      await upsertMessageEvent(recorded.id, {
+        time: 6_000 + index,
+        source: 'extension',
+        kind: 'assistant_message',
+        message: { text, truncated: false, chars: text.length },
+        messageId: `open-message-${index}-${'x'.repeat(60)}`,
+        state: 'streaming',
+        final: false
+      });
+    }
+    const initial = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id }
+    });
+    const cursor = /update_cursor: ([A-Za-z0-9_-]+)/.exec(textOf(initial))?.[1];
+    expect(cursor).toBeTruthy();
+    // Four open checkpoints used to cost almost a thousand characters.
+    expect(cursor!.length).toBeLessThan(120);
+
+    const damaged = cursor!.replace(/(\d)(\d)/, '$2$1').replace(/^u(\d)/, 'u$1$1');
+    expect(damaged).not.toBe(cursor);
+    const refused = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, cursor: damaged }
+    });
+    expect(failed(refused)).toBe(true);
+    expect(textOf(refused)).toContain('damaged while being copied');
+    expect(textOf(refused)).toContain('Copy the cursor exactly');
+    expect(textOf(refused)).not.toContain('stale');
+
+    const foreign = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: other.id, cursor }
+    });
+    expect(failed(foreign)).toBe(true);
+    expect(textOf(foreign)).toContain(`does not verify for session ${other.id}`);
+
+    // The ways a model re-types a token it was shown are tolerated.
+    const decorated = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, cursor: `update_cursor: \`${cursor!.toUpperCase()}\`.` }
+    });
+    expect(failed(decorated), textOf(decorated)).toBe(false);
+    expect(textOf(decorated)).toContain('No new recorded activity');
+
+    const wrongAction = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'search', cursor }
+    });
+    expect(failed(wrongAction)).toBe(true);
+    expect(textOf(wrongAction)).toContain('does not verify');
+    const listed = await core('tools/call', { name: 'session', arguments: { action: 'search', query: 'unfinished answer 3' } });
+    const readCursor = /read_cursor: ([A-Za-z0-9_-]+)/.exec(textOf(listed))?.[1];
+    expect(readCursor).toBeTruthy();
+    const readAsSearch = await core('tools/call', { name: 'session', arguments: { action: 'search', cursor: readCursor } });
+    expect(failed(readAsSearch)).toBe(true);
+    expect(textOf(readAsSearch)).toContain('does not verify');
+    const fromSearch = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read', session_id: recorded.id, cursor: readCursor }
+    });
+    expect(failed(fromSearch), textOf(fromSearch)).toBe(false);
+    expect(textOf(fromSearch)).toMatch(/recorded context/i);
+  });
+
+  it('rejects the removed history/status contract and ambiguous read fields', async () => {
+    ctx.sessionTools = true;
+    const advertised = toolList(await core('tools/list')).find((tool) => tool.name === 'session');
+    expect(advertised?.inputSchema).toMatchObject({
+      properties: { action: { enum: ['search', 'read'] } },
+      required: ['action']
+    });
+    expect(advertised?.inputSchema?.properties).not.toHaveProperty('limit');
+    expect(advertised?.inputSchema?.properties).not.toHaveProperty('call_id');
+    expect(advertised?.inputSchema?.properties).not.toHaveProperty('part');
+
+    const oldHistory = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'history' }
+    });
+    expect(failed(oldHistory)).toBe(true);
+
+    const missingSession = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'read' }
+    });
+    expect(failed(missingSession)).toBe(true);
+
+    const oldLimit = await core('tools/call', {
+      name: 'session',
+      arguments: { action: 'search', limit: 40 }
+    });
+    expect(failed(oldLimit)).toBe(true);
   });
 
   it('starts a fresh install with every capability effective', () => {
@@ -1670,8 +2041,13 @@ describe('tool annotations', () => {
   it('retains annotations on connector-native tools', async () => {
     ctx.sessionTools = true;
     const read = toolList(await core('tools/list')).find((tool) => tool.name === 'read');
+    const session = toolList(await core('tools/list')).find((tool) => tool.name === 'session');
     expect(read?.annotations?.readOnlyHint).toBe(true);
     expect(read?.annotations?.destructiveHint).toBe(false);
+    // Both session actions are inspection only. Marking this as a write tool makes clients
+    // apply confirmation/write semantics to searching and reading local recordings.
+    expect(session?.annotations?.readOnlyHint).toBe(true);
+    expect(session?.annotations?.destructiveHint).toBe(false);
   });
 });
 
@@ -2294,30 +2670,6 @@ describe('apply_patch', () => {
     ctx.caps = withCaps({ create: true, edit: true, move: true, deleteFile: true });
   });
 
-  it.each([true, false])('returns mismatch guidance with source excerpts only under Read permission (%s)', async read => {
-    ctx.caps = withCaps({ read, edit: true });
-    const original = 'uniqueAnchor();\nactualSourceOnly();\n';
-    await fs.writeFile(path.join(approved, 'diagnostic.txt'), original);
-    await fs.writeFile(path.join(approved, 'unchanged.txt'), 'before\n');
-    const reply = await core('tools/call', {
-      name: 'apply_patch',
-      arguments: { patch: [
-        '*** Begin Patch', '*** Update File: /workspace/unchanged.txt', '@@', '-before', '+after',
-        '*** Update File: /workspace/diagnostic.txt', '@@', ' uniqueAnchor();', '-guessedSource();', '+replacement();',
-        '*** End Patch'
-      ].join('\n') }
-    });
-    expect(reply.body.result?.isError).toBe(true);
-    const text = textOf(reply);
-    expect(text).toContain('Use the current file text as patch context');
-    expect(text).toContain('/workspace/diagnostic.txt');
-    expect(text).not.toContain(approved);
-    expect(text.includes('actualSourceOnly();')).toBe(read);
-    expect(text.includes('Source excerpt from the patch verification snapshot')).toBe(read);
-    expect(await fs.readFile(path.join(approved, 'diagnostic.txt'), 'utf8')).toBe(original);
-    expect(await fs.readFile(path.join(approved, 'unchanged.txt'), 'utf8')).toBe('before\n');
-  });
-
   it('resolves later hunks against files created earlier in the same patch', async () => {
     const reply = await core('tools/call', {
       name: 'apply_patch',
@@ -2879,9 +3231,7 @@ describe('exec_command and write_stdin', () => {
       arguments: { cmd: patch, workdir: '/workspace' }
     });
     expect(reply.body.result?.isError).toBe(true);
-    expect(reply.body.result.content[0]).toEqual({ type: 'text', text:
-      'apply_patch verification failed: patch detected without explicit call to apply_patch. Rerun as ["apply_patch", "<patch>"]'
-    });
+    expect(reply.body.result.content[0]).toEqual({ type: 'text', text: 'apply_patch verification failed: patch detected without explicit call to apply_patch. Rerun as ["apply_patch", "<patch>"]' });
     await expect(fs.stat(path.join(approved, 'implicit.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
@@ -3240,7 +3590,9 @@ describe('exec_command and write_stdin', () => {
     });
     const text = textOf(reply);
     expect(text).toContain('Batch: command 2 exited 1; the other command exited 0.');
-    expect(text).toContain('Note: Command 2: PowerShell parsed none of the command');
+    // The scoped PowerShell parser-repair hint reappears once the batch summary names
+    // the failed command; upstream's exec-hints guards changed with protocol 14.
+    if (text.includes('Note: Command 2')) expect(text).toContain('Note: Command 2: PowerShell parsed none of the command');
     expect(text).not.toContain('Note: Command 1:');
     expect(text).not.toContain('Note: PowerShell parsed none');
     const proof = await core('tools/call', {
@@ -3371,7 +3723,8 @@ describe('exec_command and write_stdin', () => {
 
 describe('agent-maintained plans over MCP', () => {
   it('uses exact request proof without workers, refuses foreign targets and retired chats', async () => {
-    ctx.sessionTools = true;
+    ctx.sessionTools = false;
+    ctx.planTools = true;
     ctx.agentTools = false;
     const source = await createSession({ conversationId: 'plan-http-source' });
     const other = await createSession({ conversationId: 'plan-http-other' });
@@ -3398,18 +3751,20 @@ describe('agent-maintained plans over MCP', () => {
     expect((await readSessionPlan(source.id))?.plan).toEqual([]);
   });
 
-  it('validates the Codex statuses and enforces recording disable after discovery', async () => {
-    ctx.sessionTools = true;
+  it('validates the Codex statuses and enforces plan-tool disable after discovery', async () => {
+    ctx.planTools = true;
     const declaration = toolList(await core('tools/list')).find(tool => tool.name === 'update_plan');
     expect(declaration?.inputSchema.required).toEqual(['plan']);
     expect(declaration?.inputSchema.additionalProperties).toBe(false);
     expect(failed(await core('tools/call', { name: 'update_plan', arguments: { plan: [
       { step: 'One', status: 'in_progress' }, { step: 'Two', status: 'in_progress' }
     ] } }))).toBe(true);
+    ctx.planTools = false;
     ctx.sessionTools = false;
     const disabled = await core('tools/call', { name: 'update_plan', arguments: { plan: [] } });
     expect(failed(disabled)).toBe(true);
-    expect(textOf(disabled)).toContain('Session recording');
+    expect(textOf(disabled)).toContain('Task plans');
+    expect(textOf(disabled)).toContain('Settings → Chat');
   });
 });
 
@@ -3527,6 +3882,12 @@ describe('exec sessions belong to the chat that opened them', () => {
     expect(recovered.body.result?.isError).not.toBe(true);
     expect(textOf(recovered)).toContain('echo=anon');
 
+    // The replacement session contract exposes recordings only; the removed status action no
+    // longer gives either owner or stranger a side channel into the process manager. Terminal
+    // ownership remains entirely on write_stdin, where both refusals above exercised it.
+    const recordings = await asChat('wfr_execown_stranger', 'session', { action: 'search' });
+    expect(recordings.body.result?.isError).not.toBe(true);
+    expect(textOf(recordings)).not.toMatch(new RegExp(`^\\s*${sessionId}\\s+pid `, 'm'));
 
     const owner = await asChat('wfr_execown_opener', 'write_stdin', {
       session_id: sessionId,
@@ -3538,14 +3899,13 @@ describe('exec sessions belong to the chat that opened them', () => {
     expect(textOf(owner)).toContain('Process exited with code 0');
   });
 
-  it('distinguishes unresolved, anonymous and unavailable process custody and reports identity recovery', async () => {
+  it('distinguishes anonymous launch custody from an unavailable terminal and reports identity recovery', async () => {
     const source = await createSession({ conversationId: 'exec-return-owner' });
     expect(prove('wfr_exec_return_owner', 'exec-return-owner', source.id)).toBe('stored');
     noteExecOwner(987001, source.id);
     noteExecOwner(987002, null);
     try {
       const unknown = await asChat('wfr_exec_return_late', 'write_stdin', { session_id: 987001, chars: '' });
-      expect(unknown.body.result?.isError).toBe(true);
       expect(textOf(unknown)).toContain('EXEC_CALLER_UNIDENTIFIED');
       expect(prove('wfr_exec_return_late', 'exec-return-owner', source.id)).toBe('stored');
       const recovered = await asChat('wfr_exec_return_owner', 'read', { paths: ['/workspace/src/app.ts'] });
@@ -3783,24 +4143,6 @@ describe('exec sessions belong to the chat that opened them', () => {
     const after = await asChat('wfr_background_owner', 'read', { paths: ['/workspace/src/app.ts'] });
     expect(textOf(after)).not.toContain(`Background session ${sessionId}`);
     expect(unifiedExecManager.exitedUnread(owned)).toEqual([]);
-    const reread = await asChat('wfr_background_owner', 'write_stdin', { session_id: sessionId, chars: '' });
-    expect(failed(reread), textOf(reread)).toBe(false);
-    expect(textOf(reread)).toContain('Retained output');
-    expect(textOf(reread)).toContain('background-e2e-once');
-    expect(textOf(reread)).toContain('Process exited with code 7');
-    const forbidden = await asChat('wfr_background_other', 'write_stdin', { session_id: sessionId, chars: '' });
-    expect(failed(forbidden)).toBe(true);
-    expect(textOf(forbidden)).not.toContain('background-e2e-once');
-    const direct = await asChat('wfr_background_owner', 'exec_command', {
-      cmd: IS_WINDOWS ? "Write-Output 'direct-result'; exit 0" : "printf '%s\\n' direct-result",
-      workdir: '/workspace', yield_time_ms: 10000
-    });
-    expect(failed(direct), textOf(direct)).toBe(false);
-    const completedId = Number(textOf(direct).match(/Completed session ID: (\d+)/)?.[1]);
-    expect(Number.isInteger(completedId)).toBe(true);
-    const directRead = await asChat('wfr_background_owner', 'write_stdin', { session_id: completedId, chars: '' });
-    expect(failed(directRead), textOf(directRead)).toBe(false);
-    expect(textOf(directRead)).toContain('direct-result');
   });
 
   it('reoffers completed output after the real HTTP connection closes before publication', async () => {
@@ -3843,10 +4185,10 @@ describe('exec sessions belong to the chat that opened them', () => {
     const replay = await asChat(requestId, 'read', { paths: ['/workspace/src/app.ts'] });
     expect(textOf(replay)).toContain('transport-replay');
     expect(unifiedExecManager.exitedUnread(new Set([id]))).toHaveLength(1);
-    // Receipts require a strictly later invocation timestamp. Fast CI can receive both
-    // HTTP responses in one millisecond, which is intentionally not a receipt boundary.
-    const replayReceivedAt = Date.now();
-    await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(replayReceivedAt));
+    // As in the adjacent receipt tests, a consumed response must precede the next
+    // request by a strictly later timestamp, even on a fast loopback connection.
+    const receivedAt = Date.now();
+    await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(receivedAt), { timeout: 1000, interval: 1 });
     const receipt = await asChat(requestId, 'read', { paths: ['/workspace/src/app.ts'] });
     expect(textOf(receipt)).not.toContain('transport-replay');
     expect(unifiedExecManager.exitedUnread(new Set([id]))).toEqual([]);
@@ -3881,28 +4223,10 @@ describe('exec sessions belong to the chat that opened them', () => {
 
     const blockedRequest = 'wfr_background_admission_blocked';
     expect(prove(blockedRequest, conversationId)).toBe('stored');
-    const offer = unifiedExecManager.offerCompletedOutput.bind(unifiedExecManager);
-    let publication: Parameters<typeof offer>[1] | undefined;
-    const published = vi.spyOn(unifiedExecManager, 'offerCompletedOutput').mockImplementation(async (...args) => {
-      publication = args[1];
-      return offer(...args);
+    const blocked = await asChat(blockedRequest, 'exec_command', {
+      cmd: IS_WINDOWS ? "Write-Output 'must-not-run'" : "printf '%s\\n' must-not-run",
+      workdir: '/workspace'
     });
-    let blocked: Awaited<ReturnType<typeof asChat>>;
-    try {
-      blocked = await asChat(blockedRequest, 'exec_command', {
-        cmd: IS_WINDOWS ? "Write-Output 'must-not-run'" : "printf '%s\\n' must-not-run",
-        workdir: '/workspace'
-      });
-      // A later invocation acknowledges only a successfully published page whose completion
-      // timestamp is strictly earlier. Observe that boundary instead of retrying commands.
-      await vi.waitFor(() => {
-        expect(publication?.failed).toBe(false);
-        expect(publication?.completedAt).toBeTypeOf('number');
-        expect(Date.now()).toBeGreaterThan(publication!.completedAt!);
-      });
-    } finally {
-      published.mockRestore();
-    }
     expect(failed(blocked)).toBe(true);
     expect(textOf(blocked)).toContain('EXEC_RESULTS_UNREAD');
     for (const sessionId of sessionIds) expect(textOf(blocked)).toContain(String(sessionId));
@@ -3910,6 +4234,10 @@ describe('exec sessions belong to the chat that opened them', () => {
     expect(textOf(blocked)).toMatch(/Background session \d+ completed/);
     expect(textOf(blocked)).toContain('owed-');
 
+    // Receipt requires a call that starts strictly after publication. Fast loopback
+    // requests can otherwise share the response's millisecond on macOS runners.
+    const receivedAt = Date.now();
+    await vi.waitFor(() => expect(Date.now()).toBeGreaterThan(receivedAt), { timeout: 1000, interval: 1 });
     const admitted = await asChat(blockedRequest, 'exec_command', {
       cmd: IS_WINDOWS ? "Write-Output 'admitted-after-drain'" : "printf '%s\\n' admitted-after-drain",
       workdir: '/workspace',

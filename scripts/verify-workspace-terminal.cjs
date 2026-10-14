@@ -94,10 +94,42 @@ app.whenReady().then(async () => {
     });
   } }] });
   const js = code => win.webContents.executeJavaScript(code);
+  const settleLayout = async () => {
+    let timeout;
+    try {
+      await Promise.race([
+        js(`(async()=>{
+          // Hidden-start Windows launchers can stop scheduling animation completion
+          // notifications between input events. Keep real frames advancing while
+          // waiting; do not finish animations or bypass the native hit-target check.
+          let painting=true;
+          const paint=()=>{if(painting)requestAnimationFrame(paint)};
+          requestAnimationFrame(paint);
+          try {
+          await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+          await Promise.all(document.getAnimations()
+            .filter(animation=>Number.isFinite(animation.effect.getComputedTiming().endTime))
+            .map(animation=>animation.finished.catch(()=>undefined)));
+          } finally { painting=false; }
+        })()`),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('Timeout waiting for terminal layout animations')), 15_000);
+        })
+      ]);
+    } finally { clearTimeout(timeout); }
+  };
   const click = async selector => {
-    // Docks slide in (panel-motion.ts); measure the target at rest, not mid-drawer.
-    await js('Promise.race([Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity).map(animation => animation.finished.catch(() => undefined))), new Promise(resolve => setTimeout(resolve, 1500))])');
-    const point = await js(`(()=>{const node=document.querySelector(${JSON.stringify(selector)});const rect=node.getBoundingClientRect();const x=Math.round(rect.left+rect.width/2),y=Math.round(rect.top+rect.height/2);return {x,y,target:document.elementFromPoint(x,y)?.outerHTML.slice(0,120)}})()`);
+    // Opening docks animate from outside the viewport. Take coordinates only after
+    // finite layout animations settle; keep native input and verify its hit target.
+    await settleLayout();
+    const point = await js(`(()=>{
+      const node=document.querySelector(${JSON.stringify(selector)});
+      const rect=node.getBoundingClientRect();
+      const x=Math.round(rect.left+rect.width/2),y=Math.round(rect.top+rect.height/2);
+      const hit=document.elementFromPoint(x,y);
+      return {x,y,target:hit?.outerHTML.slice(0,120),hit:!!hit&&node.contains(hit)};
+    })()`);
+    assert.ok(point.hit, `${selector}: ${JSON.stringify(point)}`);
     win.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     return point;
@@ -105,6 +137,9 @@ app.whenReady().then(async () => {
   const until = async expression => { const end = Date.now() + 15_000; while (Date.now() < end) { if (await js(expression)) return; await new Promise(resolve => setTimeout(resolve, 40)); } throw new Error('Timeout: ' + expression + ' ' + JSON.stringify(await js('({errors,outputs})'))); };
   try {
     await server.listen(); await win.loadURL(server.resolvedUrls.local[0] + 'fixture.html'); await until('window.ready');
+    // windowsHide may suppress the constructor's first show. Native Return input
+    // needs a visible focused window, even when Chromium reports document focus.
+    if (WINDOWS) { win.show(); win.focus(); assert.ok(win.isVisible()); }
     await js("window.setTerminalProject(null);document.getElementById('terminalToggle').click()");
     await until(`ids.length===1 && document.querySelector("#workspaceTerminal .terminal-tab").textContent${TAB_LABEL}`);
     const homeId = await js('ids[0]');
@@ -141,7 +176,6 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll("#workspaceTerminal .terminal-tab").length===1');
     assert.equal((await js(`window.api.terminalWrite(${JSON.stringify(extraBottom)}, 'echo nope\\r')`)).ok, false);
     await click('#workspaceTerminal .terminal-panel-close');
-    // The bottom dock hides its terminal once the closing drawer has left.
     await until('document.getElementById("workspaceTerminal").hidden');
     await js(`window.api.terminalWrite(${JSON.stringify(first)}, ${JSON.stringify(sh.show('HIDDEN') + '\r')})`);
     await until(`outputs[${JSON.stringify(first)}]?.includes('HIDDEN_persisted')`);
@@ -198,10 +232,10 @@ app.whenReady().then(async () => {
       const attemptEnd = Date.now() + 1_500;
       while (Date.now() < attemptEnd && !(await interrupted())) await new Promise(resolve => setTimeout(resolve, 40));
     }
-    win.setSize(830, 700); await new Promise(resolve => setTimeout(resolve, 300));
-    const geometry = await js(`(()=>{const p=document.getElementById('workspaceTerminal').getBoundingClientRect();return {width:p.width,height:p.height,fits:p.right<=innerWidth+1&&p.bottom<=innerHeight+1}})()`);
-    assert.ok(geometry.fits, JSON.stringify(geometry));
+    win.setSize(830, 700); await settleLayout();
+    const geometry = await js(`(()=>{const p=document.getElementById('workspaceTerminal').getBoundingClientRect();return {width:p.width,height:p.height,left:p.left,top:p.top,right:p.right,bottom:p.bottom,viewportWidth:innerWidth,viewportHeight:innerHeight,fits:p.right<=innerWidth+1&&p.bottom<=innerHeight+1}})()`);
     fs.writeFileSync(path.join(output, 'terminal.png'), (await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+    assert.ok(geometry.fits, JSON.stringify(geometry));
     await js(`window.api.terminalWrite(${JSON.stringify(second)}, "exit 7\\r")`); await until(`exits[${JSON.stringify(second)}]===7`);
     await js("document.querySelector('#workDockRight .work-dock-tab[data-terminal-id] .btn-icon').click()");
     assert.equal((await js(`window.api.terminalWrite(${JSON.stringify(second)}, 'echo closed\\r')`)).ok, false);

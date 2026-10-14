@@ -11,6 +11,7 @@ vi.mock('pdfjs-dist', () => ({
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '/assets/pdf.worker.test.mjs' }));
 
 import { createProjectPdfViewer } from '../src/renderer/file-pdf-viewer.js';
+import { setLanguage } from '../src/renderer/i18n.js';
 
 let dom: JSDOM;
 let requestedPages: number[];
@@ -27,6 +28,7 @@ beforeEach(() => {
   });
   vi.stubGlobal('window', dom.window);
   vi.stubGlobal('document', dom.window.document);
+  setLanguage('en');
   vi.stubGlobal('HTMLElement', dom.window.HTMLElement);
   vi.stubGlobal('HTMLCanvasElement', dom.window.HTMLCanvasElement);
   vi.stubGlobal('atob', (value: string) => Buffer.from(value, 'base64').toString('binary'));

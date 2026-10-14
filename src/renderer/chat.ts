@@ -151,6 +151,8 @@ let deps: Deps;
 let visible = false;
 
 let sessions: SessionSummary[] = [];
+/** Last accepted newest-page receipt; its covered range can withdraw a delayed older row. */
+let newestSessionPage: { sessions: SessionSummary[]; nextCursor: { updatedAt: number; id: string } | null } | null = null;
 let pressure = new Map<string, TokenPressure>();
 let sessionTotal = 0;
 let sessionPageCursor: { updatedAt: number; id: string } | null = null;
@@ -698,6 +700,8 @@ let changedTranscripts: { all: boolean; ids: Set<string> } = { all: false, ids: 
 let detailStamp: { updatedAt: number; events: number } | null = null;
 let toolActivityTimer: number | undefined;
 let sessionsLoadGeneration = 0;
+/** Explicit successful session writes retire older pages; ordinary catalog reads do not. */
+let sessionMutationGeneration = 0;
 let detailLoadGeneration = 0;
 let handoffLoadGeneration = 0;
 
@@ -1106,7 +1110,8 @@ async function finishRename(save: boolean): Promise<void> {
   paintSessions();
   if (!save || value === edit.original.trim()) return;
   // Empty asks for the title the app would show without a name: ChatGPT's own.
-  await run(api.renameSession(edit.id, value || null));
+  const changed = await run(api.renameSession(edit.id, value || null));
+  if (changed) ++sessionMutationGeneration;
   await loadSessions('changed');
 }
 
@@ -1140,6 +1145,7 @@ async function toggleSessionTrust(id: string, expectedConversationId: string, tr
 async function deleteSession(id: string): Promise<void> {
   const done = await run(api.deleteSession(id));
   if (done === null) return;
+  ++sessionMutationGeneration;
   sessions = sessions.filter((entry) => entry.id !== id);
   pressure.delete(id);
   sessionTotal = Math.max(0, sessionTotal - 1);
@@ -1184,7 +1190,13 @@ async function loadSessions(detail: 'reread' | 'changed' = 'reread'): Promise<vo
   if (!list || generation !== sessionsLoadGeneration) return;
   const changed = changedTranscripts;
   changedTranscripts = { all: false, ids: new Set() };
-  if (catalog) projects = catalog;
+  if (catalog) {
+    projects = catalog;
+    for (const id of projectHistory.keys()) {
+      if (!projects.some(project => project.id === id && !project.ungrouped)) projectHistory.delete(id);
+    }
+  }
+  newestSessionPage = { sessions: list.sessions, nextCursor: list.nextCursor ?? null };
   // Once older pages have been requested, a hot refresh only replaces/updates the newest page.
   // Throwing the older rows away here would make scrolling history vanish every 400 ms while a
   // live chat is recording. Before pagination begins, replacing the first page is cheaper and
@@ -1231,9 +1243,10 @@ async function loadMoreSessions(): Promise<void> {
   if (sessionPageLoading || !sessionPageCursor || sessions.length >= sessionTotal) return;
   sessionPageLoading = true;
   const cursor = sessionPageCursor;
+  const mutation = sessionMutationGeneration;
   try {
     const page = await run(api.listSessions({ cursor, limit: SESSION_PAGE_SIZE }));
-    if (!page) return;
+    if (!page || mutation !== sessionMutationGeneration) return;
     mergeSessionRows(page.sessions);
     loadedOlderSessions = true;
     sessionTotal = page.total;
@@ -1267,14 +1280,29 @@ async function loadProjectHistory(id: string): Promise<void> {
   state.loading = true;
   try {
     do {
+      const newestAtStart = newestSessionPage;
+      const mutation = sessionMutationGeneration;
       const page = await run(api.listSessions({ projectId: id, limit: SESSION_PAGE_SIZE, ...(state.cursor ? { cursor: state.cursor } : {}) }));
-      if (!page) return;
+      if (!page || projectHistory.get(id) !== state || mutation !== sessionMutationGeneration) return;
       state.asked = true;
       state.cursor = page.nextCursor ?? null;
-      mergeSessionRows(page.sessions);
+      const rows = page.sessions.filter(row => {
+        const current = sessions.find(entry => entry.id === row.id);
+        if (current && current.updatedAt >= row.updatedAt) return false;
+        if (newestSessionPage && newestSessionPage !== newestAtStart &&
+            !newestSessionPage.sessions.some(entry => entry.id === row.id)) {
+          const oldest = newestSessionPage.sessions.at(-1);
+          const outsideRange = !!newestSessionPage.nextCursor && !!oldest &&
+            (row.updatedAt < oldest.updatedAt || (row.updatedAt === oldest.updatedAt && row.id < oldest.id));
+          if (!outsideRange) return false;
+        }
+        return true;
+      });
+      mergeSessionRows(rows);
       // Rows older than the newest page are now held: refreshes must keep them, as after scrolling.
-      loadedOlderSessions = true;
-      for (const entry of page.pressure) pressure.set(entry.id, entry);
+      if (rows.length) loadedOlderSessions = true;
+      const admitted = new Set(rows.map(row => row.id));
+      for (const entry of page.pressure) if (admitted.has(entry.id)) pressure.set(entry.id, entry);
       paintSessions();
       // A page of workers shows nothing; read on while the project is open and still looks empty.
     } while (state.cursor && expandedProjects.has(id) && !projectShowsChat(id));
@@ -5888,7 +5916,7 @@ const CHAT_INPUTS = [
   'chatBrowser', 'cosBrowserMinimize', 'browserBridgePort',
   'goalIncludeToolCalls',
   'planBackend',
-  'finishTool', 'finishLeadMinutes', 'rotateTurnMinutes', 'defaultChatModel', 'defaultChatReasoning', 'workerModel', 'workerReasoning', 'autoSelectSkills', 'backgroundChats', 'backgroundPlacement', 'browserOnly', 'autoRefreshPlugins',
+  'finishTool', 'finishLeadMinutes', 'rotateTurnMinutes', 'defaultChatModel', 'defaultChatReasoning', 'workerModel', 'workerReasoning', 'autoSelectSkills', 'backgroundChats', 'backgroundPlacement', 'minimizeToTray', 'browserOnly', 'autoRefreshPlugins',
   'goalBackend',
   'loopBackend',
   'helperModel', 'helperReasoning',

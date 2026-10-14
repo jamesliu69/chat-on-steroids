@@ -19,7 +19,7 @@ import sharp from 'sharp';
 import { randomBytes } from 'node:crypto';
 import { unifiedExecManager } from '../src/main/codex/manager.js';
 import { onLog } from '../src/main/logger.js';
-import { noteExecOwner, forgetExecOwner } from '../src/main/codex/ownership.js';
+import { execOwner, noteExecOwner, forgetExecOwner } from '../src/main/codex/ownership.js';
 import * as ownership from '../src/main/codex/ownership.js';
 import type { ExecCommandToolOutput } from '../src/main/codex/unified-exec.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
@@ -231,22 +231,29 @@ afterAll(async () => {
   await endpoint.stop(); await unifiedExecManager.terminateAllProcesses(); await flushRecorder(); await flushDurable(); resetInputForTests(); resetSessionStoreForTests(); resetDurableForTests(); await removeTempDir(directory);
 });
 
-it('retires session lookup while recording messages, tools and the exact caller plan', async () => {
+it('keeps fork session lookup while recording messages, tools and the exact caller plan', async () => {
   const who = await identity();
   const names = (await rpc('tools/list', {})).result.tools.map((tool: any) => tool.name);
-  expect(names).not.toContain('session');
+  expect(names).toContain('session');
   expect(names).toContain('update_plan');
   const observed = await recordChatObservations(who.conversationId, [
     { kind: 'user_message', time: Date.now(), messageId: randomUUID(), text: 'LOCAL_REQUEST' },
     { kind: 'assistant_message', time: Date.now(), messageId: randomUUID(), text: 'LOCAL_ANSWER' }
   ]);
   expect(observed.sessionId).toBe(who.session.id);
-  expect(text(await call(who.requestId, 'text(ALL_TOOLS.map(tool => tool.name));'))).not.toContain('"session"');
-  const stale = await rpc('tools/call', { name: 'session', arguments: { action: 'search' } }, who.requestId);
-  expect(Boolean(stale.error || stale.result?.isError)).toBe(true);
-  const nested = await call(who.requestId, 'text(await tools.session({action:"search"}));');
-  expect(nested.result.isError).toBe(true);
-  expect(text(nested)).not.toContain('LOCAL_REQUEST');
+  expect(text(await call(who.requestId, 'text(ALL_TOOLS.map(tool => tool.name));'))).toContain('"session"');
+  const directSession = await rpc('tools/call', {
+    name: 'session',
+    arguments: { action: 'search', query: 'LOCAL_REQUEST' }
+  }, who.requestId);
+  expect(directSession.result.isError, text(directSession)).not.toBe(true);
+  expect(text(directSession)).toContain(who.session.id);
+  const nested = await call(
+    who.requestId,
+    'text(await tools.session({action:"search",query:"LOCAL_REQUEST"}));'
+  );
+  expect(nested.result.isError, text(nested)).not.toBe(true);
+  expect(text(nested)).toContain(who.session.id);
   const read = await rpc('tools/call', { name: 'read', arguments: { paths: ['/workspace/alpha.txt'] } }, who.requestId);
   expect(read.result.isError, text(read)).not.toBe(true);
   const plan = [{ step: 'Keep recording', status: 'completed' }];
@@ -437,6 +444,97 @@ it('allows unattributed file edits through code mode while preserving permission
     expect(text(spawn)).toContain('UNIDENTIFIED_CALLER');
   } finally {
     await saveConfig(config);
+  }
+});
+
+it('does not wait for page identity before allowed unattributed code mode with a request id', async () => {
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  const started = performance.now();
+  const response = await call(requestId, 'text("FAST_UNATTRIBUTED_CODE_MODE")');
+  const elapsedMs = performance.now() - started;
+
+  expect(response.result.isError, text(response)).not.toBe(true);
+  expect(text(response)).toContain('FAST_UNATTRIBUTED_CODE_MODE');
+  expect(elapsedMs).toBeLessThan(1_000);
+});
+
+it('does not reintroduce the identity wait inside allowed unattributed exec_command', async () => {
+  vi.spyOn(unifiedExecManager, 'execCommand').mockResolvedValue({
+    chunkId: 'fast-unattributed', wallTimeMs: 2, rawOutput: Buffer.from('FAST_CHILD'),
+    truncationPolicy: { kind: 'tokens', tokens: 1000 }, maxOutputTokens: undefined,
+    processId: null, exitCode: 0, originalTokenCount: 1, outputOmittedBytes: null
+  });
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  const started = performance.now();
+  const response = await call(requestId,
+    'const child=await tools.exec_command({cmd:"echo fixture",workdir:"/workspace"});text(child.structuredContent);');
+  const elapsedMs = performance.now() - started;
+
+  expect(response.result.isError, text(response)).not.toBe(true);
+  expect(text(response)).toContain('FAST_CHILD');
+  expect(elapsedMs).toBeLessThan(1_000);
+});
+
+it('finalizes a late exact process owner before publishing a new exec session id', async () => {
+  const conversationId = randomUUID();
+  const session = await createSession({ conversationId, title: 'Late exec owner' });
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  const processId = 739101;
+  const command = vi.spyOn(unifiedExecManager, 'execCommand').mockImplementation(async () => {
+    expect(observeRequestCorrelation({ requestId, conversationId, sessionId: session.id,
+      messageId: randomUUID(), tool: 'exec_command', observedAt: Date.now() })).toBe('stored');
+    return {
+      chunkId: 'late-exec-owner', wallTimeMs: 25, rawOutput: Buffer.from('running'),
+      truncationPolicy: { kind: 'tokens', tokens: 1000 }, maxOutputTokens: undefined,
+      processId, exitCode: null, originalTokenCount: 1, outputOmittedBytes: null
+    };
+  });
+  try {
+    const response = await rpc('tools/call', {
+      name: 'exec_command',
+      arguments: { cmd: 'echo fixture', workdir: '/workspace', yield_time_ms: 25 }
+    }, requestId);
+    expect(response.result.isError, text(response)).not.toBe(true);
+    expect(execOwner(processId)).toBe(session.id);
+  } finally {
+    forgetExecOwner(processId);
+    command.mockRestore();
+  }
+});
+
+it('refuses a superseded late caller before code mode can enter a mutating child', async () => {
+  const conversationId = randomUUID();
+  const replacement = randomUUID();
+  const session = await createSession({ conversationId, title: 'Superseded late caller' });
+  expect(await rebindSession(session.id, conversationId, replacement)).toBe(true);
+  const requestId = `wfr_${randomUUID().replaceAll('-', '')}`;
+  let evidenceLanded = false;
+  let enteredBeforeEvidence = false;
+  const command = vi.spyOn(unifiedExecManager, 'execCommand').mockImplementation(async () => {
+    enteredBeforeEvidence = !evidenceLanded;
+    return {
+      chunkId: 'must-not-run', wallTimeMs: 1, rawOutput: Buffer.from('MUTATION_RAN'),
+      truncationPolicy: { kind: 'tokens', tokens: 1000 }, maxOutputTokens: undefined,
+      processId: null, exitCode: 0, originalTokenCount: 1, outputOmittedBytes: null
+    };
+  });
+  const evidence = new Promise<void>((resolve) => setTimeout(() => {
+    evidenceLanded = true;
+    observeRequestCorrelation({ requestId, conversationId, sessionId: session.id,
+      messageId: randomUUID(), tool: 'exec', observedAt: Date.now() });
+    resolve();
+  }, 40));
+  try {
+    const [response] = await Promise.all([
+      call(requestId, 'text(await tools.exec_command({cmd:"echo must-not-run",workdir:"/workspace"}));'),
+      evidence
+    ]);
+    expect(enteredBeforeEvidence).toBe(false);
+    expect(command).not.toHaveBeenCalled();
+    expect(response.result.isError).toBe(true);
+    expect(text(response)).toContain('CONVERSATION_SUPERSEDED');
+  } finally {
+    command.mockRestore();
   }
 });
 

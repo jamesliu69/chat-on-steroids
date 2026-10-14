@@ -1,12 +1,12 @@
 <p align="center"><img src="docs/images/readme-hero.svg?v=2" width="960" alt="Turn ChatGPT into Codex-style local coding. Chat On Steroids: Your files. Your terminal. Your ChatGPT plan." /></p>
 
 <p align="center">
-  <a href="https://github.com/totec448-spec/chat-on-steroids/releases/latest/download/Chat-On-Steroids-Setup-x64.exe"><img src="docs/images/download-windows.svg" width="208" height="56" alt="Download for Windows x64" /></a>&nbsp;
-  <a href="https://github.com/totec448-spec/chat-on-steroids/releases/latest/download/Chat-On-Steroids-macOS-arm64.dmg"><img src="docs/images/download-macos.svg" width="208" height="56" alt="Download for macOS Apple silicon" /></a>&nbsp;
-  <a href="https://github.com/totec448-spec/chat-on-steroids/releases/latest/download/Chat-On-Steroids-Linux-x64.deb"><img src="docs/images/download-linux.svg" width="208" height="56" alt="Download for Linux x64" /></a>
+  <a href="https://github.com/jamesliu69/chat-on-steroids/releases/latest/download/Chat-On-Steroids-Setup-x64.exe"><img src="docs/images/download-windows.svg" width="208" height="56" alt="Download for Windows x64" /></a>&nbsp;
+  <a href="https://github.com/jamesliu69/chat-on-steroids/releases/latest/download/Chat-On-Steroids-macOS-arm64.dmg"><img src="docs/images/download-macos.svg" width="208" height="56" alt="Download for macOS Apple silicon" /></a>&nbsp;
+  <a href="https://github.com/jamesliu69/chat-on-steroids/releases/latest/download/Chat-On-Steroids-Linux-x64.deb"><img src="docs/images/download-linux.svg" width="208" height="56" alt="Download for Linux x64" /></a>
 </p>
 
-<p align="center"><a href="https://github.com/totec448-spec/chat-on-steroids/releases/latest">All downloads</a></p>
+<p align="center"><a href="https://github.com/jamesliu69/chat-on-steroids/releases/latest">All downloads</a></p>
 
 <p align="center"><sub>Independent beta. Use at your own risk and within your provider's rules. <a href="#responsible-use-and-provider-rules">Read the usage notice</a> before connecting.</sub></p>
 
@@ -51,6 +51,8 @@ This notice states the project's intended use; it does not certify compliance or
 4. **Connect Core** (steps 4–7): create a tunnel and a restricted API key at OpenAI, press **Connect**, then add the app in ChatGPT under **Plugins → Add → Add custom MCP server**. [Tunnel setup →](docs/setup.md#tunnel-setup)
 5. **Choose a model, write your task and send.**
 
+Running a Raspberry Pi or another always-on Linux ARM64 host? CoS also has a **headless Core server** that runs under plain Node.js, systemd or tmux without Electron, X11 or Wayland. [Headless server setup →](docs/setup.md#headless-linux-arm64-server)
+
 <details>
 <summary>Requirements &amp; installation notes</summary>
 
@@ -63,6 +65,8 @@ Windows 10/11, **macOS 13 Ventura or newer**, or a current desktop Linux. Chrome
 - **After updating:** the browser extension updates itself once no chat is busy. If CoS asks you to refresh its apps in ChatGPT, do so; **Automatic plugin refresh** in Settings can do it for you.
 
 </details>
+
+**Need a screenless Raspberry Pi 5 host?** An optional plain-Node server runs on 64-bit Linux ARM64 and exposes the Core MCP tools without Electron or a browser companion. See the [headless server setup](docs/setup.md#headless-raspberry-pi-5-server) for its limits and deployment steps.
 
 <details>
 <summary>More screenshots</summary>
@@ -82,5 +86,7 @@ Windows 10/11, **macOS 13 Ventura or newer**, or a current desktop Linux. Chrome
 <p align="center"><a href="docs/setup.md">Setup &amp; help</a> &nbsp;·&nbsp; <a href="docs/plugins.md">Plugins</a> &nbsp;·&nbsp; <a href="CONTRIBUTING.md">Contribute</a> &nbsp;·&nbsp; <a href="SECURITY.md">Security</a> &nbsp;·&nbsp; <a href="LICENSE">MIT license</a></p>
 
 <p align="center">Built with our <a href="CONTRIBUTORS.md">community contributors</a>. Thank you to the people behind the code, designs, bug reports and testing.</p>
+
+<p align="center"><sub>This fork publishes its own builds and updates. It is based on the <a href="https://github.com/totec448-spec/chat-on-steroids">upstream project</a>; original authorship remains preserved in Git history and contributor records.</sub></p>
 
 <p align="center"><sub>Not affiliated with or endorsed by OpenAI. ChatGPT and Codex are OpenAI trademarks.</sub></p>

@@ -113,6 +113,7 @@ let connectionGeneration = 0;
  * briefly bringing a connector online while the app is already leaving.
  */
 let shutdownRequested = false;
+let planToolsOverride: boolean | null = null;
 
 let notifyConnectionLoss: ((surface: SurfaceId) => boolean | void) | null = null;
 const CONNECTION_LOSS_GRACE_MS = 30_000;
@@ -296,7 +297,7 @@ function toolsFor(id: SurfaceId): string[] {
   if (!caps.command && caps.search) tools.push('find');
   if (caps.create || caps.edit || caps.move || caps.deleteFile) tools.push('apply_patch');
   if (caps.command) tools.push('exec_command', 'write_stdin');
-  if (config.sessions.record) tools.push('update_plan');
+  if (planToolsOverride ?? config.sessions.record) tools.push('update_plan');
   if (config.multiAgent.enabled) tools.push('agents');
   return tools;
 }
@@ -407,20 +408,29 @@ async function connectImpl(current: () => boolean = () => true): Promise<void> {
     // Opt-in stable URLs for a tunnel of the user's own (#924): the stored tokens, else fresh ones.
     const keepUrls = getConfig().mcp?.persistentUrls === true;
     const kept = keepUrls ? await loadSurfaceTokens().catch(() => ({})) : {};
-    const startedEndpoint = await startMcpServer(() => {
-      const live = getConfig();
-      return {
-        setupProfileId,
-        roots: live.roots,
-        caps: effectiveCapabilities(live),
-        readOnly: live.readOnly,
-        privacyScreenshots: live.ui.privacyScreenshots
-      };
-    }, kept);
+    const startedEndpoint = await startMcpServer(
+      () => {
+        const live = getConfig();
+        return {
+          setupProfileId,
+          roots: live.roots,
+          caps: effectiveCapabilities(live),
+          readOnly: live.readOnly,
+          privacyScreenshots: live.ui.privacyScreenshots,
+          sessionTools: live.sessions.record,
+          planTools: planToolsOverride ?? live.sessions.record,
+          ...(planToolsOverride === null ? {} : { planToolsDisabledSetting: 'Headless server task plans' })
+        };
+      },
+      {
+        kept,
+        ...(config.tunnel.kind === 'openai' ? { serverNameScope: config.tunnel.tunnelId } : {})
+      }
+    );
     if (keepUrls && !(await rememberSurfaceTokens(startedEndpoint.urls))) {
       logWarn('connector URLs: secure storage is unavailable, so they change at the next start');
     }
-    if (shutdownRequested) {
+    if (shutdownRequested || generation !== connectionGeneration) {
       await startedEndpoint.stop({ forceAfterMs: 30_000 }).catch(() => {});
       return;
     }
@@ -703,8 +713,12 @@ export async function rememberRunningSurfaceTokens(): Promise<boolean> {
   return endpoint ? rememberSurfaceTokens(endpoint.urls) : true;
 }
 
-export function connect(current?: () => boolean): Promise<void> {
+export function connect(argument?: (() => boolean) | { planTools?: boolean }): Promise<void> {
   if (shutdownRequested) return Promise.resolve();
+  // Headless mode sets this once for the lifetime of its process. Unspecified reconnects
+  // retain it; ordinary desktop callers keep following the persisted recording setting.
+  if (typeof argument === 'object' && argument?.planTools !== undefined) planToolsOverride = argument.planTools;
+  const current = typeof argument === 'function' ? argument : undefined;
   return enqueueLifecycle(() => connectImpl(current));
 }
 

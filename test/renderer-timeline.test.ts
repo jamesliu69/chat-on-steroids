@@ -169,6 +169,8 @@ async function boot(events: SessionEvent[], selectExisting = true, pausedHelpers
   const html = await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'index.html'), 'utf8');
   dom = new JSDOM(html, { url: 'https://local.test/', pretendToBeVisual: true });
   const w = dom.window;
+  // Timeline assertions are authored in English.
+  w.localStorage.setItem('cos.ui.language', 'en');
   w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.HTMLDialogElement.prototype.close = function () { this.open = false; };
   Object.assign(globalThis, {
@@ -578,7 +580,7 @@ it.each(['compaction', 'blocked', 'worker'])('retires %s control status when lea
   expect(w.document.getElementById('cancelCompaction')!.hidden).toBe(true);
   release({ ok: true, data: controls }); await settle();
   const { setLanguage } = await import('../src/renderer/i18n.js');
-  setLanguage('zh-CN');
+  setLanguage('zh-TW');
   expect(status.textContent).toBe('');
   setLanguage('en');
   // Returning to A is a new selection epoch; only its new read may restore status.
@@ -1449,6 +1451,82 @@ it("keeps a project's older chats through the sidebar's next refresh", async () 
   // Asked once: the refresh and another expand do not read the project again.
   f.heading().click(); f.heading().click(); await settle();
   expect(f.projectCalls()).toHaveLength(2);
+});
+
+it('does not overwrite a newer sidebar summary with a delayed project history page', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  const newer = { ...f.parent, projectId: undefined, title: 'Newer catalog title', updatedAt: T0 + 600 };
+  f.list.mockResolvedValue({ ok: true, data: { sessions: [newer], total: 1, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await f.append([]); await settle();
+  const row = () => f.w.document.querySelector('[data-id="older-parent"]');
+  expect(row()?.textContent).toContain('Newer catalog title');
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(row()?.textContent).toContain('Newer catalog title');
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).toBeNull();
+});
+
+it('discards a project page after its project has been removed', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  (f.w as any).api.removeProject = vi.fn(async () => ({ ok: true, data: { ...f.project, ungrouped: true } }));
+  projectMenu(f.w, f.project.id); menuItem(f.w, 'remove').click(); await settle();
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
+  expect(f.projectCalls()).toHaveLength(1);
+});
+
+it('does not resurrect a row withdrawn by a complete catalog read while its project page was pending', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  f.list.mockResolvedValue({ ok: true, data: { sessions: [], total: 0, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await f.append([]); await settle();
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
+});
+
+it('accepts genuinely older project rows despite ordinary newest-page refreshes', async () => {
+  const f = await olderProjectFixture();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.heading().click(); await settle();
+  await f.append([]); await settle();
+  finish({ ok: true, data: { sessions: [f.parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('.project-group [data-id="older-parent"]')).not.toBeNull();
+});
+
+it('does not restore a directly deleted older session from a pending project page outside the newest range', async () => {
+  const projectId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const parent = { ...summary([]), id: 'older-parent', conversationId: 'older-chat', projectId, updatedAt: T0 + 2 };
+  const f = await olderProjectFixture([[parent], [{ ...parent, id: 'older-next', updatedAt: T0 + 1 }]]);
+  f.heading().click(); await settle();
+  let finish!: (value: Awaited<ReturnType<typeof f.list>>) => void;
+  f.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.w.document.querySelector<HTMLElement>('.project-show-more')!.click(); await settle();
+  (f.w as any).api.deleteSession = vi.fn(async () => ({ ok: true, data: true }));
+  f.w.document.querySelector<HTMLElement>('[data-id="older-parent"] .sess-menu')!.click();
+  menuItem(f.w, 'remove').click(); await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
+  finish({ ok: true, data: { sessions: [parent], total: 4, nextCursor: null,
+    activeId: null, pressure: [], blocked: [] } });
+  await settle();
+  expect(f.w.document.querySelector('[data-id="older-parent"]')).toBeNull();
 });
 
 it('stops reading a project when it is collapsed while a page is on its way', async () => {

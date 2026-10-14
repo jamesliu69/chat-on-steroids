@@ -16,7 +16,8 @@ app.whenReady().then(async () => {
     const p = new URLSearchParams(location.search);
     localStorage.setItem('cos.ui.language', p.get('lang') || 'en');
     const state = { config: fixtureConfig({ roots: [{name:'fixture',path:'/fixture/project'}],
-      ui:{theme:p.get('theme')||'dark',lastSeenVersion:'${version}'}, multiAgent:{enabled:false} }),
+      // 此場景檢查更新卡片與事件區的高度，使用已回覆首次自動更新提示的狀態。
+      ui:{theme:p.get('theme')||'dark',lastSeenVersion:'${version}',autoRefreshPluginsAsked:true}, multiAgent:{enabled:false} }),
       hasApiKey:true, hasGoalKey:false, hasCustomProviderKey:false, connectorSchemas:{core:'schema-a'},
       connectorRefresh:{core:{schemaId:'schema-a',state:'current'}},
       status:{state:'connected',detail:'',health:null,handshakeAt:Date.now(),lastRequestAt:Date.now(),lastToolCallAt:Date.now(),surfaces:[

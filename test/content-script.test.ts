@@ -3630,6 +3630,48 @@ describe('recording authored message text', () => {
 });
 
 describe('canonical Fiber transcript ingestion in 1.8', () => {
+  it('ignores a cross-origin Fiber reply and accepts the same-origin reply for the same scan', async () => {
+    live = await harness();
+    const window = live.window as any;
+    const instant = window.setTimeout;
+    window.setTimeout = (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms);
+    const answered = new Promise<void>((resolve) => {
+      const onAsk = (event: any) => {
+        if (event.data?.source !== 'clf-fiber-ask') return;
+        window.removeEventListener('message', onAsk);
+        const payload = {
+          source: 'clf-fiber-reply',
+          nonce: event.data.nonce,
+          scanToken: event.data.nonce,
+          v: 22,
+          rows: [],
+          turns: []
+        };
+        window.dispatchEvent(new window.MessageEvent('message', {
+          source: window,
+          origin: 'https://attacker.example',
+          data: { ...payload, scanOk: false }
+        }));
+        globalThis.setTimeout(() => {
+          window.dispatchEvent(new window.MessageEvent('message', {
+            source: window,
+            origin: window.location.origin,
+            data: { ...payload, scanOk: true }
+          }));
+          resolve();
+        }, 5);
+      };
+      window.addEventListener('message', onAsk);
+    });
+    try {
+      const result = await (live.hook.refreshFiber() as unknown as Promise<boolean>);
+      await answered;
+      expect(result).toBe(true);
+    } finally {
+      window.setTimeout = instant;
+    }
+  });
+
   it.each([
     ['marked as Markdown', true, 'Run `echo two` and keep #tags as they are.', 'Run `echo two` and keep #tags as they are.'],
     ['unmarked but shown unescaped', false, 'Run `echo two` and keep #tags as they are.', 'Run `echo two` and keep #tags as they are.'],
