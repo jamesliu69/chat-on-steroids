@@ -1144,9 +1144,9 @@ THE SOFTWARE.
 
 
 ================================================================================
-@codemirror/state@6.7.4
+@codemirror/state@6.7.6
 Declared license: MIT
-Package: https://www.npmjs.com/package/@codemirror/state/v/6.7.4
+Package: https://www.npmjs.com/package/@codemirror/state/v/6.7.6
 
 --- LICENSE ---
 MIT License
@@ -1199,35 +1199,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-
-
-================================================================================
-@emnapi/runtime@1.11.3
-Declared license: MIT
-Package: https://www.npmjs.com/package/@emnapi/runtime/v/1.11.3
-
---- LICENSE ---
-MIT License
-
-Copyright (c) 2021-present Toyobayashi
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 
 ================================================================================
@@ -1368,9 +1339,9 @@ all of which are MIT-licensed, to CommonJS.
 
 
 ================================================================================
-@img/sharp-wasm32@0.35.4
-Declared license: Apache-2.0 AND LGPL-3.0-or-later AND MIT
-Package: https://www.npmjs.com/package/@img/sharp-wasm32/v/0.35.4
+@img/sharp-win32-arm64@0.35.4
+Declared license: Apache-2.0 AND LGPL-3.0-or-later
+Package: https://www.npmjs.com/package/@img/sharp-win32-arm64/v/0.35.4
 
 --- LICENSE ---
 Apache License
@@ -1567,9 +1538,9 @@ third-party archives.
 
 
 --- README.md ---
-# `@img/sharp-wasm32`
+# `@img/sharp-win32-arm64`
 
-Prebuilt sharp for use with WebAssembly.
+Prebuilt sharp for use with Windows 64-bit ARM.
 
 ## Licensing
 
@@ -1589,28 +1560,37 @@ limitations under the License.
 This software contains third-party libraries
 used under the terms of the following licenses:
 
-| Library       | Used under the terms of                                                                                  |
-|---------------|----------------------------------------------------------------------------------------------------------|
-| aom           | BSD 2-Clause + [Alliance for Open Media Patent License 1.0](https://aomedia.org/license/patent-license/) |
-| cgif          | MIT License                                                                                              |
-| emscripten    | [MIT License](https://github.com/emscripten-core/emscripten/blob/main/LICENSE)                           |
-| expat         | MIT License                                                                                              |
-| glib          | LGPLv3                                                                                                   |
-| highway       | BSD 3-Clause                                                                                             |
-| lcms          | MIT License                                                                                              |
-| libexif       | LGPLv3                                                                                                   |
-| libffi        | MIT License                                                                                              |
-| libheif       | LGPLv3                                                                                                   |
-| libimagequant | [BSD 2-Clause](https://github.com/lovell/libimagequant/blob/main/COPYRIGHT)                              |
-| libnsgif      | MIT License                                                                                              |
-| libpng        | [libpng License](https://github.com/pnggroup/libpng/blob/master/LICENSE)                                 |
-| libtiff       | [libtiff License](https://gitlab.com/libtiff/libtiff/blob/master/LICENSE.md) (BSD-like)                  |
-| libultrahdr   | MIT License                                                                                              |
-| libvips       | LGPLv3                                                                                                   |
-| libwebp       | New BSD License                                                                                          |
-| mozjpeg       | [zlib License, IJG License, BSD 3-Clause](https://github.com/mozilla/mozjpeg/blob/master/LICENSE.md)     |
-| resvg         | MIT License                                                                                              |
-| zlib-ng       | [zlib License](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)                               |
+| Library       | Used under the terms of                                                                                   |
+|---------------|-----------------------------------------------------------------------------------------------------------|
+| aom           | BSD 2-Clause + [Alliance for Open Media Patent License 1.0](https://aomedia.org/license/patent-license/)  |
+| cairo         | Mozilla Public License 2.0                                                                                |
+| cgif          | MIT License                                                                                               |
+| expat         | MIT License                                                                                               |
+| fontconfig    | [fontconfig License](https://gitlab.freedesktop.org/fontconfig/fontconfig/blob/main/COPYING) (BSD-like)   |
+| freetype      | [freetype License](https://git.savannah.gnu.org/cgit/freetype/freetype2.git/tree/docs/FTL.TXT) (BSD-like) |
+| fribidi       | LGPLv3                                                                                                    |
+| glib          | LGPLv3                                                                                                    |
+| harfbuzz      | MIT License                                                                                               |
+| highway       | BSD 3-Clause                                                                                              |
+| lcms          | MIT License                                                                                               |
+| libarchive    | BSD 2-Clause                                                                                              |
+| libexif       | LGPLv3                                                                                                    |
+| libffi        | MIT License                                                                                               |
+| libheif       | LGPLv3                                                                                                    |
+| libimagequant | [BSD 2-Clause](https://github.com/lovell/libimagequant/blob/main/COPYRIGHT)                               |
+| libnsgif      | MIT License                                                                                               |
+| libpng        | [libpng License](https://github.com/pnggroup/libpng/blob/master/LICENSE)                                  |
+| librsvg       | LGPLv3                                                                                                    |
+| libtiff       | [libtiff License](https://gitlab.com/libtiff/libtiff/blob/master/LICENSE.md) (BSD-like)                   |
+| libultrahdr   | MIT License                                                                                               |
+| libvips       | LGPLv3                                                                                                    |
+| libwebp       | New BSD License                                                                                           |
+| libxml2       | MIT License                                                                                               |
+| mozjpeg       | [zlib License, IJG License, BSD 3-Clause](https://github.com/mozilla/mozjpeg/blob/master/LICENSE.md)      |
+| pango         | LGPLv3                                                                                                    |
+| pixman        | MIT License                                                                                               |
+| proxy-libintl | LGPLv3                                                                                                    |
+| zlib-ng       | [zlib License](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)                                |
 
 Use of libraries under the terms of the LGPLv3 is via the
 "any later version" clause of the LGPLv2 or LGPLv2.1.
@@ -2443,6 +2423,36 @@ THE SOFTWARE.
 
 
 ================================================================================
+@koromix/koffi-win32-arm64@3.3.2
+Declared license: MIT
+Package: https://www.npmjs.com/package/@koromix/koffi-win32-arm64/v/3.3.2
+
+--- koffi/LICENSE.txt (same-version binary distribution) ---
+MIT License
+
+Copyright (C) 2026  Niels Martignène <niels.martignene@protonmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the “Software”), to deal in
+the Software without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the
+Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+
+================================================================================
 @koromix/koffi-win32-x64@3.3.2
 Declared license: MIT
 Package: https://www.npmjs.com/package/@koromix/koffi-win32-x64/v/3.3.2
@@ -2589,9 +2599,9 @@ THE SOFTWARE.
 
 
 ================================================================================
-@lezer/highlight@1.2.3
+@lezer/highlight@1.2.4
 Declared license: MIT
-Package: https://www.npmjs.com/package/@lezer/highlight/v/1.2.3
+Package: https://www.npmjs.com/package/@lezer/highlight/v/1.2.4
 
 --- LICENSE ---
 MIT License
@@ -2993,9 +3003,9 @@ THE SOFTWARE.
 
 
 ================================================================================
-@modelcontextprotocol/client@2.0.0
+@modelcontextprotocol/client@2.1.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/client/v/2.1.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -3217,9 +3227,9 @@ the full license text.
 
 
 ================================================================================
-@modelcontextprotocol/core@2.0.0
+@modelcontextprotocol/core@2.1.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/core/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/core/v/2.1.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -3441,9 +3451,9 @@ the full license text.
 
 
 ================================================================================
-@modelcontextprotocol/node@2.0.0
+@modelcontextprotocol/node@2.1.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/node/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/node/v/2.1.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -3665,9 +3675,9 @@ the full license text.
 
 
 ================================================================================
-@modelcontextprotocol/server@2.0.0
+@modelcontextprotocol/server@2.1.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@modelcontextprotocol/server/v/2.0.0
+Package: https://www.npmjs.com/package/@modelcontextprotocol/server/v/2.1.0
 
 --- LICENSE ---
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -3976,9 +3986,9 @@ Package: https://www.npmjs.com/package/@types/mute-stream/v/0.0.4
 
 
 ================================================================================
-@types/node@24.13.4
+@types/node@24.19.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/@types/node/v/24.13.4
+Package: https://www.npmjs.com/package/@types/node/v/24.19.0
 
 --- LICENSE ---
     MIT License
@@ -4005,9 +4015,9 @@ Package: https://www.npmjs.com/package/@types/node/v/24.13.4
 
 
 ================================================================================
-undici-types@7.18.2
+undici-types@7.24.6
 Declared license: MIT
-Package: https://www.npmjs.com/package/undici-types/v/7.18.2
+Package: https://www.npmjs.com/package/undici-types/v/7.24.6
 
 --- LICENSE ---
 MIT License
@@ -5430,9 +5440,9 @@ SOFTWARE.
 
 
 ================================================================================
-marked@18.0.13
+marked@18.0.14
 Declared license: MIT
-Package: https://www.npmjs.com/package/marked/v/18.0.13
+Package: https://www.npmjs.com/package/marked/v/18.0.14
 
 --- LICENSE ---
 # License information
@@ -7464,9 +7474,9 @@ ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 ================================================================================
-smol-toml@1.8.0
+smol-toml@1.9.0
 Declared license: BSD-3-Clause
-Package: https://www.npmjs.com/package/smol-toml/v/1.8.0
+Package: https://www.npmjs.com/package/smol-toml/v/1.9.0
 
 --- LICENSE ---
 Copyright (c) Squirrel Chat et al., All rights reserved.
@@ -7808,9 +7818,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ================================================================================
-ws@8.21.3
+ws@8.22.0
 Declared license: MIT
-Package: https://www.npmjs.com/package/ws/v/8.21.3
+Package: https://www.npmjs.com/package/ws/v/8.22.0
 
 --- LICENSE ---
 Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
@@ -7853,9 +7863,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ================================================================================
-zod@4.6.4
+zod@4.6.5
 Declared license: MIT
-Package: https://www.npmjs.com/package/zod/v/4.6.4
+Package: https://www.npmjs.com/package/zod/v/4.6.5
 
 --- LICENSE ---
 MIT License
