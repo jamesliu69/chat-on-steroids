@@ -7,6 +7,8 @@ import { paintPluginRefreshReminder } from './plugin-refresh-reminder.js';
 import { initRecordingStorageSetting, paintRecordingStorageNotice, paintRecordingStorageUsage } from './image-storage.js';
 import { paintCredentialsNotice } from './credentials-notice.js';
 import { paintPluginRefreshOffer } from './plugin-refresh-offer.js';
+import { initUpdateReadiness, paintUpdateReadiness } from './update-readiness.js';
+import { updateErrorText } from './update-error.js';
 import { initUsage, refreshUsage } from './usage.js';
 import { initSidebarResize } from './sidebar-resize.js';
 import { initViewMenu } from './view-menu.js';
@@ -159,6 +161,7 @@ const GROUPS: Group[] = [
 ];
 
 let state: AppState | null = null;
+let updateAllError: string | null = null;
 /** Guards against saving while we are writing values into the controls. */
 let applying = false;
 
@@ -714,9 +717,11 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark'; appearance?:
       defaultChatModel: $<HTMLSelectElement>('defaultChatModel').value || undefined,
       defaultChatReasoning: ($<HTMLSelectElement>('defaultChatReasoning').value || undefined) as Config['ui']['defaultChatReasoning'],
       chatBrowser: $<HTMLSelectElement>('chatBrowser').value as ChatBrowser,
+      cosBrowserMinimize: $<HTMLSelectElement>('cosBrowserMinimize').value === 'tray' ? 'tray' : 'taskbar',
       finishTool: $<HTMLInputElement>('finishTool').checked,
       planBackend: $<HTMLSelectElement>('planBackend').value as 'chatgpt' | 'api',
       finishLeadMinutes: Number($<HTMLSelectElement>('finishLeadMinutes').value),
+      rotateTurnMinutes: Number($<HTMLSelectElement>('rotateTurnMinutes').value),
       backgroundChats: $<HTMLInputElement>('backgroundChats').checked,
       backgroundPlacement: $<HTMLSelectElement>('backgroundPlacement').value === 'group' ? 'group' : 'window',
       followUp: $<HTMLSelectElement>('followUp').value === 'queue' ? 'queue' : 'steer',
@@ -741,7 +746,9 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark'; appearance?:
       appearance: over.appearance ?? previous.ui.appearance
     },
     controlApi: { enabled: $<HTMLInputElement>('controlApiEnabled').checked, allowActions: $<HTMLInputElement>('controlApiAllowActions').checked },
-    ...chatPatch
+    ...chatPatch,
+    // After the chat patch, which still carries the stored mcp settings it no longer edits.
+    mcp: { instructions: previous.mcp?.instructions ?? '', persistentUrls: $<HTMLInputElement>('mcpPersistentUrls').checked }
   };
   requestedSettings = patch;
 
@@ -773,7 +780,7 @@ async function saveSnapshot(patch: SettingsPatch, previous: AppState['config']):
     ui: previous.ui,
     sessions: previous.sessions,
     compaction: previous.compaction,
-    mcp: previous.mcp ?? { instructions: '' },
+    mcp: previous.mcp ?? { instructions: '', persistentUrls: false },
     controlApi: previous.controlApi ?? { enabled: false, allowActions: false },
     multiAgent: previous.multiAgent,
     goal: previous.goal
@@ -1182,11 +1189,16 @@ function updateSummary({ bridge, update, config, status }: AppState): { text: st
   // A mismatched companion can fail the protocol gate before it becomes present.
   // Retain its last observed version until a matching companion actually reports in.
   const missing = !stale && bridge.running && !bridge.present && isRunning(status.state) && browserExtensionRequired(config);
-  if (!stale && !missing && !update.latest && update.stage === 'idle' && !update.checkedAt) return null;
+  if (!stale && !missing && !update.latest && update.stage === 'idle' && !update.checkedAt && !update.notInstalled) return null;
 
   const lines: string[] = [];
   let tone: UpdateTone = 'work';
-  if (update.latest) {
+  // #1490: an installer that stopped silently left this start on the old version.
+  if (update.notInstalled) {
+    lines.push(t("Chat On Steroids {0} did not install; this is still {1}. Choose Install to try again; Windows may ask for permission.", [update.notInstalled, update.current]));
+    tone = 'bad';
+  }
+  if (update.latest && !(update.notInstalled === update.latest && update.stage === 'ready')) {
     // `latest` set with a stage of `idle` is the deliberate case: a new version exists and this
     // installation - a Linux .deb, macOS, a development tree, an architecture with no artifact -
     // is not one the app can update by itself. That is when the button matters.
@@ -1201,13 +1213,13 @@ function updateSummary({ bridge, update, config, status }: AppState): { text: st
             ? t("Chat On Steroids {0} could not be downloaded: {1}.", [update.latest, update.error ?? t("the download stopped")])
             : t("Chat On Steroids {0} is out. This installation has to be updated by hand.", [update.latest])
     );
-    if (update.stage === 'failed') tone = 'bad';
+    if (update.stage === 'failed' || update.notInstalled) tone = 'bad';
   } else if (update.stage === 'failed') {
     lines.push(t("Could not check for a newer version: {0}.", [update.error ?? t("the check stopped")]));
     tone = 'bad';
   } else if (update.stage === 'checking') {
     lines.push(t("Checking for a newer version…"));
-  } else if (!stale && !missing) {
+  } else if (!stale && !missing && !update.notInstalled) {
     const extension = bridge.present && bridge.extensionVersion ? t(" · extension {0}", [bridge.extensionVersion]) : '';
     lines.push(t("Up to date! Chat On Steroids {0}{1}", [update.current, extension]));
     tone = 'ok';
@@ -1538,6 +1550,7 @@ function apply(next: AppState): void {
 
   // ---- out of date, app or extension
   paintUpdate(next);
+  paintUpdateReadiness(next, updateAllError);
   paintPluginRefreshRecovery(next);
   paintPluginRefreshReminder(next.connectorSchemas ?? {}, next.confirmedConnectorSchemas ?? {});
   paintRecordingStorageNotice(next.recordingStorageFull === true);
@@ -1610,10 +1623,14 @@ function apply(next: AppState): void {
   );
   applyValue($<HTMLInputElement>('binaryPath'), config.tunnel.binaryPath, previousState?.config.tunnel.binaryPath);
   applyValue($<HTMLSelectElement>('chatBrowser'), config.ui.chatBrowser ?? 'chrome', previousState?.config.ui.chatBrowser ?? 'chrome');
+  applyValue($<HTMLSelectElement>('cosBrowserMinimize'), config.ui.cosBrowserMinimize ?? 'taskbar', previousState?.config.ui.cosBrowserMinimize ?? 'taskbar');
+  // Only the built-in browser has a window of the app's own to minimize.
+  $('cosBrowserMinimizeRow').hidden = (config.ui.chatBrowser ?? 'chrome') !== 'cos';
   $<HTMLSelectElement>('planBackend').value = config.ui.planBackend ?? 'chatgpt';
   applyChecked($<HTMLInputElement>('finishTool'), config.ui.finishTool === true, previousState?.config.ui.finishTool);
   applyValue($<HTMLSelectElement>('finishLeadMinutes'), String(config.ui.finishLeadMinutes ?? 5), String(previousState?.config.ui.finishLeadMinutes ?? 5));
   $<HTMLSelectElement>('finishLeadMinutes').disabled = config.ui.finishTool !== true;
+  applyValue($<HTMLSelectElement>('rotateTurnMinutes'), String(config.ui.rotateTurnMinutes ?? 30), previousState ? String(previousState.config.ui.rotateTurnMinutes ?? 30) : undefined);
   applyChecked($<HTMLInputElement>('backgroundChats'), config.ui.backgroundChats === true, previousState?.config.ui.backgroundChats);
   applyValue($<HTMLSelectElement>('backgroundPlacement'), config.ui.backgroundPlacement ?? 'window', previousState?.config.ui.backgroundPlacement ?? 'window');
   applyValue($<HTMLSelectElement>('followUp'), config.ui.followUp ?? 'steer', previousState?.config.ui.followUp ?? 'steer');
@@ -1640,6 +1657,9 @@ function apply(next: AppState): void {
   applyChecked($<HTMLInputElement>('followOutput'), config.ui.followOutput !== false, previousState?.config.ui.followOutput);
   applyChecked($<HTMLInputElement>('mentionCore'), config.ui.mentionCore !== false, previousState?.config.ui.mentionCore);
   applyChecked($<HTMLInputElement>('controlApiEnabled'), config.controlApi?.enabled === true, previousState?.config.controlApi?.enabled);
+  applyChecked($<HTMLInputElement>('mcpPersistentUrls'), config.mcp?.persistentUrls === true, previousState?.config.mcp?.persistentUrls);
+  // Stable URLs live only in the OS-backed secret store; without it they keep rotating.
+  $<HTMLInputElement>('mcpPersistentUrls').disabled = next.secureStorage?.available === false && config.mcp?.persistentUrls !== true;
   applyChecked($<HTMLInputElement>('controlApiAllowActions'), config.controlApi?.allowActions === true, previousState?.config.controlApi?.allowActions);
   // Actions need the API itself, so the switch stays off and disabled until it is on.
   $<HTMLInputElement>('controlApiAllowActions').disabled = config.controlApi?.enabled !== true;
@@ -1657,9 +1677,13 @@ function apply(next: AppState): void {
   if (next.platform?.family === 'macos') {
     ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use its plugins in ChatGPT. It stays available from the menu bar and Dock when you close the window."));
     ui($('minimizeToTrayCopy'), 'textContent', () => t("Hide the window to the menu bar when closed"));
+    ui($('cosBrowserMinimizeTaskbar'), 'textContent', () => t("Dock"));
+    ui($('cosBrowserMinimizeTray'), 'textContent', () => t("Menu bar"));
   } else {
     ui($('backgroundRunningCopy'), 'textContent', () => t("Leave it running while you use its plugins in ChatGPT. It stays in the tray when you close the window."));
     ui($('minimizeToTrayCopy'), 'textContent', () => t("Keep running in the tray when closed"));
+    ui($('cosBrowserMinimizeTaskbar'), 'textContent', () => t("Taskbar"));
+    ui($('cosBrowserMinimizeTray'), 'textContent', () => t("Tray"));
   }
 
   const openai = config.tunnel.kind === 'openai';
@@ -2497,6 +2521,33 @@ window.addEventListener('drop', (event) => event.preventDefault());
 }
 
 $('updateGet').addEventListener('click', () => void run(api.downloadUpdate()));
+initUpdateReadiness();
+$('updateReviewSetup').addEventListener('click', () => showTab('setup'));
+const updateAllButton = $<HTMLButtonElement>('updateAll');
+updateAllButton.addEventListener('click', async () => {
+  if (updateAllButton.disabled) return;
+  updateAllButton.disabled = true;
+  updateAllButton.setAttribute('aria-busy', 'true');
+  ui(updateAllButton, 'textContent', () => t('Updating…'));
+  updateAllError = null;
+  if (state) paintUpdateReadiness(state, updateAllError);
+  try {
+    const reply = await api.updateAll();
+    if (!reply.ok) { updateAllError = reply.error; toast(updateErrorText(reply.error)); return; }
+    const result = reply.data;
+    if (result === 'manual') toast(t('Download link opened. Install the app to continue; your settings are kept.'));
+    else if (result === 'restarting') toast(t('Installing the update. Chat On Steroids closes and starts again as the new version.'));
+    else if (result === 'checking-connectors') toast(document.getElementById('updateReadinessCard') ? t('Plugin checks requested. Any remaining steps are shown in Update status.') : t('Checking…'));
+    else if (result === 'cancelled') toast(t('Update postponed. You can keep working.'));
+  } catch (error) {
+    updateAllError = error instanceof Error ? error.message : String(error);
+  } finally {
+    updateAllButton.disabled = false;
+    updateAllButton.removeAttribute('aria-busy');
+    ui(updateAllButton, 'textContent', () => t('Update all'));
+    if (state) paintUpdateReadiness(state, updateAllError);
+  }
+});
 
 /**
  * Install the update that is already downloaded.
@@ -2540,16 +2591,20 @@ for (const id of ['copyLog', 'copyLogText']) {
 }
 
 // One file for a bug report; the main process removes personal details and shows the saved file.
-$('saveDiagnosticsReport').addEventListener('click', async () => {
-  const button = $<HTMLButtonElement>('saveDiagnosticsReport');
-  button.disabled = true;
+const diagnosticsButtons = [$<HTMLButtonElement>('saveDiagnosticsReport'), $<HTMLButtonElement>('updateDiagnosticsReport')];
+async function saveDiagnosticsReport(): Promise<void> {
+  if (diagnosticsButtons.some(button => button.disabled)) return;
+  for (const button of diagnosticsButtons) button.disabled = true;
   try {
     const result = await run(api.saveDiagnosticsReport());
     if (result?.saved) toast(t('Diagnostics report saved as {0}. Read it before you share it.', [result.name]));
+  } catch (error) {
+    toast(t(error instanceof Error ? error.message : String(error)));
   } finally {
-    button.disabled = false;
+    for (const button of diagnosticsButtons) button.disabled = false;
   }
-});
+}
+for (const button of diagnosticsButtons) button.addEventListener('click', () => void saveDiagnosticsReport());
 
 $('copyLogJson').addEventListener('click', async () => {
   const text = await run(api.getLogJson());
@@ -2622,6 +2677,7 @@ for (const id of [
   'mentionCore',
   'controlApiEnabled',
   'controlApiAllowActions',
+  'mcpPersistentUrls',
   'privacyScreenshots',
   'tunnelKind',
   'tunnelId',
