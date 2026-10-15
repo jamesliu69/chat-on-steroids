@@ -599,7 +599,7 @@ function paintGroups(): void {
     ui(root.querySelector<HTMLElement>('.group-count')!, 'textContent', () => usable.length === 0
         ? t("off in read-only mode")
         : on.length === 0
-          ? 'off'
+          ? t('off')
           : on.length === group.caps.length
             ? t(on.length === 1 ? '{0} permission' : '{0} permissions', [on.length])
             : t("{0} of {1} permissions", [on.length, group.caps.length]));
@@ -741,6 +741,7 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark'; appearance?:
       minimizeToTray: $<HTMLInputElement>('minimizeToTray').checked,
       developerMode: $<HTMLInputElement>('developerMode').checked,
       playfulStatus: $<HTMLInputElement>('playfulStatus').checked,
+      playfulContinue: $<HTMLInputElement>('playfulContinue').checked,
       followOutput: $<HTMLInputElement>('followOutput').checked,
       mentionCore: $<HTMLInputElement>('mentionCore').checked,
       privacyScreenshots: $<HTMLInputElement>('privacyScreenshots').checked,
@@ -1665,6 +1666,7 @@ function apply(next: AppState): void {
   applyChecked($<HTMLInputElement>('autoConnect'), config.ui.autoConnect, previousState?.config.ui.autoConnect);
   applyChecked($<HTMLInputElement>('developerMode'), config.ui.developerMode === true, previousState?.config.ui.developerMode);
   applyChecked($<HTMLInputElement>('playfulStatus'), config.ui.playfulStatus === true, previousState?.config.ui.playfulStatus);
+  applyChecked($<HTMLInputElement>('playfulContinue'), config.ui.playfulContinue === true, previousState?.config.ui.playfulContinue);
   applyChecked($<HTMLInputElement>('followOutput'), config.ui.followOutput !== false, previousState?.config.ui.followOutput);
   applyChecked($<HTMLInputElement>('mentionCore'), config.ui.mentionCore !== false, previousState?.config.ui.mentionCore);
   applyChecked($<HTMLInputElement>('controlApiEnabled'), config.controlApi?.enabled === true, previousState?.config.controlApi?.enabled);
@@ -2689,6 +2691,7 @@ for (const id of [
   'minimizeToTray',
   'developerMode',
   'playfulStatus',
+  'playfulContinue',
   'followOutput',
   'followUp',
   'enterSends',
