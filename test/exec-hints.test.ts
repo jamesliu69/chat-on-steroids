@@ -819,6 +819,22 @@ describe('saying what to do next', () => {
       .toMatch(/PowerShell parsed none of the command/i);
   });
 
+  it('recognises the batch parser diagnostic under a Chinese Windows locale', () => {
+    // The batch runner renders the wrappers in the machine locale; the words and the
+    // typographic quotes around the method name are translated, so the detector keys on the
+    // bare `Create` marker plus the caret underline, which stay untranslated.
+    const output = [
+      '使用 "1" 引數: "位於 行:1 char:14',
+      "+ Write-Output 'unterminated",
+      '+              ~~~~~~~~~~~~~',
+      `字串缺少結尾字元: '。"`,
+      '呼叫 “Create” 時發生例外狀況'
+    ].join('\n');
+
+    expect(execRecoveryHints("Write-Output 'unterminated", output).join(' '))
+      .toMatch(/PowerShell parsed none of the command/i);
+  });
+
   it('stays silent on a shell where the operators work', () => {
     // PowerShell 7 runs `&&` without complaint, so there is no refusal text and no hint. The
     // hint keys off the shell's own error, never off the command containing the operator.

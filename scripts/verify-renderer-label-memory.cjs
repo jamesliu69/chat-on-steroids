@@ -68,7 +68,7 @@ app.whenReady().then(async () => {
       }
     }
     const translated = await win.webContents.executeJavaScript(`(() => {
-      labels.setLanguage('zh-CN');
+      labels.setLanguage('zh-TW');
       return document.querySelector('button').title;
     })()`);
     assert.equal(translated, '移除 0');

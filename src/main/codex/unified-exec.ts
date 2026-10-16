@@ -49,6 +49,16 @@ import { prefixPowershellScriptWithUtf8, type ShellType } from './shell.js';
 
 // --------------------------------------------------------------------------- errors
 
+
+/**
+ * An exit status as the signed 32-bit number Codex reports (Rust's `ExitStatus::code()` is an
+ * i32). Windows hands a process's DWORD over unsigned, so a program exiting with -1 (ssh.exe on a
+ * dropped connection) arrived as 4294967295.
+ */
+export function signedExitCode(code: number | null): number | null {
+  return code !== null && code > 0x7fffffff && code <= 0xffffffff ? code - 0x100000000 : code;
+}
+
 export type UnifiedExecErrorKind =
   | 'create_process'
   | 'process_failed'
@@ -446,7 +456,8 @@ class UnifiedExecProcess {
     this.outputClosedNotify.notifyWaiters();
   }
 
-  private signalExit(exitCode: number | null): void {
+  private signalExit(raw: number | null): void {
+    const exitCode = signedExitCode(raw);
     if (!this.exited) {
       this.exited = true;
       this.exit = exitCode;
@@ -639,7 +650,8 @@ export function execCommandStructuredOutput(output: ExecCommandToolOutput): Reco
     ...(output.exitCode === null ? {} : { exit_code: output.exitCode }),
     ...(output.processId === null ? {} : { session_id: output.processId }),
     ...(output.completedSessionId === undefined ? {} : { completed_session_id: output.completedSessionId }),
-    ...(output.benignExit ? { benign_exit: true } : {}),
+    // Named for what it says (#1417): "benign" read to ChatGPT's reviewer as a verdict on risk.
+    ...(output.benignExit ? { expected_exit: true } : {}),
     ...(output.replayed ? { output_replayed: true } : {}),
     ...(output.originalTokenCount === null ? {} : { original_token_count: output.originalTokenCount }),
     // This adapter emits structuredContent beside the text result, so both representations
@@ -679,10 +691,12 @@ export interface WriteStdinRequest {
 
 export interface BackgroundTerminalInfo {
   processId: number;
+  incarnation: number;
   command: string;
   cwd: string;
   pid: number;
   tty: boolean;
+  startedAt: number;
 }
 
 interface ProcessEntry {
@@ -690,9 +704,11 @@ interface ProcessEntry {
   batchMarker?: string;
   process: UnifiedExecProcess;
   processId: number;
+  incarnation: number;
   cwd: string;
   hookCommand: string;
   tty: boolean;
+  startedAt: number;
   initialExecCommandActive: boolean;
   /** Cursor into this process's own completed buffer; offers never consume bytes. */
   delivery?: { offset: number; offer?: { end: number; publication: OutputPublication } };
@@ -723,7 +739,9 @@ export class UnifiedExecProcessManager {
   private readonly processes = new Map<number, ProcessEntry>();
   private readonly completed = new Map<number, Pick<ExecCommandToolOutput, 'rawOutput' | 'displayOutput' | 'exitCode' | 'benignExit'> & { identity: object }>();
   private releaseListener?: (processId: number) => void;
+  private processChangeListener?: () => void;
   private readonly reservedProcessIds = new Set<number>();
+  private nextProcessIncarnation = 1;
   private readonly maxWriteStdinYieldTimeMs: number;
 
   constructor(maxWriteStdinYieldTimeMs: number) {
@@ -733,6 +751,15 @@ export class UnifiedExecProcessManager {
   /** The custody registry drops ownership only when this manager really discards an id. */
   setProcessReleaseListener(listener: (processId: number) => void): void {
     this.releaseListener = listener;
+  }
+
+  /** Presentation observers may reread the manager after a process starts, exits or is discarded. */
+  setProcessChangeListener(listener: () => void): void {
+    this.processChangeListener = listener;
+  }
+
+  private notifyProcessChange(): void {
+    this.processChangeListener?.();
   }
 
   /** `rand::rng().random_range(1_000..100_000)`, retried against the reservations. */
@@ -750,6 +777,7 @@ export class UnifiedExecProcessManager {
     this.processes.delete(processId);
     this.completed.delete(processId);
     this.releaseListener?.(processId);
+    this.notifyProcessChange();
   }
 
   private retainCompleted(entry: ProcessEntry): void {
@@ -763,6 +791,7 @@ export class UnifiedExecProcessManager {
       ...(entry.batchMarker ? { displayOutput: new CommandBatchDisplay(entry.batchMarker).push(rawOutput, true) } : {}),
       benignExit: entry.process.benignExit(entry.classifyExit)
     });
+    this.notifyProcessChange();
     while (this.completed.size > MAX_COMPLETED_EXEC_RESULTS) this.releaseProcessId(this.completed.keys().next().value!);
   }
 
@@ -795,6 +824,7 @@ export class UnifiedExecProcessManager {
     }
 
     const start = Date.now();
+    const incarnation = this.nextProcessIncarnation++;
     const wallStart = performance.now();
     // Stored before the yield wait, so interrupting the call cannot drop the session.
     const processStartedAlive = !process.hasExited() && process.exitCode() === null;
@@ -802,12 +832,18 @@ export class UnifiedExecProcessManager {
       this.processes.set(request.processId, {
         process,
         processId: request.processId,
+        incarnation,
         cwd: request.displayCwd,
         hookCommand: request.hookCommand,
         tty: request.tty,
+        startedAt: start,
         initialExecCommandActive: true,
         classifyExit: request.classifyExit, batchMarker: request.batchMarker
       });
+      void process.completion.then(
+        () => this.notifyProcessChange(),
+        () => this.notifyProcessChange()
+      );
     }
 
     const deadline = start + clampYieldTime(request.yieldTimeMs);
@@ -841,7 +877,7 @@ export class UnifiedExecProcessManager {
       }
     } else {
       this.retainCompleted({ process, processId: request.processId, cwd: request.displayCwd,
-        hookCommand: request.hookCommand, tty: request.tty, initialExecCommandActive: false,
+        hookCommand: request.hookCommand, tty: request.tty, startedAt: start, incarnation, initialExecCommandActive: false,
         classifyExit: request.classifyExit, batchMarker: request.batchMarker });
       responseProcessId = null;
       exitCode = process.exitCode();
@@ -1008,10 +1044,12 @@ export class UnifiedExecProcessManager {
       .sort((left, right) => left.processId - right.processId)
       .map((entry) => ({
         processId: entry.processId,
+        incarnation: entry.incarnation,
         command: entry.hookCommand,
         cwd: entry.cwd,
         pid: entry.process.pid,
-        tty: entry.tty
+        tty: entry.tty,
+        startedAt: entry.startedAt
       }));
   }
 
@@ -1096,9 +1134,13 @@ export class UnifiedExecProcessManager {
     return null;
   }
 
-  async terminateProcess(processId: number): Promise<boolean> {
+  async terminateProcess(processId: number, expectedIncarnation?: number): Promise<boolean> {
     const entry = this.processes.get(processId);
     if (!entry) return false;
+    // Renderer actions carry the exact live incarnation they displayed. Refuse a stale row after
+    // natural exit, and refuse ABA reuse of the same numeric id without consuming retained output.
+    if (expectedIncarnation !== undefined &&
+        (entry.incarnation !== expectedIncarnation || entry.process.hasExited())) return false;
     if (!entry.process.hasExited()) await entry.process.terminate();
     const current = this.processes.get(processId);
     if (current && current.process === entry.process) {

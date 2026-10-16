@@ -1,181 +1,148 @@
-import os from 'node:os';
 import path from 'node:path';
+import { serverDataDirectory, validateServerLaunchPath } from '../../scripts/server-launch-utils.mjs';
 import { defaultConfig } from '../main/config.js';
 import { RESERVED_ROOT_NAMES } from '../main/sandbox.js';
 import { DESKTOP_CAPABILITIES, type Config, type TunnelKind } from '../shared/types.js';
 
-export type ServerCommand = 'init' | 'start' | 'check';
+const TUNNEL_KINDS = new Set<TunnelKind>(['openai', 'cloudflared', 'manual']);
+const ROOT_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 
-export interface ServerArgs {
-  command: ServerCommand;
-  dataDir: string;
-  root?: string;
-  name?: string;
-  tunnel?: TunnelKind;
-  tunnelId?: string;
-}
+export type ServerArgs =
+  | { command: 'init'; dataDir: string; root: string; name: string; tunnel: TunnelKind; tunnelId: string }
+  | { command: 'check'; dataDir: string }
+  | { command: 'endpoint'; dataDir: string }
+  | { command: 'start'; dataDir: string };
 
-export interface ServerInitOptions {
+interface InitialServerConfigOptions {
   root: string;
   name: string;
   tunnel: TunnelKind;
   tunnelId: string;
 }
 
-const ROOT_NAME = /^[a-z0-9][a-z0-9._-]*$/;
-const DEFAULT_ENV_FILE = path.resolve(__dirname, '..', '..', '.env');
-
-function resolveServerPath(value: string): string {
-  return path.posix.isAbsolute(value) ? path.posix.normalize(value) : path.resolve(value);
+interface ParsedOptions {
+  dataDir?: string;
+  root?: string;
+  name?: string;
+  tunnel?: string;
+  tunnelId?: string;
 }
 
-function normalizeServerPath(value: string): string {
-  return path.posix.isAbsolute(value) ? path.posix.normalize(value) : path.normalize(value);
+function present(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
-/** Load repository-local server settings without requiring a dotenv dependency. */
-export function loadServerEnvFile(file = DEFAULT_ENV_FILE): void {
-  try {
-    process.loadEnvFile(file);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+function requireAbsolutePosixPath(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!path.posix.isAbsolute(trimmed)) throw new Error(`${label} must be an absolute Linux path`);
+  if (trimmed.includes('\0')) throw new Error(`${label} must not contain a null byte`);
+  return path.posix.normalize(trimmed);
+}
+
+function requireRootName(value: string): string {
+  const trimmed = value.trim();
+  if (!ROOT_NAME_PATTERN.test(trimmed)) {
+    throw new Error('Root name must be 1–32 lower-case letters, digits, dots, dashes, or underscores');
   }
+  if (RESERVED_ROOT_NAMES.has(trimmed)) throw new Error(`Root name ${trimmed} is reserved`);
+  return trimmed;
+}
+
+function requireTunnelKind(value: string): TunnelKind {
+  if (!TUNNEL_KINDS.has(value as TunnelKind)) throw new Error(`Unknown tunnel kind: ${value}`);
+  return value as TunnelKind;
+}
+
+function parseOptions(argv: readonly string[]): ParsedOptions {
+  const options: ParsedOptions = {};
+  const optionNames: Record<string, keyof ParsedOptions> = {
+    '--data-dir': 'dataDir',
+    '--root': 'root',
+    '--name': 'name',
+    '--tunnel': 'tunnel',
+    '--tunnel-id': 'tunnelId'
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const option = argv[index]!;
+    const key = optionNames[option];
+    if (!key) throw new Error(`Unknown option: ${option}`);
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
+    if (options[key] !== undefined) throw new Error(`${option} may be provided only once`);
+    options[key] = value;
+    index += 1;
+  }
+  return options;
 }
 
 export function defaultServerDataDir(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = env.COS_SERVER_DATA_DIR?.trim();
-  return resolveServerPath(configured || path.join(os.homedir(), '.config', 'chat-on-steroids-server'));
-}
-
-function requireValue(argv: readonly string[], index: number, option: string): string {
-  const value = argv[index + 1];
-  if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
-  return value;
-}
-
-function validateRoot(root: string): string {
-  if (!path.posix.isAbsolute(root) && !path.isAbsolute(root)) throw new Error('Approved root must be an absolute path');
-  return normalizeServerPath(root);
-}
-
-function validateRootName(name: string): string {
-  if (!ROOT_NAME.test(name) || name.length > 32 || RESERVED_ROOT_NAMES.has(name)) {
-    throw new Error('Root name must be 1-32 lowercase letters, digits, dot, dash, or underscore and must not be reserved');
-  }
-  return name;
-}
-
-function validateTunnel(value: string): TunnelKind {
-  if (value !== 'manual' && value !== 'cloudflared' && value !== 'openai') {
-    throw new Error('Tunnel must be one of: manual, cloudflared, openai');
-  }
-  return value;
+  return serverDataDirectory(env);
 }
 
 export function parseServerArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): ServerArgs {
-  const command = argv[0] as ServerCommand | undefined;
-  if (command !== 'init' && command !== 'start' && command !== 'check') {
-    throw new Error('Usage: server <init|start|check> [options]');
+  const [command, ...rest] = argv;
+  if (command !== 'init' && command !== 'check' && command !== 'endpoint' && command !== 'start') {
+    throw new Error('Command must be init, check, endpoint, or start');
   }
+  const options = parseOptions(rest);
+  const dataDir = options.dataDir
+    ? validateServerLaunchPath(options.dataDir, '--data-dir')
+    : defaultServerDataDir(env);
 
-  let dataDir = defaultServerDataDir(env);
-  let root: string | undefined;
-  let name = 'repos';
-  const environmentTunnelId = env.COS_TUNNEL_ID?.trim() ?? '';
-  let tunnel: TunnelKind = environmentTunnelId ? 'openai' : 'manual';
-  let tunnelId = environmentTunnelId;
-
-  for (let index = 1; index < argv.length; index += 1) {
-    const option = argv[index]!;
-    switch (option) {
-      case '--data-dir':
-        dataDir = resolveServerPath(requireValue(argv, index, option));
-        index += 1;
-        break;
-      case '--root':
-        root = validateRoot(requireValue(argv, index, option));
-        index += 1;
-        break;
-      case '--name':
-        name = validateRootName(requireValue(argv, index, option));
-        index += 1;
-        break;
-      case '--tunnel':
-        tunnel = validateTunnel(requireValue(argv, index, option));
-        index += 1;
-        break;
-      case '--tunnel-id':
-        tunnelId = requireValue(argv, index, option).trim();
-        index += 1;
-        break;
-      default:
-        throw new Error(`Unknown server option: ${option}`);
+  if (command !== 'init') {
+    if (options.root || options.name || options.tunnel || options.tunnelId) {
+      throw new Error('--root, --name, --tunnel, and --tunnel-id are only valid with init');
     }
+    return { command, dataDir };
   }
 
-  if (command === 'init') {
-    if (!root) throw new Error('init requires --root with an absolute path');
-    return { command, dataDir, root, name, tunnel, tunnelId };
-  }
-  if (root !== undefined) throw new Error('--root is only valid with init');
-  return { command, dataDir };
+  if (!options.root) throw new Error('init requires --root');
+  const root = requireAbsolutePosixPath(options.root, '--root');
+  const name = requireRootName(options.name ?? path.posix.basename(root));
+  const tunnel = requireTunnelKind(options.tunnel ?? 'openai');
+  const tunnelId = present(options.tunnelId) ?? present(env.COS_TUNNEL_ID) ?? '';
+  return { command, dataDir, root, name, tunnel, tunnelId };
 }
 
-/** Machine-local environment values override persisted transport settings without rewriting config.json. */
-export function applyServerEnvironment(source: Config, env: NodeJS.ProcessEnv = process.env): Config {
-  const tunnelId = env.COS_TUNNEL_ID?.trim() ?? '';
-  if (!tunnelId) return source;
-  return {
-    ...source,
-    tunnel: {
-      ...source.tunnel,
-      kind: 'openai',
-      tunnelId
-    }
-  };
-}
-
-/** Keep all Core choices but remove features that require an Electron window or browser companion. */
 export function normalizeServerConfig(source: Config): Config {
   const capabilities = { ...source.capabilities };
   for (const capability of DESKTOP_CAPABILITIES) capabilities[capability] = false;
   return {
     ...source,
     capabilities,
-    ui: {
-      ...source.ui,
-      autoConnect: false,
-      startAtLogin: false,
-      minimizeToTray: false,
-      backgroundChats: false,
-      browserOnly: true,
-      finishTool: false
-    },
     sessions: { ...source.sessions, record: false },
     compaction: { ...source.compaction, auto: false },
-    multiAgent: {
-      ...source.multiAgent,
-      enabled: false,
-      allowUnattributedCalls: true,
-      recoverAgentTabs: false
-    },
-    goal: {
-      ...source.goal,
-      enabled: false,
-      impulseMinutes: 0
+    multiAgent: { ...source.multiAgent, enabled: false, allowUnattributedCalls: true, recoverAgentTabs: false },
+    goal: { ...source.goal, enabled: false, impulseMinutes: 0 },
+    ui: {
+      ...source.ui,
+      browserOnly: true,
+      finishTool: false,
+      backgroundChats: false,
+      autoConnect: false,
+      startAtLogin: false,
+      minimizeToTray: false
     }
   };
 }
 
-export function createInitialServerConfig(options: ServerInitOptions): Config {
-  const config = defaultConfig('linux');
-  config.roots = [{ name: validateRootName(options.name), path: validateRoot(options.root) }];
-  config.tunnel = {
-    ...config.tunnel,
-    kind: options.tunnel,
-    tunnelId: options.tunnelId,
-    desktopTunnelId: '',
-    pluginsTunnelId: ''
-  };
-  return normalizeServerConfig(config);
+export function createInitialServerConfig(options: InitialServerConfigOptions): Config {
+  const root = requireAbsolutePosixPath(options.root, '--root');
+  const name = requireRootName(options.name);
+  const tunnel = requireTunnelKind(options.tunnel);
+  const source = defaultConfig('linux');
+  return normalizeServerConfig({
+    ...source,
+    roots: [{ name, path: root }],
+    tunnel: { ...source.tunnel, kind: tunnel, tunnelId: options.tunnelId.trim() }
+  });
+}
+
+export function applyServerEnvironment(source: Config, env: NodeJS.ProcessEnv = process.env): Config {
+  const tunnelId = present(env.COS_TUNNEL_ID);
+  return normalizeServerConfig({
+    ...source,
+    tunnel: tunnelId ? { ...source.tunnel, tunnelId } : { ...source.tunnel }
+  });
 }

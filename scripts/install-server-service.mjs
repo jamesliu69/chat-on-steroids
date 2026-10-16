@@ -1,66 +1,123 @@
-#!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { serverDataDirectory, validateServerLaunchPath } from './server-launch-utils.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const entry = path.join(root, 'out', 'main', 'server.js');
-const defaultDataDir = path.join(os.homedir(), '.config', 'chat-on-steroids-server');
-const unitDir = path.join(os.homedir(), '.config', 'systemd', 'user');
-const unitPath = path.join(unitDir, 'chat-on-steroids-server.service');
+const UNIT_NAME = 'chat-on-steroids.service';
 
-function fail(message) {
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
+function validateOptions(options) {
+  return {
+    projectDir: validateServerLaunchPath(options.projectDir, 'Project directory'),
+    nodePath: validateServerLaunchPath(options.nodePath, 'Node executable'),
+    dataDir: validateServerLaunchPath(options.dataDir, 'Data directory'),
+    enable: options.enable === true
+  };
 }
 
-function parseArgs(argv) {
-  let dataDir = defaultDataDir;
-  let printOnly = false;
-  let enableNow = false;
+export function renderServerUserService(options) {
+  const { projectDir, nodePath, dataDir } = validateOptions(options);
+  const entryPath = path.posix.join(projectDir, 'out', 'main', 'server.js');
+  return [
+    '[Unit]',
+    'Description=Chat On Steroids headless MCP host',
+    'Wants=network-online.target',
+    'After=network-online.target',
+    '',
+    '[Service]',
+    'Type=simple',
+    `WorkingDirectory=${projectDir}`,
+    `ExecStart=${nodePath} ${entryPath} start --data-dir ${dataDir}`,
+    'Restart=on-failure',
+    'RestartSec=5',
+    'KillSignal=SIGTERM',
+    'TimeoutStopSec=35',
+    'UMask=0077',
+    'NoNewPrivileges=true',
+    'PrivateTmp=true',
+    '',
+    '[Install]',
+    'WantedBy=default.target',
+    ''
+  ].join('\n');
+}
+
+export function parseServiceArgs(argv, env = process.env) {
+  const defaults = {
+    projectDir: process.cwd().replaceAll('\\', '/'),
+    nodePath: process.execPath.replaceAll('\\', '/'),
+    enable: false
+  };
+  const keys = new Map([
+    ['--project-dir', 'projectDir'],
+    ['--node', 'nodePath'],
+    ['--data-dir', 'dataDir']
+  ]);
+  const values = new Map();
+  let enable = false;
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
-    if (option === '--data-dir') {
-      const value = argv[++index];
-      if (!value || value.startsWith('--')) fail('--data-dir requires a path');
-      dataDir = path.resolve(value);
-    } else if (option === '--print') {
-      printOnly = true;
-    } else if (option === '--enable-now') {
-      enableNow = true;
-    } else {
-      fail(`Unknown option: ${option}`);
+    if (option === '--enable' || option === '--enable-now') {
+      if (enable) throw new Error('--enable may be provided only once');
+      enable = true;
+      continue;
     }
+    const key = keys.get(option);
+    if (!key) throw new Error(`Unknown option: ${option}`);
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
+    if (values.has(key)) throw new Error(`${option} may be provided only once`);
+    values.set(key, value);
+    index += 1;
   }
-  return { dataDir, printOnly, enableNow };
+  return validateOptions({
+    projectDir: values.get('projectDir') ?? defaults.projectDir,
+    nodePath: values.get('nodePath') ?? defaults.nodePath,
+    dataDir: values.get('dataDir') ?? serverDataDirectory(env),
+    enable
+  });
 }
 
-function serviceText(dataDir) {
-  return `[Unit]\nDescription=Chat On Steroids headless Core server\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${root}\nExecStart=${process.execPath} ${entry} start --data-dir ${dataDir}\nRestart=on-failure\nRestartSec=5\nKillSignal=SIGTERM\nTimeoutStopSec=35\nUMask=0077\nNoNewPrivileges=true\nPrivateTmp=true\nEnvironment=NODE_ENV=production\n\n[Install]\nWantedBy=default.target\n`;
+export async function installServerUserService(options, dependencies = {}) {
+  const validated = validateOptions(options);
+  const unit = renderServerUserService(validated);
+  const homeDirectory = dependencies.homeDirectory ?? os.homedir();
+  const execute = dependencies.execFileSync ?? execFileSync;
+  const runSystemctl = (args) => execute('systemctl', ['--user', ...args], { stdio: 'inherit' });
+  const unitDirectory = path.join(homeDirectory, '.config', 'systemd', 'user');
+  const unitPath = path.join(unitDirectory, UNIT_NAME);
+  const temporaryPath = path.join(unitDirectory, `.${UNIT_NAME}.${process.pid}.${randomUUID()}.tmp`);
+
+  await fs.mkdir(unitDirectory, { recursive: true, mode: 0o700 });
+  try {
+    await fs.writeFile(temporaryPath, unit, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await fs.rename(temporaryPath, unitPath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+
+  runSystemctl(['daemon-reload']);
+  if (validated.enable) runSystemctl(['enable', '--now', UNIT_NAME]);
+  return { unitPath, enabled: validated.enable };
 }
 
-if (process.platform !== 'linux') fail('The headless systemd service installer requires Linux.');
-if (!existsSync(entry)) fail(`Missing ${entry}. Run npm run build first.`);
-
-const options = parseArgs(process.argv.slice(2));
-const unit = serviceText(options.dataDir);
-if (options.printOnly) {
-  process.stdout.write(unit);
-  process.exit(0);
+async function main(argv = process.argv.slice(2)) {
+  if (process.platform !== 'linux') throw new Error('The user service installer requires Linux and systemd');
+  const options = parseServiceArgs(argv);
+  const entryPath = path.join(options.projectDir, 'out', 'main', 'server.js');
+  await fs.access(options.nodePath, fsConstants.X_OK);
+  await fs.access(entryPath, fsConstants.R_OK);
+  const result = await installServerUserService(options);
+  process.stdout.write(`Installed ${UNIT_NAME} at ${result.unitPath}\n`);
+  process.stdout.write(result.enabled ? 'Enabled and started the user service\n' : 'Run systemctl --user enable --now chat-on-steroids.service to start it\n');
 }
 
-await mkdir(unitDir, { recursive: true, mode: 0o700 });
-const temporary = `${unitPath}.tmp`;
-await writeFile(temporary, unit, { encoding: 'utf8', mode: 0o600 });
-await rename(temporary, unitPath);
-execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'inherit' });
-process.stdout.write(`Installed ${unitPath}\n`);
-process.stdout.write('Run `systemctl --user enable --now chat-on-steroids-server` after `server:check` reports ready.\n');
-
-if (options.enableNow) {
-  execFileSync('systemctl', ['--user', 'enable', '--now', 'chat-on-steroids-server'], { stdio: 'inherit' });
-  process.stdout.write('Enabled and started chat-on-steroids-server.service\n');
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void main().catch((error) => {
+    process.stderr.write(`CoS server service error: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
 }

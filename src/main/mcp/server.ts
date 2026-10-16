@@ -17,6 +17,7 @@
  * protected-resource metadata request properly and never emits a non-JSON body.
  */
 
+import { noteConnectorUse } from '../connector-proof.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createInboundTiming, formatInboundTiming, requestIdFromHeader, withInboundRequestId } from './inbound.js';
 import http from 'node:http';
@@ -26,7 +27,12 @@ import { localhostHostValidation, localhostOriginValidation, toNodeHandler } fro
 import { getConfig } from '../config.js';
 import { logError, logInfo, logWarn } from '../logger.js';
 import { buildServer, resetToolClock, type ToolContext } from './tools.js';
-import { SURFACE_IDS, scopedServerName, surfaceDefinition, type SurfaceId } from './surfaces.js';
+import {
+  SURFACE_IDS,
+  configuredConnectorName,
+  scopedServerName,
+  type SurfaceId
+} from './surfaces.js';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -82,7 +88,9 @@ function jsonError(res: http.ServerResponse, status: number, error: string): voi
   const body = JSON.stringify({ error });
   res.writeHead(status, {
     'content-type': 'application/json',
-    'content-length': Buffer.byteLength(body)
+    // Keep the body framed even when a loopback MCP intermediary strips Content-Length.
+    // Node emits the chunk boundaries; advertising chunked for a raw JSON body is invalid.
+    'transfer-encoding': 'chunked'
   });
   res.end(body);
 }
@@ -215,8 +223,14 @@ interface SurfaceExposure {
   finishTool: boolean;
   caps: ToolContext['caps'] | null;
   sessionTools: boolean;
+  planTools: boolean;
   agentTools: boolean;
   find: boolean | null;
+}
+
+interface McpServerOptions {
+  kept?: Partial<Record<SurfaceId, string>>;
+  serverNameScope?: string;
 }
 
 /**
@@ -233,7 +247,7 @@ const surfaceExposure = new Map<SurfaceId, SurfaceExposure>();
 function exposureFor(surface: SurfaceId): SurfaceExposure {
   let state = surfaceExposure.get(surface);
   if (!state) {
-    state = { finishTool: false, caps: null, sessionTools: false, agentTools: false, find: null };
+    state = { finishTool: false, caps: null, sessionTools: false, planTools: false, agentTools: false, find: null };
     surfaceExposure.set(surface, state);
   }
   return state;
@@ -259,9 +273,11 @@ export function forgetExposedSurface(): void {
   surfaceExposure.clear();
 }
 
-export async function startMcpServer(getContext: () => ToolContext, options: { serverNameScope?: string } = {}): Promise<McpEndpoint> {
+export async function startMcpServer(getContext: () => ToolContext, options: McpServerOptions = {}): Promise<McpEndpoint> {
   // A per-session token in the path is what authorises callers. It is regenerated on
-  // every app start, so a URL that leaks stops working when the app restarts.
+  // every app start, so a URL that leaks stops working when the app restarts, unless the
+  // user opted into keeping it (`mcp.persistentUrls`, see persistent-paths.ts): then the
+  // caller passes each surface's stored token, and only a well-formed one is used.
   requestSeenAt = null;
   surfaceRequestAt.clear();
   resetToolClock();
@@ -271,10 +287,13 @@ export async function startMcpServer(getContext: () => ToolContext, options: { s
   // secret because the two connectors are configured separately in ChatGPT and may be
   // shared, revoked or re-pasted at different times; a single token would make "give me
   // Desktop" and "give me everything" the same act.
-  const surfacePaths = SURFACE_IDS.map((id) => ({
-    id,
-    basePath: `/mcp/${id}/${randomBytes(32).toString('base64url')}`
-  }));
+  const surfacePaths = SURFACE_IDS.map((id) => {
+    const token = options.kept?.[id];
+    return {
+      id,
+      basePath: `/mcp/${id}/${token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : randomBytes(32).toString('base64url')}`
+    };
+  });
 
   // ChatGPT can keep a cached tools/list snapshot for the lifetime of a connector
   // session. If a permission is disabled after that snapshot was loaded, removing the
@@ -298,16 +317,20 @@ export async function startMcpServer(getContext: () => ToolContext, options: { s
     }
     const config = getConfig();
     const sessionTools = live.sessionTools ?? config.sessions.record;
+    const planTools = live.planTools ?? sessionTools;
     const agentTools = live.agentTools ?? config.multiAgent.enabled;
     exposed.finishTool = exposed.finishTool || config.ui.finishTool === true;
     exposed.sessionTools = exposed.sessionTools || sessionTools;
+    exposed.planTools = exposed.planTools || planTools;
     exposed.agentTools = exposed.agentTools || agentTools;
     return {
       ...live,
       sessionTools,
+      planTools,
       agentTools,
       exposedCaps: { ...exposed.caps },
       exposedSessionTools: exposed.sessionTools,
+      exposedPlanTools: exposed.planTools,
       exposedFinishTool: exposed.finishTool,
       exposedAgentTools: exposed.agentTools,
       exposedFind: exposed.find
@@ -392,7 +415,7 @@ export async function startMcpServer(getContext: () => ToolContext, options: { s
     if (prmRoute) {
       if (!checkHost(req, res)) return;
       if (!checkOrigin(req, res)) return;
-      const body = protectedResourceMetadata(prmRoute.url, surfaceDefinition(prmRoute.id).connectorName);
+      const body = protectedResourceMetadata(prmRoute.url, configuredConnectorName(prmRoute.id));
       res.writeHead(200, {
         'content-type': 'application/json',
         'cache-control': 'no-store',
@@ -415,6 +438,7 @@ export async function startMcpServer(getContext: () => ToolContext, options: { s
     if (!selfTest && !tunnelProbe) {
       requestSeenAt = Date.now();
       surfaceRequestAt.set(route.id, requestSeenAt);
+      noteConnectorUse(route.id, 'request', requestSeenAt);
     }
 
     const declaredHeader = req.headers['content-length'];
@@ -446,7 +470,7 @@ export async function startMcpServer(getContext: () => ToolContext, options: { s
       };
       res.once('finish', release);
       res.once('close', release);
-      withInboundRequestId(requestId, () => void route.handler(req, res, body), timing, publication);
+      withInboundRequestId(requestId, () => void route.handler(req, res, body), timing, publication, !selfTest && !tunnelProbe);
     };
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       void readBoundedJsonBody(req).then((parsed) => {

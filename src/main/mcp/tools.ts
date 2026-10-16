@@ -45,7 +45,7 @@ export function buildServer(
 
   const tools: PluginToolSchema[] = [];
   if (surface === 'plugins') {
-    const declarations = registerPluginTools(server);
+    const declarations = registerPluginTools(server, ctx.setupProfileId ?? null);
     observe?.(definition.connectorName, APP_VERSION, instructions, declarations);
     return server;
   }
@@ -64,7 +64,7 @@ export function buildServer(
     if (surface === 'core') registerCoreTools(nested);
     else registerDesktopTools(nested);
     return nested.invokeNested(name, args, parent);
-  }, { windowsDesktop: surface === 'desktop' && process.platform === 'win32' });
+  }, { windowsDesktop: surface === 'desktop' && process.platform === 'win32', surface });
 
   // Cheap self-check on a property the tests assert and the design depends on: a surface
   // may register fewer tools than it declares — permissions decide that — but it may never

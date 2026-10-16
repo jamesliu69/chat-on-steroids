@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   commonBinaryDirsForPlatform,
+  initTunnelResourceRoot,
   locateBinary,
   resetTunnelLocatorCacheForTests,
   tunnelExecutableName
@@ -26,10 +27,23 @@ afterEach(async () => {
     value: originalResourcesPath
   });
   resetTunnelLocatorCacheForTests();
+  initTunnelResourceRoot(process.cwd());
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('tunnel binary location', () => {
+  it('finds development resources from the app root regardless of bundle nesting or cwd', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'clf-tunnel-layout-'));
+    roots.push(root);
+    const dir = path.join(root, 'resources', 'tunnel');
+    await mkdir(dir, { recursive: true });
+    const binary = path.join(dir, tunnelExecutableName('tunnel-client'));
+    await executable(binary, 'development');
+    initTunnelResourceRoot(root);
+    Object.defineProperty(process, 'resourcesPath', { configurable: true, value: path.join(root, 'electron-resources') });
+    expect(locateBinary('tunnel-client')).toBe(binary);
+  });
+
   it('prefers the tested bundled client over an unrelated PATH copy', async () => {
     const resources = await mkdtemp(path.join(os.tmpdir(), 'clf-tunnel-resources-'));
     const fakePath = await mkdtemp(path.join(os.tmpdir(), 'clf-tunnel-path-'));

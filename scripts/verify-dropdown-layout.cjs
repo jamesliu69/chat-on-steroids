@@ -32,7 +32,6 @@ app.whenReady().then(async () => {
     for (const button of menu.querySelectorAll('#automationSwitch [data-mode]'))
       button.setAttribute('aria-checked', String(button.dataset.mode === 'loop'));
     menu.querySelector('label[for="sessionObjective"]').textContent = 'Loop instructions';
-    menu.querySelector('#cancelCompaction').hidden = true;
     composer.append(menu); host.append(composer); document.body.append(host);
   })()`);
   win.showInactive();
@@ -98,7 +97,7 @@ app.whenReady().then(async () => {
   }
   const selected = await win.webContents.executeJavaScript(`({ value: document.getElementById('goalBackend').value, changes: window.changes })`);
   assert.deepEqual(selected, { value: 'api', changes: 1 });
-  const translations = JSON.parse(fs.readFileSync(path.join(root, 'src/renderer/locales/zh-CN.json'), 'utf8'));
+  const translations = JSON.parse(fs.readFileSync(path.join(root, 'src/renderer/locales/zh-TW.json'), 'utf8'));
   await win.webContents.executeJavaScript(`(() => {
     const translations = ${JSON.stringify(translations)};
     for (const option of document.querySelectorAll('select option')) option.textContent = translations[option.textContent] || option.textContent;

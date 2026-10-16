@@ -1,114 +1,149 @@
-import { promises as fs } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { defaultConfig, initConfigPath, loadConfig, saveConfig } from '../src/main/config.js';
+import { DESKTOP_CAPABILITIES } from '../src/shared/types.js';
+import { getConfig, initConfigPath, loadConfig, saveConfig, setRuntimeConfigOverride } from '../src/main/config.js';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import {
   applyServerEnvironment,
   createInitialServerConfig,
+  defaultServerDataDir,
   normalizeServerConfig,
   parseServerArgs
 } from '../src/server/runtime.js';
+import { makeTempDir, removeTempDir } from './helpers.js';
 
 describe('headless server runtime', () => {
-  it('parses init options without accepting a relative approved root', () => {
-    expect(parseServerArgs(['init', '--root', '/home/pi/github', '--name', 'repos', '--tunnel', 'manual'])).toEqual({
-      command: 'init',
-      dataDir: expect.any(String),
-      root: '/home/pi/github',
-      name: 'repos',
-      tunnel: 'manual',
-      tunnelId: ''
+  it('creates a Core-capable config while disabling browser-dependent features', () => {
+    const config = createInitialServerConfig({
+      root: '/srv/repos', name: 'repos', tunnel: 'manual', tunnelId: ''
     });
-    expect(() => parseServerArgs(['init', '--root', 'relative'])).toThrow(/absolute/i);
-  });
 
-  it('preserves POSIX data directories when tests run on a non-POSIX host', () => {
-    expect(parseServerArgs(['start', '--data-dir', '/srv/cos-data'], {}).dataDir).toBe('/srv/cos-data');
-  });
-
-  it('uses COS_TUNNEL_ID from the environment and keeps explicit CLI values authoritative', () => {
-    const env = { COS_TUNNEL_ID: 'tunnel_6aa5ebd7427c8191922894997adf9fdf' };
-    expect(parseServerArgs(['init', '--root', '/home/pi/github'], env)).toMatchObject({
-      tunnel: 'openai',
-      tunnelId: 'tunnel_6aa5ebd7427c8191922894997adf9fdf'
-    });
-    expect(
-      parseServerArgs(
-        ['init', '--root', '/home/pi/github', '--tunnel', 'openai', '--tunnel-id', 'tunnel_11111111111111111111111111111111'],
-        env
-      )
-    ).toMatchObject({
-      tunnel: 'openai',
-      tunnelId: 'tunnel_11111111111111111111111111111111'
-    });
-  });
-
-  it('applies COS_TUNNEL_ID to a loaded server config without changing Core permissions', () => {
-    const source = createInitialServerConfig({ root: '/home/pi/github', name: 'repos', tunnel: 'manual', tunnelId: '' });
-    const applied = applyServerEnvironment(source, {
-      COS_TUNNEL_ID: 'tunnel_6aa5ebd7427c8191922894997adf9fdf'
-    });
-    expect(applied.tunnel.kind).toBe('openai');
-    expect(applied.tunnel.tunnelId).toBe('tunnel_6aa5ebd7427c8191922894997adf9fdf');
-    expect(applied.roots).toEqual(source.roots);
-    expect(applied.capabilities.command).toBe(source.capabilities.command);
-  });
-
-  it('creates a Core-capable config and disables browser-only features', () => {
-    const config = createInitialServerConfig({ root: '/home/pi/github', name: 'repos', tunnel: 'manual', tunnelId: '' });
-    expect(config.roots).toEqual([{ name: 'repos', path: '/home/pi/github' }]);
+    expect(config.roots).toEqual([{ name: 'repos', path: '/srv/repos' }]);
     expect(config.capabilities.command).toBe(true);
-    expect(config.capabilities.edit).toBe(true);
-    expect(config.capabilities.screen).toBe(false);
+    expect(DESKTOP_CAPABILITIES.every((capability) => config.capabilities[capability] === false)).toBe(true);
     expect(config.sessions.record).toBe(false);
-    expect(config.multiAgent.enabled).toBe(false);
-    expect(config.multiAgent.allowUnattributedCalls).toBe(true);
+    expect(config.compaction.auto).toBe(false);
+    expect(config.multiAgent).toMatchObject({ enabled: false, allowUnattributedCalls: true, recoverAgentTabs: false });
     expect(config.goal.enabled).toBe(false);
-    expect(config.ui.finishTool).toBe(false);
-    expect(config.ui.autoConnect).toBe(false);
+    expect(config.ui).toMatchObject({ browserOnly: true, finishTool: false, backgroundChats: false, autoConnect: false });
   });
 
-  it('normalizes a desktop-oriented config to safe server semantics without changing roots or Core permissions', () => {
-    const source = defaultConfig('linux');
-    source.roots = [{ name: 'repos', path: '/srv/repos' }];
-    source.sessions.record = true;
-    source.multiAgent.enabled = true;
-    source.multiAgent.allowUnattributedCalls = false;
-    source.goal.enabled = true;
-    source.ui.finishTool = true;
+  it('normalizes a desktop configuration without changing roots or Core permissions', () => {
+    const source = createInitialServerConfig({
+      root: '/srv/repos', name: 'repos', tunnel: 'manual', tunnelId: ''
+    });
+    const desktopLike = {
+      ...source,
+      capabilities: { ...source.capabilities, screen: true, control: true },
+      sessions: { ...source.sessions, record: true },
+      compaction: { ...source.compaction, auto: true },
+      multiAgent: { ...source.multiAgent, enabled: true, allowUnattributedCalls: false, recoverAgentTabs: true },
+      goal: { ...source.goal, enabled: true },
+      ui: { ...source.ui, browserOnly: false, finishTool: true, backgroundChats: true, autoConnect: true }
+    };
 
-    const normalized = normalizeServerConfig(source);
-    expect(normalized.roots).toEqual(source.roots);
-    expect(normalized.capabilities.command).toBe(source.capabilities.command);
+    const normalized = normalizeServerConfig(desktopLike);
+
+    expect(normalized).not.toBe(desktopLike);
+    expect(normalized.roots).toEqual([{ name: 'repos', path: '/srv/repos' }]);
+    expect(normalized.capabilities.command).toBe(true);
+    expect(DESKTOP_CAPABILITIES.every((capability) => normalized.capabilities[capability] === false)).toBe(true);
     expect(normalized.sessions.record).toBe(false);
-    expect(normalized.multiAgent.enabled).toBe(false);
-    expect(normalized.multiAgent.allowUnattributedCalls).toBe(true);
+    expect(normalized.compaction.auto).toBe(false);
+    expect(normalized.multiAgent).toMatchObject({ enabled: false, allowUnattributedCalls: true, recoverAgentTabs: false });
     expect(normalized.goal.enabled).toBe(false);
-    expect(normalized.ui.finishTool).toBe(false);
+    expect(normalized.ui).toMatchObject({ browserOnly: true, finishTool: false, backgroundChats: false, autoConnect: false });
   });
 
-  it('persists disabled recording for the dedicated headless server config', async () => {
-    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cos-server-config-'));
+  it('uses bounded command-specific options and non-persistent environment overrides', () => {
+    const env = {
+      HOME: '/home/pi',
+      COS_SERVER_DATA_DIR: '/var/lib/chat-on-steroids-server',
+      COS_TUNNEL_ID: 'tunnel-from-env'
+    };
+
+    expect(defaultServerDataDir(env)).toBe('/var/lib/chat-on-steroids-server');
+    expect(parseServerArgs(['init', '--root', '/srv/repos', '--name', 'repos'], env)).toEqual({
+      command: 'init',
+      dataDir: '/var/lib/chat-on-steroids-server',
+      root: '/srv/repos',
+      name: 'repos',
+      tunnel: 'openai',
+      tunnelId: 'tunnel-from-env'
+    });
+    expect(parseServerArgs(['check', '--data-dir', '/state/cos'], env)).toEqual({ command: 'check', dataDir: '/state/cos' });
+    expect(parseServerArgs(['endpoint', '--data-dir', '/state/cos'], env)).toEqual({ command: 'endpoint', dataDir: '/state/cos' });
+
+    const config = createInitialServerConfig({ root: '/srv/repos', name: 'repos', tunnel: 'manual', tunnelId: '' });
+    expect(applyServerEnvironment(config, env).tunnel.tunnelId).toBe('tunnel-from-env');
+    expect(config.tunnel.tunnelId).toBe('');
+  });
+
+  it('applies the launcher data-directory policy to the server data directory', () => {
+    const env = { HOME: '/home/pi' };
+
+    expect(defaultServerDataDir(env)).toBe('/home/pi/.config/chat-on-steroids-server');
+    expect(defaultServerDataDir({ ...env, COS_SERVER_DATA_DIR: '/var/lib/cos-data' })).toBe('/var/lib/cos-data');
+    expect(() => parseServerArgs(['check', '--data-dir', '/state/My Data'], env)).toThrow(
+      /normalized absolute Linux path/i
+    );
+    expect(() => defaultServerDataDir({ ...env, COS_SERVER_DATA_DIR: '/var/lib/cos data' })).toThrow(
+      /normalized absolute Linux path/i
+    );
+  });
+
+  it('publishes the environment tunnel override to config consumers without persisting it', async () => {
+    const directory = await makeTempDir('cos-server-runtime-config-');
     try {
-      initConfigPath(dataDir);
-      const config = createInitialServerConfig({
-        root: '/home/pi/github',
-        name: 'repos',
-        tunnel: 'manual',
-        tunnelId: ''
+      initConfigPath(directory);
+      setRuntimeConfigOverride(null);
+      const loaded = await loadConfig();
+      await saveConfig({
+        ...loaded,
+        tunnel: { ...loaded.tunnel, kind: 'openai', tunnelId: 'stored-tunnel' }
       });
 
-      await saveConfig(config, { allowDisabledRecording: true });
+      setRuntimeConfigOverride(applyServerEnvironment(getConfig(), { COS_TUNNEL_ID: 'environment-tunnel' }));
 
-      const persisted = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8')) as {
-        sessions: { record: boolean; retainDays: number };
-      };
-      expect(persisted.sessions.record).toBe(false);
-      expect(persisted.sessions.retainDays).toBe(0);
-      expect((await loadConfig({ allowDisabledRecording: true })).sessions.record).toBe(false);
+      expect(getConfig().tunnel.tunnelId).toBe('environment-tunnel');
+      const persisted = JSON.parse(await readFile(path.join(directory, 'config.json'), 'utf8'));
+      expect(persisted.tunnel.tunnelId).toBe('stored-tunnel');
     } finally {
-      await fs.rm(dataDir, { recursive: true, force: true });
+      setRuntimeConfigOverride(null);
+      await removeTempDir(directory);
     }
+  });
+
+  it('keeps headless conversation recording disabled through normalize, save, load, and runtime override', async () => {
+    const directory = await makeTempDir('cos-server-runtime-recording-');
+    try {
+      initConfigPath(directory);
+      setRuntimeConfigOverride(null);
+      const loaded = await loadConfig({ allowDisabledRecording: true });
+      const normalized = normalizeServerConfig(loaded);
+      expect(normalized.sessions.record).toBe(false);
+
+      const saved = await saveConfig(normalized, { allowDisabledRecording: true });
+      expect(saved.sessions.record).toBe(false);
+      expect(JSON.parse(await readFile(path.join(directory, 'config.json'), 'utf8')).sessions.record).toBe(false);
+
+      const reloaded = await loadConfig({ allowDisabledRecording: true });
+      expect(reloaded.sessions.record).toBe(false);
+      setRuntimeConfigOverride(applyServerEnvironment(reloaded, { COS_TUNNEL_ID: 'environment-tunnel' }));
+      expect(getConfig().sessions.record).toBe(false);
+    } finally {
+      setRuntimeConfigOverride(null);
+      initConfigPath(directory);
+      await removeTempDir(directory);
+    }
+  });
+
+  it('rejects relative roots, reserved names, unknown values, and inappropriate options', () => {
+    const env = { HOME: '/home/pi' };
+    expect(() => parseServerArgs(['init', '--root', 'relative'], env)).toThrow(/absolute/i);
+    expect(() => parseServerArgs(['init', '--root', '/srv/repos', '--name', 'skills'], env)).toThrow(/reserved/i);
+    expect(() => parseServerArgs(['init', '--root', '/srv/repos', '--tunnel', 'unknown'], env)).toThrow(/tunnel/i);
+    expect(() => parseServerArgs(['start', '--root', '/srv/repos'], env)).toThrow(/only valid with init/i);
+    expect(() => parseServerArgs(['check', '--unknown'], env)).toThrow(/unknown option/i);
   });
 });

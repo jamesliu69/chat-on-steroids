@@ -1,40 +1,64 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { createServerSecretProvider } from '../src/server/secrets.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const dirs: string[] = [];
-afterEach(async () => {
-  await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
+vi.mock('electron', () => ({
+  safeStorage: {
+    isAsyncEncryptionAvailable: vi.fn(async () => true),
+    encryptStringAsync: vi.fn(async (value: string) => Buffer.from(value, 'utf8')),
+    decryptStringAsync: vi.fn(async (buffer: Buffer) => ({ result: buffer.toString('utf8'), shouldReEncrypt: false }))
+  }
+}));
+
+const { configureSecretProvider, deleteAllSecrets, getSecret, resetSecretsCacheForTests, setSecret } = await import('../src/main/secrets.js');
+const { createServerSecretProvider } = await import('../src/server/secrets.js');
+const { makeTempDir, removeTempDir } = await import('./helpers.js');
+
+let credentialDir: string;
+
+beforeEach(async () => {
+  credentialDir = await makeTempDir('cos-server-credentials-');
+  configureSecretProvider(null);
+  resetSecretsCacheForTests();
 });
 
-describe('server secret provider', () => {
-  it('prefers a systemd credential over the environment', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'cos-credentials-'));
-    dirs.push(dir);
-    await writeFile(path.join(dir, 'openai-api-key'), '  sk-file-value\n', { mode: 0o600 });
+afterEach(async () => {
+  configureSecretProvider(null);
+  resetSecretsCacheForTests();
+  await removeTempDir(credentialDir);
+});
+
+describe('headless server secret provider', () => {
+  it('prefers a trimmed systemd credential to OPENAI_API_KEY', async () => {
+    await fs.writeFile(path.join(credentialDir, 'openai-api-key'), ' file-value\n');
     const provider = createServerSecretProvider({
-      env: { CREDENTIALS_DIRECTORY: dir, OPENAI_API_KEY: 'sk-env-value' }
+      env: { CREDENTIALS_DIRECTORY: credentialDir, OPENAI_API_KEY: 'env-value' }
     });
 
-    await expect(provider.get('openaiApiKey')).resolves.toBe('sk-file-value');
+    await expect(provider.get('openaiApiKey')).resolves.toBe('file-value');
   });
 
-  it('uses OPENAI_API_KEY when no systemd credential exists', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'cos-credentials-'));
-    dirs.push(dir);
-    await mkdir(dir, { recursive: true });
-    const provider = createServerSecretProvider({
-      env: { CREDENTIALS_DIRECTORY: dir, OPENAI_API_KEY: '  sk-env-value  ' }
-    });
+  it('uses a non-empty environment credential when the systemd credential is absent or blank', async () => {
+    const env = { CREDENTIALS_DIRECTORY: credentialDir, OPENAI_API_KEY: 'env-value' };
+    const provider = createServerSecretProvider({ env });
 
-    await expect(provider.get('openaiApiKey')).resolves.toBe('sk-env-value');
+    await expect(provider.get('openaiApiKey')).resolves.toBe('env-value');
+    await fs.writeFile(path.join(credentialDir, 'openai-api-key'), ' \n');
+    await expect(provider.get('openaiApiKey')).resolves.toBe('env-value');
   });
 
-  it('does not invent unsupported browser or plugin secrets', async () => {
-    const provider = createServerSecretProvider({ env: {} });
+  it('does not expose unsupported desktop secret keys', async () => {
+    const provider = createServerSecretProvider({ env: { OPENAI_API_KEY: 'env-value' } });
+
     await expect(provider.get('bridgeToken')).resolves.toBeNull();
-    await expect(provider.get('plugin:test')).resolves.toBeNull();
+    await expect(provider.get('plugin:example')).resolves.toBeNull();
+  });
+
+  it('rejects mutation through a configured read-only provider', async () => {
+    configureSecretProvider(createServerSecretProvider({ env: { OPENAI_API_KEY: 'value' } }));
+
+    await expect(getSecret('openaiApiKey')).resolves.toBe('value');
+    await expect(setSecret('openaiApiKey', 'replacement')).rejects.toThrow(/read-only/i);
+    await expect(deleteAllSecrets()).rejects.toThrow(/read-only/i);
   });
 });

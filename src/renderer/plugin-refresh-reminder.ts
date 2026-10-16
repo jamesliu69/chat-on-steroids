@@ -1,4 +1,5 @@
-import type { SurfaceId } from '../shared/types.js';
+import type { SurfaceId, SurfaceStatus } from '../shared/types.js';
+import { t, ui } from './i18n.js';
 
 const ACKNOWLEDGED_SCHEMAS_KEY = 'cos.plugins.refreshReminder.acknowledgedSchemas';
 const SURFACES: readonly SurfaceId[] = ['core', 'desktop', 'plugins'];
@@ -27,22 +28,35 @@ function persistAcknowledgement(): void {
  * telling an upgraded user to refresh merely because the app version changed. Once a surface has
  * a baseline, a different schema id is actionable until acknowledged. Dismissing remains only a
  * UI acknowledgement; it does not claim that ChatGPT actually refreshed its cached tools.
+ * A schema ChatGPT itself confirmed (automatic plugin refresh, or a page already showing it)
+ * needs nothing from the user, so it counts as acknowledged.
  */
-export function paintPluginRefreshReminder(currentSchemas: ConnectorSchemas): void {
+export function paintPluginRefreshReminder(
+  currentSchemas: ConnectorSchemas,
+  confirmedSchemas: ConnectorSchemas = {},
+  surfaces: readonly Pick<SurfaceStatus, 'id' | 'connectorName' | 'chatgptName'>[] = []
+): void {
   const notice = document.getElementById('pluginRefreshReminder')!;
-  let changed = false;
+  const changed: string[] = [];
   let learnedBaseline = false;
   for (const surface of SURFACES) {
     const current = currentSchemas[surface];
     if (!current) continue;
     const acknowledged = acknowledgedSchemas[surface];
-    if (!acknowledged) {
+    if (confirmedSchemas[surface] === current) {
+      if (acknowledged !== current) { acknowledgedSchemas[surface] = current; learnedBaseline = true; }
+    } else if (!acknowledged) {
       acknowledgedSchemas[surface] = current;
       learnedBaseline = true;
-    } else if (acknowledged !== current) changed = true;
+    } else if (acknowledged !== current) {
+      const status = surfaces.find(item => item.id === surface);
+      changed.push(status?.chatgptName || status?.connectorName || `Chat On Steroids ${surface === 'core' ? 'Core' : surface === 'desktop' ? 'Desktop' : 'Plugins'}`);
+    }
   }
   if (learnedBaseline) persistAcknowledgement();
-  notice.hidden = !changed;
+  notice.hidden = changed.length === 0;
+  ui(document.getElementById('pluginRefreshReminderTargets')!, 'textContent', () =>
+    changed.length ? t('In ChatGPT Plugins, select {0}, then choose Refresh tools.', [changed.join(', ')]) : '');
   document.getElementById('dismissPluginRefreshReminder')!.onclick = () => {
     for (const surface of SURFACES) {
       const current = currentSchemas[surface];

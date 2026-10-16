@@ -1,73 +1,65 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildTmuxArgs,
-  parseTmuxArgs,
-  restartTmuxServer,
-  startTmuxServer
-} from '../scripts/run-server-tmux.mjs';
+import { buildTmuxArgs, parseTmuxArgs, runServerInTmux } from '../scripts/run-server-tmux.mjs';
 
 const options = {
-  dataDir: '/home/pi/.config/chat-on-steroids-server',
-  session: 'chat-on-steroids',
+  session: 'cos-pi',
   nodePath: '/usr/bin/node',
-  entryPath: '/srv/chat-on-steroids/out/main/server.js'
+  projectDir: '/srv/cos',
+  dataDir: '/srv/cos-data',
+  restart: false
 };
 
-describe('headless server tmux launcher', () => {
-  it('builds a detached tmux command for the headless server', () => {
+describe('headless tmux launcher', () => {
+  it('builds literal argv for the server process', () => {
     expect(buildTmuxArgs(options)).toEqual([
-      'new-session', '-d', '-s', 'chat-on-steroids', '--',
-      '/usr/bin/node', '/srv/chat-on-steroids/out/main/server.js', 'start',
-      '--data-dir', '/home/pi/.config/chat-on-steroids-server'
+      'new-session', '-d', '-s', 'cos-pi', '-c', '/srv/cos', '--', '/usr/bin/node',
+      '/srv/cos/out/main/server.js', 'start', '--data-dir', '/srv/cos-data'
     ]);
   });
 
-  it('does not create a second tmux session when one already exists', () => {
-    const calls: string[][] = [];
-    const run = (file: string, args: readonly string[]) => {
-      calls.push([file, ...args]);
-    };
-
-    expect(startTmuxServer(options, run)).toBe(false);
-    expect(calls).toEqual([['tmux', 'has-session', '-t', 'chat-on-steroids']]);
+  it('parses explicit options and rejects unsafe session names', () => {
+    expect(parseTmuxArgs([
+      '--session', 'cos-pi', '--node', '/usr/bin/node', '--project-dir', '/srv/cos', '--data-dir', '/srv/cos-data'
+    ])).toEqual(options);
+    expect(() => parseTmuxArgs(['--session', 'bad;command'])).toThrow(/session/i);
   });
 
-  it('starts a detached session when the named session is absent', () => {
-    const calls: string[][] = [];
-    const run = (file: string, args: readonly string[]) => {
-      calls.push([file, ...args]);
-      if (args[0] === 'has-session') throw Object.assign(new Error('missing session'), { status: 1 });
+  it('refuses to create a duplicate session unless restart was requested', () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const execFileSync = (command: string, args: readonly string[]) => {
+      calls.push({ command, args: [...args] });
+      return Buffer.alloc(0);
     };
 
-    expect(startTmuxServer(options, run)).toBe(true);
+    expect(() => runServerInTmux(options, { execFileSync })).toThrow(/already exists/i);
+    expect(calls).toEqual([{ command: 'tmux', args: ['has-session', '-t', '=cos-pi'] }]);
+  });
+
+  it('starts a missing session and restarts only the exact validated session', () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const missingSession = Object.assign(new Error('session missing'), { status: 1 });
+    const execFileSync = (command: string, args: readonly string[]) => {
+      calls.push({ command, args: [...args] });
+      if (args[0] === 'has-session') throw missingSession;
+      return Buffer.alloc(0);
+    };
+
+    runServerInTmux(options, { execFileSync });
     expect(calls).toEqual([
-      ['tmux', 'has-session', '-t', 'chat-on-steroids'],
-      ['tmux', ...buildTmuxArgs(options)]
+      { command: 'tmux', args: ['has-session', '-t', '=cos-pi'] },
+      { command: 'tmux', args: buildTmuxArgs(options) }
     ]);
-  });
 
-  it('closes the existing session before starting its replacement', () => {
-    const calls: string[][] = [];
-    let present = true;
-    const run = (file: string, args: readonly string[]) => {
-      calls.push([file, ...args]);
-      if (args[0] === 'has-session' && !present) throw Object.assign(new Error('missing session'), { status: 1 });
-      if (args[0] === 'kill-session') present = false;
-      if (args[0] === 'new-session') present = true;
+    calls.length = 0;
+    const existingSession = (command: string, args: readonly string[]) => {
+      calls.push({ command, args: [...args] });
+      return Buffer.alloc(0);
     };
-
-    expect(restartTmuxServer(options, run)).toBe(true);
+    runServerInTmux({ ...options, restart: true }, { execFileSync: existingSession });
     expect(calls).toEqual([
-      ['tmux', 'has-session', '-t', 'chat-on-steroids'],
-      ['tmux', 'kill-session', '-t', 'chat-on-steroids'],
-      ['tmux', ...buildTmuxArgs(options)]
+      { command: 'tmux', args: ['has-session', '-t', '=cos-pi'] },
+      { command: 'tmux', args: ['kill-session', '-t', '=cos-pi'] },
+      { command: 'tmux', args: buildTmuxArgs(options) }
     ]);
-  });
-
-  it('parses a custom tmux session and data directory', () => {
-    expect(parseTmuxArgs(['--session', 'cos-pi', '--data-dir', '/srv/cos-data'])).toMatchObject({
-      session: 'cos-pi',
-      dataDir: '/srv/cos-data'
-    });
   });
 });

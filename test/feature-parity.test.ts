@@ -22,9 +22,14 @@ describe('portable browser-backed feature parity', () => {
       expect(config.multiAgent).toEqual({
         enabled: true,
         maxWorkers: 2,
+        globalMaxWorkers: 0,
         allowUnattributedCalls: true,
+        strictChatAllowlist: false,
         recoverAgentTabs: false,
-        waitForSubAgents: false
+        waitForSubAgents: false,
+        autoWorktrees: false,
+        endSleepingWorkerProcesses: false,
+        archiveWorkerChats: false
       });
       expect(browserExtensionRequired(config)).toBe(true);
     }
@@ -63,6 +68,7 @@ describe('portable browser-backed feature parity', () => {
       'view_image',
       'find',
       'apply_patch',
+      'save_image',
       'exec_command',
       'write_stdin',
       'download_artifact',
@@ -70,6 +76,7 @@ describe('portable browser-backed feature parity', () => {
       'update_plan',
       'agents',
       'session_finish',
+      'usage',
       'exec'
     ]);
     expect(surfaceIsUseful('core', config.capabilities, 'darwin')).toBe(true);
