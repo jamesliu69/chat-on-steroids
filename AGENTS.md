@@ -22,7 +22,7 @@ the code currently does it. Known implementation gaps are collected in §21 inst
 mixed into the happy path as features.
 
 基準來源對齊：**2026-09-17**；本次合併：**2026-10-16**（本機 `3009db64` 與上游
-`190231b9`）。App/extension **2.1.39**，
+`190231b9`；稍早 2026-10-15 為 upstream `e86c13be`）。App/extension **2.1.39**，
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
