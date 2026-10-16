@@ -894,8 +894,10 @@
    */
   const SENT_REQUEST_MS = 10_000;
   const sentRequests = [];
-  function sentRequestSince(since) {
-    const sent = sentRequests.find(entry => entry.epoch === epoch && entry.at >= since);
+  // A Send started in this document's earlier epoch keeps its request when the first route of
+  // the chat it opened advances the epoch (submittedSendLifetime holds that send through it).
+  function sentRequestSince(since, sendEpoch = epoch) {
+    const sent = sentRequests.find(entry => entry.epoch === sendEpoch && entry.at >= since);
     return sent && sent.at - since <= SENT_REQUEST_MS ? { id: sent.id } : null;
   }
   /** Temporary-planner-only fallback for an accepted user row left on the immediately older Fiber scan. */
@@ -938,8 +940,8 @@
    * attaches an app only to a message that mentions it, every prompt the app sends mentions
    * Core; on the others the mention is a visible chip and changes nothing else.
    */
-  // Every Core-like app the page lists, by name: this install picks its own (with this
-  // computer's suffix, if any) when it inserts the mention, whenever the app's names arrived.
+  // Core/Plugins identities from the page's hint list. This installation picks
+  // its own exact name (including the computer suffix) at send time.
   let coreCandidates = [];
   // This install's Core as another tab of this browser last saw it listed (background `status`).
   let knownOwnCore = null;
@@ -1007,15 +1009,27 @@
         (proven.length ? !proven.includes(knownOwnCore.path) : !ownNamesKnown || knownOwnCore.name !== own)) return null;
     return { path: knownOwnCore.path, name: knownOwnCore.name };
   }
+  /** Only the exact Plugins app advertised by this page and named by this COS install. */
+  function currentPluginsMention() {
+    const own = CLF_DOM.connectorNames()[2];
+    const matches = coreCandidates.filter(entry => entry.name === own);
+    return matches.length === 1 && matches[0].path ? { path: matches[0].path, name: own } : null;
+  }
   /**
-   * Whether the user's own prompts carry the Core mention (the app's ui.mentionCore, on unless off).
+   * Whether ordinary app-owned prompts carry the Core mention (ui.mentionCore).
    *
    * Some accounts attach an app to a chat only when a message mentions it (#861), so the mention
    * stays on by default. On others ChatGPT reads it as "use this app now" and opens a plain
-   * question with a probe call (#952); those users can switch it off. Workers, Goal, Loop and
-   * Continue keep it regardless, and Goal's helper never gets it: it must not use tools.
+   * question with a probe call (#952); those users can switch it off. Workers and
+   * Continue recovery, Goal and Loop always keep Core; only ordinary user's prompts
+   * may select Plugins by explicit opt-in.
+   * Goal's decision helper never gets an app token: it must not use tools.
    */
   let mentionCore = true;
+  // Explicit opt-in: prefer Plugins instead of Core on ordinary COS-managed sends.
+  // Goal, Loop, workers and recovery still need Core. A missing/ambiguous Plugins identity is
+  // never replaced with another computer's app or an invented app id.
+  let mentionPlugins = false;
   function sendSubmittedText(stillCurrent, clearAcceptedDraft = true, beforeSend = null, acceptUserReceipt = null,
                              matchesUser = matchesSubmittedUser, receiptTimeoutMs = null, explain = null, mention = currentCoreMention(), sentRequest = null,
                              whileGenerating = false) {
@@ -2698,6 +2712,7 @@
     genNode = null;
   }
 
+  let observedRoute = null;
   function observe() {
     // This duplicate source document is only the native Project entry point. Its transcript
     // belongs to A's original recorder; do not adopt it while preparing the fresh composer.
@@ -2756,6 +2771,11 @@
           pendingObjectiveSend = opening.receipt;
           pendingObjectiveSend.current = submittedSendLifetime(id, epoch);
         }
+        // A Send the app already accepted for exactly this new chat moves with it, so its answer
+        // still opens the first turn. A hidden tab can prove the Send (ChatGPT's request and the
+        // new address) before this page adopts that address (2026-10-15).
+        const acceptedSend = userSendReceipt?.accepted;
+        if (acceptedSend && acceptedSend.conversationId === id && acceptedSend.epoch === epoch - 1) acceptedSend.epoch = epoch;
         // The same question boot asks, at the same moment boot asks it: which of this chat's
         // user messages does the app already hold? resetConversation() has just armed the
         // identity gate, and until it is answered this document reads no transcript at all,
@@ -2792,6 +2812,14 @@
     }
     publishHistoryRateLimit();
     flushStreamRequestOrigins();
+    // A Send waiting on its receipt re-checks once this document has taken a new address. A
+    // hidden tab (Firefox's minimized window for app-opened chats) can move to /c/<id> without
+    // drawing anything, and the receipt then waited for the next redraw: 40-95 s, once never
+    // (2026-10-15). After the adoption above, so the receipt belongs to the new chat's epoch.
+    if (id !== observedRoute) {
+      observedRoute = id;
+      if (id) for (const check of pageViewChecks) void check();
+    }
     // Route assignment and authored text can arrive in either order. This receipt is
     // evaluated on the existing observer, rather than only on the one route-change edge.
     if (id && pendingObjectiveSend?.accepted && pendingObjectiveSend.current()) {
@@ -6911,6 +6939,7 @@
       context = readContext(reply.data.context) || context;
       if (typeof reply.data.followOutput === 'boolean') followOutput = reply.data.followOutput;
       if (typeof reply.data.mentionCore === 'boolean') mentionCore = reply.data.mentionCore;
+      if (typeof reply.data.mentionPlugins === 'boolean') mentionPlugins = reply.data.mentionPlugins;
       if (reply.data.goal && typeof reply.data.goal === 'object') {
         goalConfig = {
           ...reply.data.goal,
@@ -7167,6 +7196,7 @@
       context = readContext(data.context);
       if (typeof data.followOutput === 'boolean') followOutput = data.followOutput;
       if (typeof data.mentionCore === 'boolean') mentionCore = data.mentionCore;
+      if (typeof data.mentionPlugins === 'boolean') mentionPlugins = data.mentionPlugins;
       // The goal loop's settings and, while one is running, the draft itself: its stage, the
       // text OpenRouter has streamed so far, and — once it is `ready` — the message to type.
       // Nothing is typed here; maybeSendGoalReply below owns that, after the pull has
@@ -12852,7 +12882,8 @@
       (!message.recovery || sendAttempted || !stopRequestedAt) &&
       (!sourceQuiet || sendAttempted || (turnProgressRevision === sourceActivity && turnId === sourceTurn &&
         CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id === sourceUser)) &&
-      (!message.directTurn || sendAttempted || (CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id === sourceUser &&
+      // A first turn's question can be missing from the page (#942); its turn id alone names it.
+      (!message.directTurn || sendAttempted || ((sourceUser === undefined || CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id === sourceUser) &&
         (!turnId || turnId === sourceTurn)));
     // Which onTarget condition failed, in its order, for the release report (#820). A pickup that
     // kept being withdrawn for 17 minutes could not say whether its page moved or its chat changed (#882).
@@ -12860,7 +12891,8 @@
       if (!alive) return 'page-closed';
       if (epoch !== forEpoch || CLF_DOM.conversationId() !== target) return 'left-chat';
       if (message.recovery && !sendAttempted && stopRequestedAt) return 'stop-requested';
-      const newUser = CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id !== sourceUser;
+      const newUser = !(message.directTurn && sourceUser === undefined) &&
+        CLF_DOM.messages().filter(row => row.role === 'user').at(-1)?.id !== sourceUser;
       if ((sourceQuiet || message.directTurn) && !sendAttempted && newUser) return 'new-user-message';
       if ((sourceQuiet || message.directTurn) && !sendAttempted && turnId && turnId !== sourceTurn) return 'turn-changed';
       if (sourceQuiet && !sendAttempted && turnProgressRevision !== sourceActivity) return 'turn-progressed';
@@ -12916,8 +12948,11 @@
         return false;
       }
     }
+    // The running turn is named by the page's own turn id. Its question is usually shown too, but
+    // not in the first turn of a chat the app opened (#942, live 2026-10-15), and refusing there
+    // left every automatic continue of a new chat unsent.
     if (message.directTurn && (!target || ((generating || CLF_DOM.generating()) &&
-        (!sourceUser || sourceTurn !== message.directTurn.id)))) return false;
+        (!sourceTurn || sourceTurn !== message.directTurn.id)))) return false;
     // A new chat of a project with a native ChatGPT Project is typed only on that Project's own
     // page, never at the root; ChatGPT may rewrite that route, so its marker can be in the hash.
     const project = typeof message.project === 'string' && /^g-p-[0-9a-f]{32}$/.test(message.project) ? message.project : null;
@@ -13116,6 +13151,21 @@
       // comparison never matched, and that first turn got no ACK, no turn start and no turn end
       // for Goal or Loop to act on. The bootstrap comparison is exact either way (raw, then one
       // unescape); a person's own sends keep the raw comparison in matchesUserSendReceipt.
+      // While ChatGPT thinks or runs a tool it offers only Stop, no Send (measured 2026-10-15 on
+      // the user's Mac: every automatic continue for a long turn timed out unsent, and the turns
+      // broke at 41 and 52 minutes anyway). The automatic continue then does what #1402 decided by
+      // hand: Stop right after the tool result, then send Continue as the next message. A person's
+      // own message is never allowed to stop a turn; it waits for the turn's end instead.
+      let intoTurn = !!message.directTurn;
+      if (intoTurn && input.purpose === 'rotation' && CLF_DOM.generating() &&
+          !await waitPageView(() => !!CLF_DOM.sendButton(), onTarget, 3000)) {
+        if (!CLF_DOM.stopGeneration(onTarget) ||
+            !await waitPageView(() => !CLF_DOM.generating() && !!CLF_DOM.sendButton() && draft.current(), onTarget, 20000)) return fail(t(
+          'content_delivery_rotation_not_stopped',
+          'ChatGPT offered no Send in the running answer, and stopping it for the automatic continue did not finish.'
+        ));
+        intoTurn = false;
+      }
       const nativeSend = () => sendSubmittedText(sendingTarget, false, async sendCurrent => {
         // Preserve the outbox's revocable claim until the actual native Send is ready.
         if (input.recovery && !await recoveryPageUnfinished(() => sendCurrent() && onTarget() && draft.current(), withdrawWhy)) return false;
@@ -13145,8 +13195,14 @@
       // A person's message asking for a picture goes out without the mention (the app decides:
       // ChatGPT switches its own image tool off for a message that mentions an app).
       input.purpose === 'decision' || (input.coreMention === false && !input.recovery && !agent) ? null
-        : input.recovery || agent || mentionCore ? currentCoreMention() : null,
-      sentRequestSince, !!message.directTurn);
+        : input.recovery || agent ? currentCoreMention()
+          // Plugins replaces Core only on ordinary prompts, and only this computer's own Plugins app;
+          // when that app is not found the message keeps Core rather than going out with no app.
+          // `automation` is 'off' on every ordinary message; only Goal and Loop sends are automated.
+          : mentionPlugins && !input.finishOwner && input.automation !== 'goal' && input.automation !== 'loop' && input.purpose !== 'rotation'
+            ? currentPluginsMention() ?? (mentionCore ? currentCoreMention() : null)
+            : mentionCore ? currentCoreMention() : null,
+      since => sentRequestSince(since, forEpoch), intoTurn);
       // #744: one retry when the editor was replaced before anything asked to send it.
       if (!(await nativeSend()) &&
           !(!authorizing && !sendAttempted && !receipt && !draft.current() && draftCurrent() && await nativeSend())) {
@@ -13374,7 +13430,9 @@
       const listUrl = new URL(location.href);
       const pathList = listUrl.pathname === '/settings/plugins-settings' && !listUrl.hash;
       if (pathList || (listUrl.pathname === '/' && listUrl.hash === '#settings/Plugins')) {
-        if (request.appId) {
+        const installedAppId = request.observeOnly === true ? request.appId ?? null : null;
+        const installedSurface = installedAppId ? request.surface ?? null : null;
+        if (request.appId && !installedAppId) {
           const url = new URL(location.href);
           if (pathList) url.pathname = `/settings/plugins-settings/plugin_${request.appId}`;
           else url.hash = `settings/Plugins/plugin_${request.appId}`;
@@ -13383,12 +13441,13 @@
         }
         let linkHref = null;
         const buttons = await waitPageView(() => {
-          const found = CLF_DOM.pluginInstalledButtons(request.connectorName);
+          const found = CLF_DOM.pluginInstalledButtons(request.connectorName, installedAppId, installedSurface);
           linkHref = found?.length === 1 && found[0].tagName === 'A' ? found[0].href : null;
           return found;
         }, current, 8000);
-        if (!buttons || !current()) return false;
-        if (buttons.length !== 1) {
+        if (!current()) return false;
+        if (!buttons && !installedAppId) return false;
+        if (!buttons || buttons.length !== 1 || (installedAppId && buttons[0].tagName !== 'A')) {
           await fail(t(
             'content_connector_identity_ambiguous',
             'Installed plugin identity is unavailable or ambiguous'
@@ -13400,10 +13459,11 @@
           // The native installed link already names an exact management route. Recheck
           // the same visible owner across the await and carry custody into navigation;
           // reading the destination's schema is a later step, not a prerequisite here.
-          const found = CLF_DOM.pluginInstalledButtons(request.connectorName);
+          const found = CLF_DOM.pluginInstalledButtons(request.connectorName, installedAppId, installedSurface);
           if (!current() || !button.isConnected || found?.length !== 1 || found[0] !== button || button.href !== linkHref) return false;
           const url = new URL(linkHref, requestHref);
-          if (url.origin !== listUrl.origin || !/^\/settings\/plugins-settings\/plugin_asdk_app_[a-zA-Z0-9_-]+$/.test(url.pathname) || url.hash) return false;
+          const route = /^\/settings\/plugins-settings\/plugin_(asdk_app_[a-zA-Z0-9_-]+)$/.exec(url.pathname);
+          if (url.origin !== listUrl.origin || !route || url.hash || (installedAppId && route[1] !== installedAppId)) return false;
           url.searchParams.set('cos-plugin-refresh', request.id);
           location.assign(url.href); return true;
         }
@@ -13678,6 +13738,15 @@
         sendResponse({ ok: true, held: setKeepAwake(message.on === true) });
         return false;
       }
+      if (message.type === 'clf-route-changed') {
+        // The extension saw this page take a new address. A hidden tab's own observe tick can be
+        // held back for long; this observation runs now (2026-10-15).
+        if (recorderHandle.healthy()) {
+          try { observe(); } catch { /* The regular tick observes again. */ }
+        }
+        sendResponse({ ok: true });
+        return false;
+      }
       if (message.type === 'clf-recorder-ping') {
         // `busy`: this page is mid-turn or mid-handoff, so the extension must not reload under it.
         sendResponse({ ok: true, recorderVersion: RECORDER_VERSION,
@@ -13706,6 +13775,11 @@
           await pullActivity();
         })().catch(() => {}).then(() => sendResponse({ accepted: resumePendingCompactionFromRepair(message.conversationId) }));
         return true;
+      }
+      // Diagnostics report: which of ChatGPT's controls this page still has. Booleans only.
+      if (message.type === 'clf-page-checks') {
+        sendResponse(CLF_DOM.pageChecks());
+        return false;
       }
       // Popup diagnostics. Ids and counters only — no prose, no transcript, no page text.
       if (message.type === 'clf-page-status') {

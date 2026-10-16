@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { userTitle } from './title.js';
 import { readDurable, writeDurableNow, writeDurableSoon } from '../durable.js';
 import { getSession, findSessionByConversation, createSession, deleteSession, rebindSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, turnHasMcpCall, questionHasMcpCall, sessionDirectoryMissing, readCompletedFinal, readLatestUserMessage } from './store.js';
-import { assignSessionProject, getProject, projectWorkspace, getSessionProject } from '../projects.js';
+import { assignSessionProject, getProject, getSessionProject, localProjectPath, projectWorkspace } from '../projects.js';
 import { isChatBlocked } from './blocked-chats.js';
 import { wakeBrowserWork } from '../browser-wake.js';
 import { logInfo, logWarn } from '../logger.js';
@@ -830,7 +830,7 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     if (getConfig().ui.autoSelectSkills === true && authoredOrdinary && invokedSkills(input.text).length === 0) {
       const folder = input.sessionId ? await getSessionProject(input.sessionId)
         : input.projectId ? await projectWorkspace(input.projectId) : null;
-      entry.autoSkills = await autoSelectManagedSkills(input.text, { projectPath: folder?.real ?? null });
+      entry.autoSkills = await autoSelectManagedSkills(input.text, { projectPath: localProjectPath(folder) });
     }
     if (retryOpening) { entry.opening = true; entry.requestedSessionId = input.sessionId; }
     entry.conversationId = await target(entry);
@@ -1398,7 +1398,7 @@ export function fileRecoveryInput(sessionId: string, conversationId: string, tur
     const now = Date.now();
     const row: InputEntry = { id: randomUUID(), sessionId, conversationId, owner: null, state: 'queued',
       mode: 'after-turn', dueAt: now, createdAt: now, model: null, reasoningEffort: null,
-      text: recoveryMessage(),
+      text: recoveryMessage({ playful: getConfig().ui.playfulContinue === true }),
       recovery: { questionId: question.messageId, episode, pro, busyUntil, phase: 'ready' },
       silenceBoundary: { turnId, conversationId, workSeq: workSequence(work), acceptedAt: now } };
     if (!await recoveryCurrent(row)) {

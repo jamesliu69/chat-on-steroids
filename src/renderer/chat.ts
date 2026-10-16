@@ -1,4 +1,5 @@
 import { hasProviderDirective, resolvedCapture, withoutProviderDirectives } from '../shared/content-reference.js';
+import { completedDilText } from '../shared/dil-tables.js';
 import { initChatSearch, type ChatSearch } from './chat-search.js';
 import { initChatFind } from './chat-find.js';
 import { createWorkspaceTerminal } from './workspace-terminal.js';
@@ -91,6 +92,7 @@ import { browserExtensionRequired, type AppState, type Config } from '../shared/
 import { $, ago, clockTime, compactNumber, disclosureChevron, el, icon, run, setIcon, toast } from './dom.js';
 import { APPROVAL_ANSWERED_TEXT, APPROVAL_PROGRESS_PREFIX, APPROVAL_WAITING_TEXT, type ApprovalCardView } from '../shared/approval-wait.js';
 import { openRowMenu, rowMenuOpenFor, toggleRowMenu, type RowMenuItem } from './row-menu.js';
+import { initSshProjectDialog } from './ssh-project-dialog.js';
 
 const api = window.api;
 let chatSearch: ChatSearch | null = null;
@@ -1322,11 +1324,11 @@ function maybePageSessions(): void {
 
 let diagnosticsExpanded = false;
 
-function projectSortEntries(): Array<{ id: string; scope: string }> {
+function projectSortEntries(groupOf: typeof projectGroup = projectGroup): Array<{ id: string; scope: string }> {
   const ids = new Set(projects.filter(project => !project.ungrouped).map(project => project.id));
   for (const entry of sessions) {
     if (entry.origin?.kind === 'worker' || (!entry.conversationId && entry.origin?.kind !== 'desktop')) continue;
-    const id = projectGroup(entry.projectId);
+    const id = groupOf(entry.projectId);
     if (id) ids.add(id);
   }
   return [...ids].map(id => ({ id, scope: SIDEBAR_PROJECT_SCOPE }));
@@ -1358,7 +1360,10 @@ function paintSessions(): void {
   }
   const rows: HTMLElement[] = [];
   // A task and its expanded workers are one sidebar item for project pagination.
-  const projectRows = new Map<string, Array<{ rows: HTMLElement[]; selected: boolean }>>();
+  // Store lightweight owners until the visible page is known. Creating DOM for
+  // hundreds of older, off-page project tasks on every activity push stalls the renderer
+  // even though those nodes are immediately discarded by the project page limit.
+  const projectRows = new Map<string, Array<{ entry: SessionSummary; workers?: SessionSummary[]; selected: boolean }>>();
   const diagnostics: SessionSummary[] = [];
   const group = (key: string, workers: SessionSummary[], parentRow?: HTMLElement, target = rows): void => {
     const button = el('button', 'worker-toggle');
@@ -1370,27 +1375,40 @@ function paintSessions(): void {
     if (parentRow) { parentRow.append(button); parentRow.title += ` · ${button.title}`; } else target.push(button);
     if (expandedWorkers.has(key)) { const box = el('div', 'worker-group'); box.append(...workers.map(sessionRow)); target.push(box); }
   };
-  // Pinned chats lead their own list (#1133); each group keeps its own manual order.
-  const orderedSessions = [...new Set(sessions.map(entry => projectGroup(entry.projectId) ?? ''))].flatMap(scope => {
-    const members = sessions.filter(entry => (projectGroup(entry.projectId) ?? '') === scope);
-    const group = (pinned: boolean) => {
+  // Pinned chats lead their own list (#1133). Resolve project membership once for
+  // this paint: scanning all sessions for each project and then searching the project
+  // catalog for every comparison used to multiply work on frequent activity pushes.
+  // A missing project remains grouped, just as projectGroup() does; only an explicitly
+  // ungrouped project returns its chats to the ordinary list.
+  const ungrouped = new Set(projects.filter(project => project.ungrouped).map(project => project.id));
+  const groupOf = (id: string | null | undefined): string | null => id && !ungrouped.has(id) ? id : null;
+  const scoped = new Map<string, SessionSummary[]>();
+  for (const entry of sessions) {
+    const scope = groupOf(entry.projectId) ?? '';
+    const group = scoped.get(scope);
+    if (group) group.push(entry);
+    else scoped.set(scope, [entry]);
+  }
+  const orderedSessions = [...scoped].flatMap(([scope, members]) => {
+    const ordered = (pinned: boolean) => {
       const rows = members.filter(entry => pinnedChat(entry) === pinned);
       return sidebarOrder ? sidebarOrder.ordered(pinnedSortScope(scope, pinned), rows) : rows;
     };
-    return [...group(true), ...group(false)];
+    return [...ordered(true), ...ordered(false)];
   });
   for (const entry of orderedSessions) {
     if (entry.origin?.kind === 'worker') continue;
     if (!entry.conversationId && entry.origin?.kind !== 'desktop') { diagnostics.push(entry); continue; }
-    const projectId = projectGroup(entry.projectId);
-    const target: HTMLElement[] = projectId ? [] : rows;
-    const row = sessionRow(entry); target.push(row);
-    row.dataset.sortScope = pinnedSortScope(projectId ?? '', pinnedChat(entry));
-    const workers = children.get(entry.id); if (workers) group(entry.id, workers, row, target);
+    const projectId = groupOf(entry.projectId);
+    const workers = children.get(entry.id);
     if (projectId) {
       const tasks = projectRows.get(projectId) ?? [];
-      tasks.push({ rows: target, selected: entry.id === selectedId || workers?.some(worker => worker.id === selectedId) === true });
+      tasks.push({ entry, workers, selected: entry.id === selectedId || workers?.some(worker => worker.id === selectedId) === true });
       projectRows.set(projectId, tasks);
+    } else {
+      const row = sessionRow(entry); rows.push(row);
+      row.dataset.sortScope = pinnedSortScope('', pinnedChat(entry));
+      if (workers) group(entry.id, workers, row, rows);
     }
   }
   const otherWorkers = children.get('other-workers') ?? [];
@@ -1402,7 +1420,7 @@ function paintSessions(): void {
     history.addEventListener('toggle', () => { if (history.isConnected) history.open ? expandedWorkers.add('other-workers') : expandedWorkers.delete('other-workers'); });
     rows.push(history);
   }
-  const projectEntries = projectSortEntries();
+  const projectEntries = projectSortEntries(groupOf);
   const orderedProjects = sidebarOrder?.ordered(SIDEBAR_PROJECT_SCOPE, projectEntries) ?? projectEntries;
   const projectSections: HTMLElement[] = [];
   for (const { id } of orderedProjects) {
@@ -1416,7 +1434,14 @@ function paintSessions(): void {
     heading.setAttribute('aria-keyshortcuts', 'Alt+ArrowUp Alt+ArrowDown');
     const label = el('span', 'project-name', () => project?.name ?? t("Unavailable project"));
     ui(heading, 'title', () => project?.path ?? t("Unavailable project"));
-    heading.append(icon('i-folder'), label); section.append(heading);
+    heading.append(icon('i-folder'), label);
+    if (project?.remote) {
+      // A folder on a server (#1469): the address is the hover text, the badge says how it is reached.
+      const badge = el('span', 'project-badge', () => 'SSH');
+      ui(badge, 'title', () => project.remote ? `${project.remote.host}${project.remote.port ? `:${project.remote.port}` : ''}` : '');
+      heading.append(badge);
+    }
+    section.append(heading);
     // Native `toggle` is queued after activation. A concurrent activity repaint can replace
     // this node first and lose the click. Commit the summary's pointer/keyboard click to the
     // one disclosure owner synchronously, then project it onto this details element.
@@ -1452,7 +1477,14 @@ function paintSessions(): void {
     const tasks = projectRows.get(id) ?? [];
     const count = projectVisibleCounts.get(id) ?? PROJECT_TASK_PAGE_SIZE;
     const shown = tasks.filter((task, index) => index < count || task.selected);
-    section.append(...shown.flatMap(task => task.rows));
+    const shownRows: HTMLElement[] = [];
+    for (const task of shown) {
+      const row = sessionRow(task.entry);
+      row.dataset.sortScope = pinnedSortScope(id, pinnedChat(task.entry));
+      shownRows.push(row);
+      if (task.workers) group(task.entry.id, task.workers, row, shownRows);
+    }
+    section.append(...shownRows);
     // The project's own older chats count as "more" too, once it is known to have some (#1190).
     const older = !!projectHistory.get(id)?.cursor;
     if (shown.length < tasks.length || older) {
@@ -2687,7 +2719,8 @@ export function renderedMarkdown(source: string, capture?: StoredText, reference
   // Fiber's canonical text can be complete while a background provider tab still
   // paints its first words. Render this revision directly; captured DOM HTML is
   // never evidence that it contains the current message revision.
-  let text = withoutMessageReaction(source).slice(0, MAX_RENDERED_HTML_CHARS);
+  // A table ChatGPT drew in full but wrote with only its header (#1477) gets its recorded rows.
+  let text = completedDilText(withoutMessageReaction(source), capture).slice(0, MAX_RENDERED_HTML_CHARS);
   // A ChatGPT directive this app cannot draw (#574 and whatever ChatGPT adds next): the page's own
   // recorded rendering is the faithful presentation; without one, the directive lines are dropped.
   if (hasProviderDirective(text)) {
@@ -6118,10 +6151,12 @@ function scheduleReload(change?: SessionChange): void {
 
 /**
  * Retired automatic drafts belong to their creation time, never the live composer queue. A dropped
- * fresh-turn continue (#1402) is one too: the app files it again by itself.
+ * fresh-turn continue (#1402) is one too, cancelled or failed: the app files it again by itself, and
+ * failed ones kept at the end of the chat read as its newest messages long after (2026-10-15).
  */
 function historicalAutomaticInput(entry: InputEntry): boolean {
-  return (!!entry.recovery || (!!entry.finishOwner && !entry.finishOwner.userRequested) || entry.purpose === 'rotation') &&
+  if (entry.purpose === 'rotation') return (entry.state === 'cancelled' || entry.state === 'failed') && !!entry.error;
+  return (!!entry.recovery || (!!entry.finishOwner && !entry.finishOwner.userRequested)) &&
     entry.state === 'cancelled' && !!entry.error;
 }
 
@@ -6986,7 +7021,12 @@ export function initChat(next: Deps): void {
         return;
       }
       runSlashCommand(name);
-    }, commandAvailable: name => !CHAT_COMMANDS.has(name) || openChatSummary() !== null });
+    }, commandAvailable: name => !CHAT_COMMANDS.has(name) || openChatSummary() !== null,
+    listFiles: async (projectId, directory) => {
+      const result = await api.listProjectFiles(projectId, directory);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
+    } });
   skillPicker.restore();
   $('generateFinishGoal').addEventListener('click', async () => {
     const button = $<HTMLButtonElement>('generateFinishGoal'), id = selectedId, turnId = controlledTurnId;
@@ -7034,20 +7074,38 @@ export function initChat(next: Deps): void {
   $('newChat').addEventListener('click', () => {
     selectNewChat();
   });
-  $('addProject').addEventListener('click', async event => {
-    event.preventDefault();
+  // A project picked or added elsewhere published a newer durable catalog. A list refresh started
+  // before it may still return an empty catalog and otherwise erase this sidebar group.
+  const showAddedProject = (project: LocalProject, generation: number) => {
+    ++sessionsLoadGeneration;
+    projects = [...projects.filter(row => row.id !== project.id), project];
+    expandedProjects.add(project.id);
+    if (generation === selectionGeneration) selectNewChat(project.id); else paintSessions();
+  };
+  const addLocalProject = async () => {
     const button = $<HTMLButtonElement>('addProject'); button.disabled = true;
     const generation = selectionGeneration;
     try {
       const project = await run(api.addProject());
-      if (!project) return;
-      // The picker published a newer durable catalog. A list refresh started before it
-      // may still return an empty catalog and otherwise erase this sidebar group.
-      ++sessionsLoadGeneration;
-      projects = [...projects.filter(row => row.id !== project.id), project];
-      expandedProjects.add(project.id);
-      if (generation === selectionGeneration) selectNewChat(project.id); else paintSessions();
+      if (project) showAddedProject(project, generation);
     } finally { button.disabled = false; }
+  };
+  // The composer's Share a folder means a folder on this computer: straight to the picker.
+  $('composerFolder').addEventListener('click', () => void addLocalProject());
+  let sshDialogGeneration = 0;
+  const sshProjectDialog = initSshProjectDialog(api, project => showAddedProject(project, sshDialogGeneration));
+  // A folder on this computer, or one on a server (#1469).
+  $('addProject').addEventListener('click', event => {
+    event.preventDefault();
+    toggleRowMenu({
+      owner: 'add-project',
+      anchor: () => document.getElementById('addProject'),
+      label: () => t('Add a project folder'),
+      items: () => [
+        { action: 'add-local-project', label: () => t('Folder on this computer…'), icon: 'i-folder', run: () => void addLocalProject() },
+        { action: 'add-ssh-project', label: () => t('Folder on a server (SSH)…'), icon: 'i-terminal', run: () => { sshDialogGeneration = selectionGeneration; sshProjectDialog.open(); } }
+      ]
+    });
   });
   const composerMenus = [...document.querySelectorAll<HTMLDetailsElement>('.composer-menu, .session-controls')];
   document.addEventListener('click', (event) => {
