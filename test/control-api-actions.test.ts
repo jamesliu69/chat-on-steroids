@@ -64,6 +64,7 @@ const startup = await import('../src/main/browser-startup.js');
 const connection = await import('../src/main/connection.js');
 const { setChatBlocked } = await import('../src/main/session/blocked-chats.js');
 const controlActions = await import('../src/main/control-actions.js');
+const chatModels = await import('../src/main/chat-models.js');
 const controlApi = await import('../src/main/control-api.js');
 const { listInputs, resetInputForTests } = input;
 
@@ -1074,6 +1075,113 @@ describe('what a message row proves', () => {
     const listed = new Map((await call('GET', '/v1/inputs')).body.inputs.map((entry: { id: string }) => [entry.id, entry]));
     expect(listed.get(recovery.id)).toMatchObject({ automatic: true, state: 'failed', delivery: 'not_sent' });
     expect(listed.get(typed.id)).toMatchObject({ automatic: false });
+  });
+});
+
+describe('choosing a model', () => {
+  const ready = () => vi.spyOn(chatModels, 'getChatModels').mockReturnValue({
+    state: 'ready', requestedAt: null, observedAt: 1,
+    models: [{ id: 'gpt-6', label: 'GPT-6', efforts: ['medium', 'high'], aliases: ['gpt-6-thinking'] }]
+  });
+
+  it('sends with a model and thinking level the account offers, filed under the catalog id', async () => {
+    const catalog = ready();
+    try {
+      const exact = await post('/v1/inputs', sendBody({ model: 'gpt-6', reasoningEffort: 'medium' }));
+      expect(exact.status).toBe(202);
+      expect(exact.body.input).toMatchObject({ model: 'gpt-6', reasoningEffort: 'medium' });
+      await post('/v1/inputs/' + exact.body.input.id + '/cancel');
+      const alias = await post('/v1/inputs', sendBody({ model: 'gpt-6-thinking', reasoningEffort: 'high' }));
+      expect(alias.status).toBe(202);
+      expect((await outbox()).find((entry) => entry.id === alias.body.input.id)).toMatchObject({ model: 'gpt-6', reasoningEffort: 'high' });
+      // The same id with another model is a different message, never a replay.
+      const changed = await post('/v1/inputs', { id: alias.body.input.id, sessionId: chatSession, text: 'Keep going', model: 'gpt-6', reasoningEffort: 'medium' });
+      expect(changed.body.error).toBe('id_conflict');
+    } finally {
+      catalog.mockRestore();
+    }
+  });
+
+  it.each(['pending', 'removed'] as const)('replays an accepted canonical model independently of a %s catalog', async state => {
+    const catalog = ready();
+    const body = sendBody({ model: 'gpt-6', reasoningEffort: 'high' });
+    try {
+      expect((await post('/v1/inputs', body)).status).toBe(202);
+      catalog.mockReturnValue(state === 'pending'
+        ? { state: 'pending', requestedAt: 2, observedAt: 1, models: [{ id: 'gpt-6', label: 'GPT-6', efforts: ['medium'], aliases: ['gpt-6-thinking'] }] }
+        : { state: 'ready', requestedAt: null, observedAt: 2, models: [{ id: 'gpt-7', label: 'GPT-7', efforts: ['high'] }] });
+      const sends = vi.spyOn(startInput, 'sendDesktopInput');
+      try {
+        const replay = await post('/v1/inputs', body);
+        expect(replay.status).toBe(200);
+        expect(replay.body).toMatchObject({ replayed: true, input: { id: body.id, model: 'gpt-6', reasoningEffort: 'high' } });
+        expect((await post('/v1/inputs', { ...body, model: 'gpt-7' })).body.error).toBe('id_conflict');
+        expect((await post('/v1/inputs', { ...body, reasoningEffort: 'medium' })).body.error).toBe('id_conflict');
+        expect(sends).not.toHaveBeenCalled();
+      } finally { sends.mockRestore(); }
+    } finally { catalog.mockRestore(); }
+  });
+
+  it.each(['GPT-6', '6'])('replays a positively retained display or legacy label (%s), refusing ambiguous or missing identity', async model => {
+    const catalog = ready();
+    const body = sendBody({ model, reasoningEffort: 'high' });
+    try {
+      expect((await post('/v1/inputs', body)).status).toBe(202);
+      catalog.mockReturnValue({ state: 'pending', requestedAt: 2, observedAt: 1,
+        models: [{ id: 'gpt-6', label: 'GPT-6', efforts: ['medium'] }] });
+      const sends = vi.spyOn(startInput, 'sendDesktopInput');
+      try {
+        const replay = await post('/v1/inputs', body);
+        expect(replay.status).toBe(200);
+        expect(replay.body).toMatchObject({ replayed: true, input: { id: body.id, model: 'gpt-6', reasoningEffort: 'high' } });
+        catalog.mockReturnValue({ state: 'ready', requestedAt: null, observedAt: 2, models: [
+          { id: 'gpt-6', label: 'GPT-6', efforts: ['high'] },
+          { id: 'another-lane', label: '6', efforts: ['high'] }
+        ] });
+        expect((await post('/v1/inputs', body)).body.error).toBe('id_conflict');
+        // A raw canonical ID still proves the accepted row even when labels are ambiguous.
+        expect((await post('/v1/inputs', { ...body, model: 'gpt-6' })).body.replayed).toBe(true);
+        catalog.mockReturnValue({ state: 'unknown', requestedAt: null, observedAt: null, models: [] });
+        expect((await post('/v1/inputs', body)).body.error).toBe('id_conflict');
+        expect(sends).not.toHaveBeenCalled();
+      } finally { sends.mockRestore(); }
+    } finally { catalog.mockRestore(); }
+  });
+
+  it('replays only a positively retained alias and never guesses a removed alias', async () => {
+    const catalog = ready();
+    const body = sendBody({ model: 'gpt-6-thinking', reasoningEffort: 'high' });
+    try {
+      expect((await post('/v1/inputs', body)).status).toBe(202);
+      catalog.mockReturnValue({ state: 'pending', requestedAt: 2, observedAt: 1,
+        models: [{ id: 'gpt-6', label: 'GPT-6', efforts: ['medium'], aliases: ['gpt-6-thinking'] }] });
+      expect((await post('/v1/inputs', body)).body).toMatchObject({ replayed: true, input: { model: 'gpt-6' } });
+      catalog.mockReturnValue({ state: 'ready', requestedAt: null, observedAt: 2, models: [] });
+      expect((await post('/v1/inputs', body)).body.error).toBe('id_conflict');
+      expect((await post('/v1/inputs', { ...body, model: 'gpt-6' })).body.replayed).toBe(true);
+    } finally { catalog.mockRestore(); }
+  });
+
+  it('refuses a model or level the account does not offer, half a pair, and an unread catalog, before admitting anything', async () => {
+    const catalog = ready();
+    try {
+      expect((await post('/v1/inputs', sendBody({ model: 'gpt-9', reasoningEffort: 'high' }))).body.error).toBe('model_unknown');
+      const effort = await post('/v1/inputs', sendBody({ model: 'gpt-6', reasoningEffort: 'xhigh' }));
+      expect(effort.body).toMatchObject({ error: 'effort_unavailable', detail: 'gpt-6 offers medium, high' });
+      expect((await post('/v1/inputs', sendBody({ model: 'gpt-6' }))).body.error).toBe('invalid_body');
+      expect((await post('/v1/inputs', sendBody({ reasoningEffort: 'high' }))).body.error).toBe('invalid_body');
+      catalog.mockReturnValue({ state: 'unknown', requestedAt: null, observedAt: null, models: [] });
+      expect((await post('/v1/inputs', sendBody({ model: 'gpt-6', reasoningEffort: 'high' }))).body.error).toBe('models_unknown');
+      expect(await outbox()).toEqual([]);
+    } finally {
+      catalog.mockRestore();
+    }
+  });
+
+  it("leaves ChatGPT's own selection when no model is named", async () => {
+    const sent = await post('/v1/inputs', sendBody());
+    expect(sent.status).toBe(202);
+    expect(sent.body.input).toMatchObject({ model: null, reasoningEffort: null });
   });
 });
 

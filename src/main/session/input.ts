@@ -91,6 +91,8 @@ const entrySchema = inputArgs.extend({
   /** Tool-result corrections remain inside their original generation in history. */
   toolTurnId: z.string().min(1).max(256).optional(),
   sendAuthorizedAt: z.number().optional(),
+  /** One consumed Stop permit for this rotation claim; never grants Send or another document a retry. */
+  rotationStopAuthorizedAt: z.number().optional(),
   requiresAuthorization: z.boolean().optional(),
   /** A browser pickup timeout is safely replayable only before Send authorization. */
   pickupFailedAt: z.number().optional(),
@@ -297,8 +299,8 @@ export function deliveryProof(row: Readonly<InputEntry>): DeliveryProof {
   if (terminal(row)) return neverAuthorized(row) ? 'not_sent' : 'unconfirmed';
   return row.state === 'queued' || (row.state === 'browser' && neverAuthorized(row)) ? 'pending' : 'unconfirmed';
 }
-const preparable = (row: InputEntry): boolean => row.state === 'queued' ||
-  (row.state === 'browser' && row.requiresAuthorization === true && row.sendAuthorizedAt === undefined);
+const preparable = (row: InputEntry): boolean => row.rotationStopAuthorizedAt === undefined && (row.state === 'queued' ||
+  (row.state === 'browser' && row.requiresAuthorization === true && row.sendAuthorizedAt === undefined));
 const needsHistory = (row: InputEntry): boolean => row.purpose !== 'decision' && !row.historyRecorded &&
   ((row.state === 'tool' && Number.isFinite(row.offeredAt)) || ((row.state === 'sent' || row.state === 'cancelled') && !!row.messageId));
 const pendingStages = (row: InputEntry): boolean => row.state === 'sent' && !!row.stages?.length && !row.stagesApplied;
@@ -1102,6 +1104,33 @@ export function sendQueuedInputNow(id: string): Promise<boolean> {
     await commit(current.map(entry => entry === row ? { ...rest, mode: 'auto' as const, directTurn: policy.directTurn!, transportIntent: 'browser' as const,
       dueAt: Math.min(row.dueAt, Date.now()) } : entry));
     return true;
+  });
+}
+
+/** Stop spends this exact rotation claim once, independently of the later native Send fence.
+ * A lost reply or restart cannot repeat the destructive action or transfer it to a fresh page. */
+export function authorizeRotationStop(id: string, owner: string, conversationId: string, turnId: string): Promise<boolean> {
+  return serial(async () => {
+    const current = await load();
+    const row = current.find(entry => entry.id === id && entry.owner === owner && entry.state === 'browser' &&
+      entry.conversationId === conversationId && entry.purpose === 'rotation' && entry.requiresAuthorization === true &&
+      entry.sendAuthorizedAt === undefined && entry.rotationStopAuthorizedAt === undefined && entry.directTurn?.id === turnId);
+    if (!row?.sessionId) return false;
+    const sessionId = row.sessionId;
+    const stillCurrent = async (): Promise<boolean> => {
+      if (!((getConfig().ui.rotateTurnMinutes ?? 0) > 0) || isChatBlocked(conversationId) || inFlightToolCalls(conversationId) > 0) return false;
+      const policy = await sessionInputPolicy(sessionId);
+      const session = await getSession(sessionId);
+      return (getConfig().ui.rotateTurnMinutes ?? 0) > 0 && !isChatBlocked(conversationId) && inFlightToolCalls(conversationId) === 0 &&
+        session?.conversationId === conversationId && session.activeTurnId === turnId &&
+        session.origin?.kind !== 'worker' && session.origin?.kind !== 'helper' &&
+        policy.directTurn?.id === turnId && policy.directTurn.startedAt === row.directTurn!.startedAt;
+    };
+    if (!await stillCurrent()) return false;
+    await commit(current.map(entry => entry === row ? { ...row, rotationStopAuthorizedAt: Date.now() } : entry));
+    // Configuration and recorder ownership can change while the durable write is pending.
+    // The permit remains consumed even when that change forbids publishing it to the page.
+    return stillCurrent();
   });
 }
 

@@ -5,7 +5,7 @@ import { approvalCardView, requestApprovalAnswer } from './approval-wait.js';
 import { registerDictationIpc } from './dictation.js';
 import { CONNECTOR_SUFFIX_MAX, CONNECTOR_SUFFIX_PATTERN } from '../shared/connector-names.js';
 import { setStopNoticeTranslations } from './stuck-notice.js';
-import { mainText, setMainTextTranslations } from './main-texts.js';
+import { setMainTextTranslations } from './main-texts.js';
 import { applyLoginStartup, supportsLoginStartup } from './window-lifecycle.js';
 import { startControlApi, stopControlApi } from './control-api.js';
 import { appearanceSchema } from './appearance-schema.js';
@@ -53,7 +53,8 @@ import { confirmedPluginSchemas, pluginRefreshPublications, pluginRefreshStatuse
  * key but can never read it back.
  */
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import { repairMacOSPermissions, resetMacOSPermissions } from './computer/macos-grants.js';
 import { z } from 'zod';
 import {
   CAPABILITIES,
@@ -78,7 +79,7 @@ import { runningToolActivity } from './mcp/call-context.js';
 import { onBackgroundExecChange, runningExecProcesses, stopExecProcess } from './codex/ownership.js';
 import { keychainNoticeReady } from './keychain-notice.js';
 import { runDiagnostics } from './diagnostics.js';
-import { readRecentLog, renderDiagnosticsReport, saveDiagnosticsReport, systemFacts, memoryFacts } from './diagnostics-report.js';
+import { collectReportFacts, readRecentLog, renderDiagnosticsReport, saveDiagnosticsReport, systemFacts, memoryFacts } from './diagnostics-report.js';
 import { listSessions, readTurnTraces } from './session/store.js';
 import { formatLogAsJson, formatLogForClipboard, getLog, logInfo, logWarn, onLog } from './logger.js';
 import { managedWorktreeCleanupOffers, acknowledgeManagedWorktreeCleanupOffer } from './agents.js';
@@ -1201,6 +1202,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       new Promise<null>(resolve => setTimeout(() => resolve(null), 10_000).unref())
     ]);
     const workers = swarmState().agents;
+    const sessions = await listSessions().catch(() => []);
+    const now = Date.now();
+    const facts = await collectReportFacts({ update: updateStatus(), sessions,
+      inputs: await listInputs().catch(() => []), now }).catch(() => undefined);
     const text = renderDiagnosticsReport({
       app: systemFacts(app), home: app.getPath('home'),
       bridge: await bridgeStatus(), extension: await companionDiagnostics().catch(() => null),
@@ -1208,17 +1213,31 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
       commands: pendingCommands().map(({ id, what, lastError }) => ({ command: id, what, lastError })),
       workers: workers.map(({ id, role, state, model, reasoningEffort, createdAt, activatedAt, finishedAt, pending, delivered, conversationId, revivable }) =>
         ({ worker: id, role, state, model, reasoningEffort, createdAt, activatedAt, finishedAt, pending, delivered, conversationId, revivable })),
-      sessions: await listSessions().catch(() => []),
+      sessions,
       projects: await listProjects().catch(() => []),
       workerTexts: workers.flatMap(worker => [worker.task ?? '', worker.label ?? '', worker.result ?? '']),
       log: await readRecentLog(),
       memory: memoryFacts(getWindow()),
-      now: Date.now()
+      ...(facts ? { facts } : {}),
+      now
     });
     return saveDiagnosticsReport(text, getWindow());
   });
   handle('desktop:requestAccessibility', async () => {
     await refreshMacOSDesktopAccess({ promptAccessibility: true });
+    return buildState();
+  });
+  // A grant from an earlier build no longer applies, yet System Settings shows it on: reset this
+  // app's own entries and ask again, so macOS files the grant under the build running now.
+  handle('desktop:repairPermissions', async () => {
+    const access = getMacOSDesktopAccess();
+    if (process.platform !== 'darwin' || !access) return buildState();
+    const reset = await repairMacOSPermissions(access, {
+      reset: resetMacOSPermissions,
+      requestScreen: async () => { await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }); },
+      refresh: async options => { await refreshMacOSDesktopAccess(options); }
+    });
+    logInfo(`desktop macos permissions reset for a new prompt: ${reset.join(', ') || 'none'}`);
     return buildState();
   });
 
@@ -1248,18 +1267,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
   // artifact makes that mean anything. The quit is what applies it, at the end of the same
   // shutdown sequence every other quit runs; refusing here is how a press with nothing staged
   // avoids closing the app for no reason.
-  handle('update:all', async () => updateAll(quitToInstall, url => shell.openExternal(url), async version => {
-    const window = getWindow();
-    if (!window || window.isDestroyed()) return false;
-    const { response } = await dialog.showMessageBox(window, {
-      type: 'question', title: 'Chat On Steroids',
-      message: mainText('Restart to install the update?'),
-      detail: `${version}\n${mainText('Chat On Steroids will close and restart. Running chats, agents and commands may be interrupted.')}`,
-      buttons: [mainText('Keep working'), mainText('Restart and install')],
-      defaultId: 0, cancelId: 0, noLink: true
-    });
-    return response === 1 && getWindow() === window && !window.isDestroyed();
-  }));
+  // Update all. A downloaded update restarts only for the exact version the person approved in
+  // the app's own dialog; any other call answers `confirm`, so the window can ask first.
+  handle('update:all', async payload => updateAll(quitToInstall, url => shell.openExternal(url),
+    async version => typeof payload === 'string' && payload === version));
   handle('update:install', async () => {
     if (!markInstallOnQuit()) throw new Error('There is no downloaded update to install yet');
     logInfo('update: install requested; quitting to hand the update over');

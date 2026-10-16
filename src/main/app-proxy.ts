@@ -18,6 +18,7 @@ import { proxyForLog, proxyUrlFromResolution } from './tunnel/proxy.js';
  */
 const ALWAYS_DIRECT = ['localhost', '127.0.0.1', '::1', '.localhost'];
 const USABLE = /^https?:\/\/\S+$/i;
+const PROXY_LOOKUP_MS = 3_000;
 
 export interface AppProxySettings {
   HTTP_PROXY: string;
@@ -32,12 +33,32 @@ export function appProxySettings(resolution: string, env: Record<string, string 
     const entries = Object.entries(env).filter(([key, entry]) => key.toUpperCase() === name && entry?.trim());
     return (entries.find(([key]) => key === name.toLowerCase()) ?? entries[0])?.[1]?.trim() ?? '';
   };
-  const own = [value('HTTPS_PROXY'), value('HTTP_PROXY')].find(url => USABLE.test(url));
+  const httpProxy = value('HTTP_PROXY');
+  const httpsProxy = value('HTTPS_PROXY');
+  const ownHttp = USABLE.test(httpProxy) ? httpProxy : '';
+  const ownHttps = USABLE.test(httpsProxy) ? httpsProxy : '';
   const system = proxyUrlFromResolution(resolution);
-  const url = own ?? (system && USABLE.test(system) ? system : null);
-  if (!url) return null;
-  const exceptions = [...value('NO_PROXY').split(','), ...ALWAYS_DIRECT, ...directHosts].map(host => host.trim()).filter(Boolean);
-  return { HTTP_PROXY: url, HTTPS_PROXY: url, NO_PROXY: [...new Set(exceptions)].join(',') };
+  // Keep explicit protocol URLs distinct; leave an absent protocol to Node's native behavior.
+  const own = Boolean(ownHttp || ownHttps);
+  const fallback = !own && system && USABLE.test(system) ? system : '';
+  if (!own && !fallback) return null;
+  const exceptions = [...value('NO_PROXY').split(','), ...ALWAYS_DIRECT, ...(own ? [] : directHosts)].map(host => host.trim()).filter(Boolean);
+  return { HTTP_PROXY: ownHttp || fallback, HTTPS_PROXY: ownHttps || fallback, NO_PROXY: [...new Set(exceptions)].join(',') };
+}
+
+/** PAC lookup failure is unknown; it cannot authorize a direct-endpoint exception. */
+async function boundedResolution(resolve: (url: string) => Promise<string>, url: string, deadline: number): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => resolve(url)),
+      new Promise<null>(finish => { timer = setTimeout(() => finish(null), Math.max(0, deadline - Date.now())); })
+    ]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 let applied = 'null';
@@ -54,21 +75,28 @@ export async function applyAppProxy(
   env: Record<string, string | undefined> = process.env
 ): Promise<void> {
   if (typeof http.setGlobalProxyFromEnv !== 'function') return;
-  const resolution = await resolve('https://github.com/').catch(() => 'DIRECT');
-  const directHosts: string[] = [];
-  for (const endpoint of endpoints) {
-    let url: URL;
-    try { url = new URL(endpoint); } catch { continue; }
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
-    if (proxyUrlFromResolution(await resolve(url.href).catch(() => 'DIRECT')) === null) directHosts.push(url.hostname.replace(/^\[|\]$/g, ''));
-  }
-  const settings = appProxySettings(resolution, env, directHosts);
+  const urls = endpoints.flatMap(endpoint => {
+    try {
+      const url = new URL(endpoint);
+      return url.protocol === 'http:' || url.protocol === 'https:' ? [url] : [];
+    } catch { return []; }
+  });
+  // Every lookup shares one startup budget, rather than adding a deadline per endpoint in series.
+  const deadline = Date.now() + PROXY_LOOKUP_MS;
+  const [resolution, ...answers] = await Promise.all([
+    boundedResolution(resolve, 'https://github.com/', deadline),
+    ...urls.map(url => boundedResolution(resolve, url.href, deadline))
+  ]);
+  const directHosts = answers.flatMap((answer, index) =>
+    answer !== null && proxyUrlFromResolution(answer) === null && answer.split(';').some(entry => entry.trim().toUpperCase() === 'DIRECT')
+      ? [urls[index]!.hostname.replace(/^\[|\]$/g, '')] : []);
+  const settings = appProxySettings(resolution ?? 'DIRECT', env, directHosts);
   const key = JSON.stringify(settings);
   if (key === applied) return;
   restore?.();
   restore = settings ? http.setGlobalProxyFromEnv({ ...settings }) : null;
   applied = key;
-  logInfo(settings ? `App requests go via proxy ${proxyForLog(settings.HTTPS_PROXY)}` : 'App requests go direct');
+  logInfo(settings ? `App requests go via proxy ${proxyForLog(settings.HTTPS_PROXY || settings.HTTP_PROXY)}` : 'App requests go direct');
 }
 
 let source: { resolve: (url: string) => Promise<string>; endpoints: () => readonly string[] } | null = null;

@@ -89,7 +89,7 @@
         </section>
 
         <div class="sidebar-bottom">
-          <button class="btn" id="workspaceSettings" type="button"><i class="ico ph ph-gear-six" aria-hidden="true"></i>Settings</button>
+          <button class="btn" id="workspaceSettings" type="button"><i class="ico ph ph-gear-six" aria-hidden="true"></i><span class="sidebar-bottom-label">Settings</span></button>
           <div class="connection-anchor">
             <button
               class="sidebar-connection"
@@ -164,6 +164,12 @@
           <button class="btn btn-solid" id="openPluginRefreshReminder" type="button" data-link="https://chatgpt.com/settings/plugins-settings"><i class="ico ph ph-arrow-square-out" aria-hidden="true"></i>Open ChatGPT plugins</button>
         </div>
         <button class="btn btn-icon" id="dismissPluginRefreshReminder" type="button" title="Dismiss reminder" aria-label="Dismiss reminder"><i class="ico ph ph-x" aria-hidden="true"></i></button>
+      </div>
+      <div class="notice" id="desktopAccessNotice" role="status" hidden>
+        <i class="ico ph ph-warning" aria-hidden="true"></i>
+        <span id="desktopAccessNoticeText"></span>
+        <button class="btn btn-quiet" id="desktopAccessNoticeRepair" type="button" hidden>Repair permissions</button>
+        <button class="btn btn-quiet" id="desktopAccessNoticeOpen" type="button">Open settings</button>
       </div>
       <div class="notice" id="credentialsUnreadable" role="alert" hidden>
         <i class="ico ph ph-lock-key" aria-hidden="true"></i>
@@ -408,6 +414,7 @@
                     <div class="desktop-access" id="desktopAccess" hidden>
                       <strong id="desktopAccessTitle">Desktop access needs attention</strong>
                       <p id="desktopAccessDetail"></p>
+                      <button class="btn btn-solid" id="repairDesktopAccess" type="button" hidden>Repair permissions</button>
                       <button class="btn btn-solid" id="requestDesktopAccessibility" type="button">Request Accessibility</button>
                       <button
                         class="btn"
@@ -1429,7 +1436,7 @@
             <div class="update-readiness-status">
               <div class="update-readiness-header">
                 <button class="btn update-readiness-toggle" id="updateReadinessToggle" type="button" aria-controls="updateReadinessDetails" aria-expanded="true">
-                  <span class="update-readiness-caret" aria-hidden="true">▸</span><span id="updateReadinessSummary">Not checked yet</span>
+                  <svg class="disclosure-chevron update-readiness-caret" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.5 10.5 8 6 12.5"></path></svg><span id="updateReadinessSummary">Not checked yet</span>
                 </button>
                 <button class="btn btn-solid" id="updateAll" type="button" aria-describedby="updateAllNotice" title="You will be asked before the app restarts. Finish active work before installing.">Update all</button>
               </div>
@@ -1437,7 +1444,7 @@
               <p id="updateAllError" class="is-warn" role="alert" hidden></p>
             </div>
             <details id="updateReadinessDetails" open>
-              <summary>Component details</summary>
+              <summary><svg class="disclosure-chevron details-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.5 10.5 8 6 12.5"></path></svg>Component details</summary>
               <p class="muted">App, browser extension and plugins in ChatGPT.</p>
               <ul id="updateReadinessRows"></ul>
               <p class="muted">Your settings are kept. Manual steps appear in the status list.</p>
