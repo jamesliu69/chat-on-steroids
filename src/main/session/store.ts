@@ -1248,6 +1248,7 @@ export function appendEvent(sessionId: string, event: NewSessionEvent): Promise<
     // Keep the append-only journal authoritative: nothing in memory advances until the line
     // is on disk.
     const write = entry.queue.then(async () => {
+      event = admittedTextReferences(sessionId, event);
       let admitted = event;
       if (event.kind === 'tool_call') {
         const denied = deniedAssetIds(sessionId, event.call.assets);
@@ -1324,6 +1325,7 @@ export function upsertMessageEvent(
   if (!directKey) throw new Error('Canonical message update requires ChatGPT messageId');
   return ensureOpen(sessionId).then((entry) => {
     const write = entry.queue.then(async () => {
+      event = admittedTextReferences(sessionId, event);
       // Provider create_time can change after a tab reload while the actual message
       // UUID stays identical. Preserve the first canonical anchor on that exact
       // evidence; never collapse distinct authored segments by working-turn tuple
@@ -1635,6 +1637,7 @@ function retainedAssets(assets: readonly AssetRef[] | undefined, retired: readon
 export async function recordProcessCall(sessionId: string, event: Omit<Extract<SessionEvent, { kind: 'tool_call' }>, 'seq'>): Promise<void> {
   const entry = await ensureOpen(sessionId);
   await enqueueSessionOperation(entry, 'process call', async () => {
+    event = admittedTextReferences(sessionId, event);
     const key = messageKey({ ...event, seq: 0 })!;
     if (entry.messages.has(key)) throw new Error('Process call identity already recorded');
     const denied = deniedAssetIds(sessionId, event.call.assets);
@@ -1709,6 +1712,11 @@ export interface ReadOptions {
 export async function readEvents(sessionId: string, options: ReadOptions = {}): Promise<SessionEvent[]> {
   assertSessionId(sessionId);
   await flushSession(sessionId);
+  return readFlushedEvents(sessionId, options);
+}
+
+/** The caller has joined or owns the session queue; never waits on that same queue again. */
+async function readFlushedEvents(sessionId: string, options: ReadOptions = {}): Promise<SessionEvent[]> {
   const from = options.from ?? 0;
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
 
@@ -3982,29 +3990,44 @@ function retireTextReferences(event: CanonicalEvent, selected: ReadonlySet<strin
   return event.kind === 'assistant_message' ? { ...event, message, ...(renderedHtml ? { renderedHtml } : {}) } : { ...event, message };
 }
 
+/** Spill and publication have different queues. A retired spill cannot be published late. */
+function admittedTextReferences<T extends NewSessionEvent>(sessionId: string, event: T): T {
+  const retired = new Set(mentionedTextAssetIds(event as SessionEvent).filter(id => {
+    const key = localAssetKey(sessionId, id);
+    const removedAt = removedAssetEpoch.get(key);
+    // A later successful write of the same bytes/hash makes the reference available again.
+    return removedAt !== undefined && (assetWrittenEpoch.get(key) ?? -1) < removedAt;
+  }));
+  if (!retired.size) return event;
+  if ('message' in event && event.kind !== 'assistant_message') return { ...event, message: retireStoredText(event.message, retired) };
+  return (retireTextReferences(event as CanonicalEvent, retired) ?? event) as T;
+}
+
 /**
  * Retires every durable reference before physical deletion. Canonical shards overlay ordinary
  * journal tool rows, so history remains immutable while future reads cannot claim a removed file
  * is available. Unsupported unkeyed references veto deletion for their exact asset; a long text
  * also stays while any record, rewritten or not, still mentions its file.
  */
-async function retireSessionAssets(sessionId: string, images: ReadonlySet<string>, texts: ReadonlySet<string> = new Set()): Promise<Set<string>> {
-  const events = await readEvents(sessionId);
-  const safe = new Set([...images, ...texts]);
-  const keyed = new Map<string, CanonicalEvent>();
-  for (const event of events) {
-    const imageIds = referencedAssetIds(event).filter((asset) => images.has(asset.id)).map((asset) => asset.id);
-    const textIds = texts.size ? mentionedTextAssetIds(event).filter((id) => texts.has(id)) : [];
-    if (!imageIds.length && !textIds.length) continue;
-    const key = messageKey(event);
-    if (!key || !['user_message', 'native_image', 'tool_call'].includes(event.kind) && !(textIds.length && event.kind === 'assistant_message')) {
-      for (const id of [...imageIds, ...textIds]) safe.delete(id);
-      continue;
-    }
-    keyed.set(key, event as CanonicalEvent);
-  }
+async function retireSessionAssets(sessionId: string, images: ReadonlySet<string>, texts: ReadonlySet<string>, cleanupEpoch: number): Promise<Set<string>> {
   const entry = await ensureOpen(sessionId);
-  await enqueueSessionOperation(entry, 'image storage cleanup', async () => {
+  return enqueueSessionOperation(entry, 'image storage cleanup', async () => {
+    // Read and retire under the same owner: a new row cannot appear between the snapshot and
+    // reference retirement. The asset queue already holds later spills until deletion finishes.
+    const events = await readFlushedEvents(sessionId);
+    const safe = new Set([...images, ...texts]);
+    const keyed = new Map<string, CanonicalEvent>();
+    for (const event of events) {
+      const imageIds = referencedAssetIds(event).filter((asset) => images.has(asset.id)).map((asset) => asset.id);
+      const textIds = texts.size ? mentionedTextAssetIds(event).filter((id) => texts.has(id)) : [];
+      if (!imageIds.length && !textIds.length) continue;
+      const key = messageKey(event);
+      if (!key || !['user_message', 'native_image', 'tool_call'].includes(event.kind) && !(textIds.length && event.kind === 'assistant_message')) {
+        for (const id of [...imageIds, ...textIds]) safe.delete(id);
+        continue;
+      }
+      keyed.set(key, event as CanonicalEvent);
+    }
     // Only files that will really go are retired. A text some rewritten record still names stays,
     // and then no record may lose its reference to it, so settle the kept set before writing.
     let rewritten: Array<[string, CanonicalEvent]> = [];
@@ -4029,8 +4052,11 @@ async function retireSessionAssets(sessionId: string, images: ReadonlySet<string
       entry.historySeq = full.seq;
     }
     if (rewritten.length) scheduleMeta(entry);
+    // Selection can be vetoed. Fence only texts whose references were successfully retired;
+    // kept files continue to support existing and late observations of the same content.
+    for (const id of texts) if (safe.has(id)) removedAssetEpoch.set(localAssetKey(sessionId, id), cleanupEpoch);
+    return safe;
   });
-  return safe;
 }
 
 /** Whole chats unused for a week, oldest first, until about 1 GiB is chosen. */
@@ -4100,7 +4126,7 @@ export async function clearImageStorage(mode: ImageStorageClearMode): Promise<Im
           chosenBytes += file.bytes;
         }
       }
-      for (const file of chosen) removedAssetEpoch.set(localAssetKey(file.sessionId, file.assetId), cleanupEpoch);
+      for (const file of chosen) if (!file.text) removedAssetEpoch.set(localAssetKey(file.sessionId, file.assetId), cleanupEpoch);
       announceSelection(chosen);
       const deletable = await retirement;
       let freedBytes = 0;
@@ -4134,7 +4160,7 @@ export async function clearImageStorage(mode: ImageStorageClearMode): Promise<Im
     }
     const deletable = new Set<string>();
     for (const [sessionId, ids] of bySession) {
-      for (const assetId of await retireSessionAssets(sessionId, ids.images, ids.texts)) deletable.add(`${sessionId}\u0000${assetId}`);
+      for (const assetId of await retireSessionAssets(sessionId, ids.images, ids.texts, cleanupEpoch)) deletable.add(`${sessionId}\u0000${assetId}`);
     }
     finishRetirement(deletable);
   } catch (error) {

@@ -9,7 +9,7 @@ import {
   fileSilenceInput, deferSilenceInput, revokeSilenceInputs, pendingQueuedPickups, inputBeforeGoal, inputArgs, acknowledgeBrowserInput, cancelInput, claimBrowserInput, completeBrowserDecision, enqueueInput,
   failBrowserInput, listInputs, offerToolInput as offerToolInputBatch, acknowledgeToolInput, pendingBrowserInputs, requestBrowserDecision, resetInputForTests, configureInputDelivery,
   authorizeBrowserHelperRetry, pausedBrowserHelpers, hasEligibleToolInput, editQueuedInput, reorderQueuedInputs, setInputAutomation, authorizeBrowserInput, sessionInputPolicy, retryUnclaimedInput,
-  noteInputStartupError, fileRotationInput
+  noteInputStartupError, fileRotationInput, authorizeRotationStop
 } from '../src/main/session/input.js';
 import type { InputArgs, InputEntry } from '../src/main/session/input.js';
 import { noteChatOrigin } from '../src/main/session/recorder.js';
@@ -21,7 +21,7 @@ const offerToolInput = async (...args: Parameters<typeof offerToolInputBatch>) =
 vi.mock('../src/main/session/recorder.js', () => ({ noteChatOrigin: vi.fn(async () => undefined) }));
 
 const openings = vi.hoisted(() => new Map<string, { id: string; conversationId: string | null; origin: { kind: string } }>());
-const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', blocked: false, recorded: true, activeTurnId: null as string | null, lastToolCallAt: null as number | null, finishEnabled: true, goalEnabled: false, finishReleased: false, recoveryAllowed: true, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, end: null as null | { kind: string; outcome: string; reason?: string; turnId: string; time: number; seq?: number } }));
+const binding = vi.hoisted(() => ({ origin: 'desktop', conversationId: 'conversation-a', blocked: false, recorded: true, activeTurnId: null as string | null, lastToolCallAt: null as number | null, finishEnabled: true, goalEnabled: false, finishReleased: false, recoveryAllowed: true, model: 'gpt-6-astra', leadMinutes: 5, impulseMinutes: 0, rotateTurnMinutes: 30, end: null as null | { kind: string; outcome: string; reason?: string; turnId: string; time: number; seq?: number } }));
 vi.mock('../src/main/session/store.js', () => ({
   sessionsRoot: () => path.join(directory, 'sessions'),
   listUsageSessions: vi.fn(async () => []),
@@ -40,7 +40,7 @@ vi.mock('../src/main/session/store.js', () => ({
   findSessionByConversation: vi.fn(async (id: string) => [...openings.values()].find(row => row.conversationId === id) ?? (binding.recorded && id === binding.conversationId ? { id: 'session-one', conversationId: id } : null))
 }));
 vi.mock('../src/main/config.js', () => ({ getConfig: () => ({
-  ui: { finishTool: binding.finishEnabled, finishAction: 'goal', finishLeadMinutes: binding.leadMinutes },
+  ui: { finishTool: binding.finishEnabled, finishAction: 'goal', finishLeadMinutes: binding.leadMinutes, rotateTurnMinutes: binding.rotateTurnMinutes },
   goal: { enabled: binding.goalEnabled, mode: 'goal', impulseMinutes: binding.impulseMinutes },
   multiAgent: { strictChatAllowlist: false }
 }) }));
@@ -78,6 +78,7 @@ beforeEach(async () => {
   binding.lastToolCallAt = null;
   binding.finishEnabled = true; binding.goalEnabled = false; binding.finishReleased = false; binding.model = 'gpt-6-astra'; binding.leadMinutes = 5; binding.impulseMinutes = 0;
   binding.recoveryAllowed = true;
+  binding.rotateTurnMinutes = 30;
   binding.end = { kind: 'turn_end', outcome: 'completed', turnId: 'previous-turn', time: 0 };
   now = 1000;
   vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -280,6 +281,51 @@ describe('durable user input ownership', () => {
     const own = await enqueueInput(input({ text: 'Also check the tests' }));
     expect((await listInputs()).find(entry => entry.id === row!.id)).toMatchObject({ state: 'cancelled' });
     expect(own.state).toBe('queued');
+  });
+  it('spends a rotation Stop once on its exact owner without spending Send or permitting a restart replay', async () => {
+    binding.model = 'gpt-5.6-sol'; binding.activeTurnId = 'plain-turn';
+    binding.end = { kind: 'turn_start', outcome: '', turnId: 'plain-turn', time: 900 };
+    const row = (await fileRotationInput(sessionId, 'plain-turn'))!;
+    await claimBrowserInput(row.id, 'native-page', binding.conversationId, true);
+    expect(await authorizeRotationStop(row.id, 'other-page', binding.conversationId, 'plain-turn')).toBe(false);
+    expect(await authorizeRotationStop(row.id, 'native-page', binding.conversationId, 'wrong-turn')).toBe(false);
+    expect(await authorizeRotationStop(row.id, 'native-page', binding.conversationId, 'plain-turn')).toBe(true);
+    expect((await listInputs()).find(entry => entry.id === row.id)).toMatchObject({ rotationStopAuthorizedAt: now });
+    expect((await listInputs()).find(entry => entry.id === row.id)?.sendAuthorizedAt).toBeUndefined();
+    resetInputForTests();
+    expect(await authorizeRotationStop(row.id, 'native-page', binding.conversationId, 'plain-turn')).toBe(false);
+    expect(await claimBrowserInput(row.id, 'new-page', binding.conversationId, true)).toBeNull();
+    binding.activeTurnId = null;
+    binding.end = { kind: 'turn_end', outcome: 'interrupted', turnId: 'plain-turn', time: now + 1 };
+    expect(await authorizeBrowserInput(row.id, 'native-page', binding.conversationId)).toBe(true);
+  });
+  it.each(['off', 'blocked', 'new-turn', 'pro'] as const)('consumes but never publishes a rotation Stop invalidated during its durable write (%s)', async change => {
+    binding.model = 'gpt-5.6-sol'; binding.activeTurnId = 'plain-turn';
+    binding.end = { kind: 'turn_start', outcome: '', turnId: 'plain-turn', time: 900 };
+    const row = (await fileRotationInput(sessionId, 'plain-turn'))!;
+    await claimBrowserInput(row.id, 'native-page', binding.conversationId, true);
+    const durable = await import('../src/main/durable.js');
+    const write = durable.writeDurableNow;
+    let release!: () => void;
+    let reached!: () => void;
+    const atWrite = new Promise<void>(resolve => { reached = resolve; });
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const writing = vi.spyOn(durable, 'writeDurableNow').mockImplementationOnce(async (...args) => {
+      reached(); await paused; await write(...args);
+    });
+    const permit = authorizeRotationStop(row.id, 'native-page', binding.conversationId, 'plain-turn');
+    await atWrite;
+    if (change === 'off') binding.rotateTurnMinutes = 0;
+    if (change === 'blocked') binding.blocked = true;
+    if (change === 'new-turn') binding.activeTurnId = 'new-turn';
+    if (change === 'pro') binding.model = 'gpt-6-pro';
+    release();
+    expect(await permit).toBe(false);
+    writing.mockRestore();
+    resetInputForTests();
+    expect((await listInputs()).find(entry => entry.id === row.id)).toHaveProperty('rotationStopAuthorizedAt');
+    binding.rotateTurnMinutes = 30; binding.blocked = false; binding.activeTurnId = 'plain-turn'; binding.model = 'gpt-5.6-sol';
+    expect(await authorizeRotationStop(row.id, 'native-page', binding.conversationId, 'plain-turn')).toBe(false);
   });
   it('files no rotation for a Pro turn or a blocked chat', async () => {
     binding.activeTurnId = 'plain-turn';

@@ -24,7 +24,7 @@ const { resetBridgeForTests, shutdownBridge, startBridge } = await import('../sr
 const { flushDurable, initDurableStore, writeDurableSoon } = await import('../src/main/durable.js');
 const { findSessionByConversation, initSessionStore, resetSessionStoreForTests } = await import('../src/main/session/store.js');
 const { recordToolCall, resetRecorderForTests } = await import('../src/main/session/recorder.js');
-const { listInputs, resetInputForTests } = await import('../src/main/session/input.js');
+const { listInputs, resetInputForTests, cancelInput, enqueueInput } = await import('../src/main/session/input.js');
 const { resetTurnRotationForTests } = await import('../src/main/turn-rotation.js');
 const { setGoalSwitchNow, resetGoalStateForTests } = await import('../src/main/goal.js');
 const { makeTempDir, removeTempDir } = await import('./helpers.js');
@@ -143,6 +143,34 @@ beforeEach(async () => {
 });
 
 describe('turn rotation (#1402)', () => {
+  it.each(['accepted', 'cancelled', 'replaced'] as const)('grants a rotation Stop only to its live exact claim (%s)', async change => {
+    const chat = `f0f00003-1111-4111-8111-00000000001${change === 'accepted' ? 1 : change === 'cancelled' ? 2 : 3}`;
+    const turnId = `g-rot-permit-${change}`;
+    const sessionId = await turnFor(chat, turnId, 31);
+    await attributedCall(chat);
+    await rotationsFor(sessionId);
+    const row = (await listInputs()).find(entry => entry.sessionId === sessionId && entry.purpose === 'rotation')!;
+    expect(row).toBeDefined();
+    const claim = (extra: Record<string, unknown>) => request('POST', '/input/claim', { body: {
+      id: row.id, owner: '1:rotation-document:0', conversationId: chat, ...extra } });
+    expect((await claim({ requiresAuthorization: true })).body.input).toMatchObject({ id: row.id });
+    expect((await claim({ rotationAction: 'stop', rotationTurnId: 'different-turn' })).body.ok).toBe(false);
+    expect((await claim({ rotationAction: 'stop', rotationTurnId: turnId, owner: 'another-owner' })).body.ok).toBe(false);
+    if (change === 'cancelled') expect(await cancelInput(row.id)).toBe(true);
+    if (change === 'replaced') await enqueueInput({ id: 'f0f00003-1111-4111-8111-000000000099', sessionId,
+      text: 'My new instruction', mode: 'auto', dueAt: Date.now(), model: null, reasoningEffort: null });
+    expect((await claim({ rotationAction: 'stop', rotationTurnId: turnId })).body.ok).toBe(change === 'accepted');
+    const stored = (await listInputs()).find(entry => entry.id === row.id)!;
+    expect(stored.sendAuthorizedAt).toBeUndefined();
+    resetInputForTests();
+    expect((await claim({ rotationAction: 'stop', rotationTurnId: turnId })).body.ok).toBe(false);
+    if (change === 'accepted') {
+      expect((await listInputs()).find(entry => entry.id === row.id)).toHaveProperty('rotationStopAuthorizedAt');
+      // A lost permit response never hands the consumed Stop to another document after restart.
+      expect((await claim({ requiresAuthorization: true, owner: '2:new-document:0' })).body.input).toBeNull();
+    }
+  });
+
   it('files one automatic continue into a turn older than 30 minutes, after its tool result', async () => {
     const chat = 'f0f00003-1111-4111-8111-000000000001';
     const sessionId = await turnFor(chat, 'g-rot-old-1', 31);

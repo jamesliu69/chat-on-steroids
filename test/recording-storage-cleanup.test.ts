@@ -12,13 +12,16 @@ import {
   MAX_GLOBAL_ASSET_BYTES,
   readAsset,
   readEvents,
+  recordProcessCall,
   recordingStorageFull,
   resetSessionStoreForTests,
   setRecordingStorageLimit,
   upsertMessageEvent,
-  writeAsset
+  writeAsset,
+  writeOverflowText
 } from '../src/main/session/store.js';
 import * as logger from '../src/main/logger.js';
+import type { NewSessionEvent, StoredText } from '../src/shared/session.js';
 
 // #1406: the store held 2 GiB and could only shed images. Long texts (tool output, long answers)
 // filled it just as well, so people with long runs had no way out short of losing everything.
@@ -163,4 +166,94 @@ it('uses the chosen storage limit, and a larger one ends a full store at once', 
   expect(recordingStorageFull()).toBe(true);
   // Only the offered sizes are accepted.
   expect(() => setRecordingStorageLimit(3)).toThrow();
+});
+
+const textPublications = ['append-user', 'append-assistant', 'append-tool', 'upsert-user', 'upsert-assistant', 'process-tool', 'append-note', 'append-progress', 'append-chat-error', 'append-agent-message'] as const;
+type TextPublication = typeof textPublications[number];
+
+function textEvent(publication: TextPublication, stored: StoredText): NewSessionEvent {
+  if (publication === 'append-note') return { time: NOW, source: 'app', kind: 'note', message: stored };
+  if (publication === 'append-progress') return { time: NOW, source: 'extension', kind: 'progress', progressId: 'late-progress', message: stored };
+  if (publication === 'append-chat-error') return { time: NOW, source: 'extension', kind: 'chat_error', recoverable: true, message: stored };
+  if (publication === 'append-agent-message') return { time: NOW, source: 'mcp', kind: 'agent_message', messageId: 'late-agent-message', from: 'worker', to: 'prime', delivery: 'delivered', message: stored };
+  if (publication.endsWith('tool')) return {
+    time: NOW, source: 'mcp', kind: 'tool_call', call: {
+      callId: '00000000-0000-4000-8000-000000000001', tool: 'exec_command', requestId: 'late-text-request',
+      conversationId: 'late-text-chat', attribution: 'request_id', attributionMethod: 'request_id',
+      args: stored, result: stored, outcome: 'ok', durationMs: 1,
+      changes: [{ path: 'example.txt', added: 1, removed: 0, approximate: false, reviewAssetId: stored.assetId }],
+      summary: { kind: 'run', title: 'Ran command', tone: 'neutral' }
+    }
+  };
+  return publication.endsWith('assistant')
+    ? { time: NOW, source: 'extension', kind: 'assistant_message', messageId: 'late-answer', final: true, message: stored, renderedHtml: stored }
+    : { time: NOW, source: 'app', kind: 'user_message', messageId: 'late-question', message: stored };
+}
+
+async function publishText(sessionId: string, publication: TextPublication, stored: StoredText): Promise<void> {
+  const event = textEvent(publication, stored);
+  if (publication === 'process-tool' && event.kind === 'tool_call') await recordProcessCall(sessionId, event);
+  else if (publication.startsWith('upsert') && (event.kind === 'user_message' || event.kind === 'assistant_message')) await upsertMessageEvent(sessionId, event);
+  else await appendEvent(sessionId, event);
+}
+
+async function spilledText(sessionId: string, full: string): Promise<StoredText> {
+  const assetId = await writeOverflowText(sessionId, full);
+  expect(assetId).not.toBeNull();
+  return { text: `head\n…[${full.length - 4} more characters stored in full as ${assetId}]`, chars: full.length, truncated: true, digest: 'original-digest', assetId: assetId! };
+}
+
+it.each(textPublications)('retires late overflow references after old-chat cleanup: %s', async publication => {
+  vi.setSystemTime(NOW - 30 * DAY);
+  const session = await createSession({ conversationId: 'late-text-chat', title: 'Paused recorder' });
+  const stored = await spilledText(session.id, 'head overflow text '.repeat(100));
+  vi.setSystemTime(NOW);
+  let resume!: () => void;
+  const paused = new Promise<void>(resolve => { resume = resolve; });
+  // Spill completed, but the recorder has not published its event into either durable queue.
+  const publicationDone = paused.then(() => publishText(session.id, publication, stored));
+  const cleaned = await clearImageStorage('old-chats-gib');
+  expect(cleaned.removedFiles).toBe(1);
+  expect(await readAsset(session.id, stored.assetId!)).toBeNull();
+  resume();
+  await publicationDone;
+
+  const rows = await readEvents(session.id);
+  const event = rows.find(row => row.kind === textEvent(publication, stored).kind)!;
+  const texts = event.kind === 'tool_call' ? [event.call.args, event.call.result]
+    : event.kind === 'assistant_message' ? [event.message, event.renderedHtml!]
+    : 'message' in event ? [event.message] : [];
+  expect(texts.length).toBeGreaterThan(0);
+  for (const text of texts) {
+    expect(text).toEqual({ text: `head\n…[${stored.chars - 4} more characters removed to free storage]`, chars: stored.chars, truncated: true, digest: stored.digest });
+  }
+  if (event.kind === 'tool_call') expect(event.call.changes![0]).toEqual({ path: 'example.txt', added: 1, removed: 0, approximate: false });
+  resetSessionStoreForTests();
+  initSessionStore(directory);
+  expect(await readEvents(session.id)).toEqual(rows);
+});
+
+it('admits a fresh same-hash overflow write after cleanup', async () => {
+  vi.setSystemTime(NOW - 30 * DAY);
+  const session = await createSession({ title: 'Rewritten overflow' });
+  const full = 'head reusable text '.repeat(100);
+  const old = await spilledText(session.id, full);
+  vi.setSystemTime(NOW);
+  expect((await clearImageStorage('old-chats-gib')).removedFiles).toBe(1);
+  const fresh = await spilledText(session.id, full);
+  expect(fresh.assetId).toBe(old.assetId);
+  await publishText(session.id, 'upsert-assistant', fresh);
+  const event = (await readEvents(session.id)).find(row => row.kind === 'assistant_message');
+  expect(event).toMatchObject({ message: fresh, renderedHtml: fresh });
+  expect(await readAsset(session.id, fresh.assetId!)).toEqual(Buffer.from(full));
+});
+
+it('keeps late references to a selected overflow file vetoed by an unkeyed record', async () => {
+  const old = await chatWithLongOutput('kept-late', 30, 'head shared text '.repeat(100));
+  await appendEvent(old.session.id, { time: NOW - 30 * DAY, source: 'app', kind: 'note', message: { ...plain('see text'), assetId: old.asset.id } });
+  const stored: StoredText = { ...plain('head'), assetId: old.asset.id, truncated: true };
+  expect((await clearImageStorage('old-chats-gib')).removedFiles).toBe(0);
+  await publishText(old.session.id, 'upsert-assistant', stored);
+  expect((await readEvents(old.session.id)).find(row => row.kind === 'assistant_message')).toMatchObject({ message: stored, renderedHtml: stored });
+  expect(await readAsset(old.session.id, old.asset.id)).not.toBeNull();
 });
