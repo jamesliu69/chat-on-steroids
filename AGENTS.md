@@ -21,8 +21,8 @@ changed lines before applying an older patch. Document the work and its actual v
 the code currently does it. Known implementation gaps are collected in §21 instead of being
 mixed into the happy path as features.
 
-基準來源對齊：**2026-09-17**；本次合併：**2026-10-15**（本機 `3009db64` 與 upstream
-`e86c13be`；稍早同日另有本機 `0c4e05f2` 與 Fork `9de46290`）。App/extension **2.1.37**，
+基準來源對齊：**2026-09-17**；本次合併：**2026-10-16**（本機 `3009db64` 與上游
+`190231b9`；稍早 2026-10-15 為 upstream `e86c13be`）。App/extension **2.1.39**，
 bridge protocol **14** in the checked declarations (`package.json`, `src/main/version.ts`,
 `extension/manifest.json`). This does not prove release, installation or live Chrome behavior.
 
@@ -236,7 +236,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Setting | Fresh installation | Migration / runtime rule |
 | --- | --- | --- |
 | Roots | None. | Root-requiring capabilities cannot be published usefully until a root is approved. |
-| Tool capabilities | Current `defaultConfig()` starts all Core capability flags on; read-only off. | Omitted legacy flags use conservative `DEFAULT_CAPABILITIES`. Malformed existing config is conservative recovery, not fresh consent. |
+| Tool capabilities | Current `defaultConfig()` starts all Core capability flags on; read-only off. | Omitted legacy flags use conservative `DEFAULT_CAPABILITIES`. Malformed existing config is conservative recovery, not fresh consent. A `ui` preference holding a value this version does not know (a newer app's choice, e.g. Firefox before 2.1.38) is dropped alone and uses its default; the original file is still kept as `config.json.unreadable-*`. |
 | Recording | On with 30-day retention. | Explicit recording and retention choices remain authoritative. Recording Off disables dependent Goal behavior instead of silently enabling recording; the headless host may explicitly normalize recording Off. |
 | Context / compaction | Advisory 400,000; limit rounded from advisory × 4/3; auto-compaction on at advisory. | Estimated local units. Automatic execution additionally requires live work, current ownership and eligible model/role. |
 | Multi-agent | On, 2 simultaneous slot-holding workers **per family**, configured hard max 8; global worker admission cap Off (`0`, configurable through 64). | Legacy absent enabled/allow-unattributed fields remain false; an absent global cap remains Off. Existing choices stay exact. |
@@ -514,16 +514,23 @@ then acts as a package-bounded alias for that target; resource paths are revalid
 cannot traverse above the linked package. The managed root itself and linked `SKILL.md` files
 remain non-linkable. Desktop and external plugins receive no managed root.
 
-Skills open through leading `/` completion in the composer; the attachment popup's Skills button
-inserts that leading slash and focuses the input while preserving existing draft text. Commands and Skills are
-separate compact sections; there is no sidebar entry, modal library or native import/remove UI.
+Skills open through `/` completion in the composer. In prose, completion offers only installed
+Skills; selecting an exact Skill id projects it into the existing leading authored directive block, while
+slash text in paths, links and code stays literal. App commands remain available only in the
+leading command block. The attachment popup's Skills button inserts that leading slash and focuses
+the input while preserving existing draft text. `@` completion browses entries under the current
+Local Project via the existing project-files listing authority and inserts a project-relative text
+reference; it does not upload a file or broaden filesystem access. Commands, Skills and project
+files are separate compact sections; there is no sidebar entry, modal library or native import/remove UI.
 Commands: `/plan`, `/goal`, `/loop`, `/compact`, plus Codex's `/model` and `/reasoning` (open the model picker), `/new`, `/rename`, `/pin`, `/status` (the context meter's panel), `/review` and `/init` (put a review or AGENTS.md request in front of the draft, unsent), `/usage`, `/plugins`, `/pet` and `/feedback` (Settings → Activity, the diagnostics report). `/rename`, `/pin`, `/status` and `/compact` are offered only while a chat is open (`commandAvailable`); popups open after the choosing click has passed the outside-click handlers.
 A small plus icon to the right of that Skills button inserts `Please add the following skills to my COS skills:`
 into the authored draft without sending it. ChatGPT can create Markdown instructions through
 the existing permission-checked `/skills` filesystem root. Leading `/id` or `/prompt id` completion projects selected
 commands as removable chips. The existing authored draft retains those command bytes; chips and
 the visible task textarea are projections, never a separate selection ledger. Multiple commands
-preserve order and deduplicate; prose/code later in a message is literal. Empty/loading/no-match
+preserve order and deduplicate; prose/code later in a message is literal. Inline exact Skill
+selection is projected into the same leading directive block, so `skillDirectives` remains the
+authority for submitted Skill ids. Empty/loading/no-match
 states do not intercept Enter. Draft replacement, navigation, render generations and IME composition retire stale choices.
 
 `skill-library.ts` discovers repository `.agents/skills`, project `.codex/skills`, standard user,
@@ -1033,6 +1040,38 @@ chats receive no project file. Missing AGENTS is fine; an unsafe/unreadable/bina
 preparation visibly. Full prompt budgeting and
 hidden framing are described in §6.
 
+### Projects on a server (SSH, #1469)
+
+A `Root` and a `LocalProject` may carry `remote: RemoteFolder` (`src/shared/types.ts`): `host` as
+the person typed it (an ssh-config alias or `user@host`, never starting with `-`), optional `port`,
+and the absolute folder on the server. Their `path` is then the identity `host[:port]:/path`
+(`remoteIdentity`), never a local path. `addRemoteProject(address, folder)` (IPC
+`projects:addRemote`, preload `addRemoteProject`) parses with `parseRemote`, asks the server once
+over SFTP (`realpath`, then `stat`: a folder), and adds the root and the project; the same server
+folder again is the same project. Connections only through the system `ssh`
+(`src/main/remote/ssh.ts`) with `BatchMode=yes`: key or agent login only. Files go over one SFTP
+session per address (`sftpFor`), commands over `ssh host remoteCommand(folder, command)`.
+
+`resolvePath` refuses a server folder unless the caller passes `remote: true`: every caller that has
+not opted in acts on this computer's disk, where the server path would name an unrelated local
+file. Opted in are the read tools (`read`, glob expansion, `view_image`), `find`, `apply_patch`,
+`exec_command` (via `resolveCwd`) and Files' listing/preview (`serverTarget` in
+`project-files.ts`). They reach the server through `ProjectFs` (`src/main/remote/project-fs.ts`:
+`localFs`, `sftpFs`, `fsForRoot`), which keeps the local errors (`ENOENT`, `EEXIST`, `EINVAL` …), the
+read limits and the walk order, never follows a link when listing or removing, writes whole files
+(temporary file + rename, mode kept, through a link to its target) and reopens a dropped SFTP session
+once. Server-side containment is `resolveRemote` in `sandbox.ts`: no `..`, a link that leaves the
+folder and a dangling link are refused (OpenSSH's realpath tolerates a missing last component, so
+existence is checked with `stat` first). One patch stays inside one server folder. `find` without a
+path names an unreachable server folder under `not_searched` and searches the rest; a regex is
+matched in the app there (ripgrep is local only). A command runs as one ssh connection of its own
+(`-T`, or `-tt` for a terminal) from the app's temp folder; the workspace terminal is `ssh -tt`
+into the folder's login shell (`remoteLoginShell`), and typing checks the project's address in the
+local config, not the server. Not in v1, each refused in one sentence: editing a server project's
+files from the app (Files' create/rename/save), its Git panel, the file watcher, and worktrees for
+workers (they share the server folder). The server needs a POSIX shell and SFTP; nothing is
+installed there.
+
 ### Native ChatGPT Project for a new CoS project (#1176)
 
 One-way, CoS-owned and only for projects created after this existed: `addProject` gives a new row
@@ -1122,6 +1161,9 @@ retains the latest 64 completed results for this app lifetime, with 256 KiB of r
 output each (and delimiter-free batch presentation). Completed rereads have no unread debt,
 live-process capacity charge or automatic reoffer. Eviction/shutdown drops their existing
 custody entries; retained ids cannot be reallocated. Unread results keep their separate bounds.
+Tool descriptions and result markers say what a tool does, never how its output should be treated or
+that a call is harmless: ChatGPT's safety check flagged `write_stdin`'s "including automatic delivery;
+never reruns work" as a Suspicious Instruction and held a long run on an approval card (2026-10-15).
 
 The owner is the **durable local session principal**, or `request:<id>` while permitted work
 awaits correlation. Only that request can initially continue its process. Exact proof makes
@@ -1303,9 +1345,22 @@ Browser Send puts a Chat On Steroids Core app mention in front of the text, beca
 (Plus in Chat mode, #861) attach the app to a message only when the message mentions it.
 `ui.mentionCore` (Settings › General, default on, delivered to the page with the activity reply) can
 leave the mention off the user's own prompts, which on other accounts start plain questions with a
-probe tool call (#952). Workers, Continue recovery, Goal and Loop always keep it, because they need
-the app to answer. A Goal helper decision (`purpose: 'decision'`) never gets it.
-A fresh-turn continue (`purpose: 'rotation'`, #1402, see the settings table) keeps it.
+probe tool call (#952). Workers, Continue recovery, Goal and Loop always keep Core,
+because they need the app to answer. A Goal helper decision (`purpose: 'decision'`)
+never gets an app mention. A fresh-turn continue (`purpose: 'rotation'`, #1402)
+also keeps Core.
+An independent default-off `ui.mentionPlugins` preference selects **Plugins instead of Core**
+for ordinary user-authored prompts COS sends; Goal/Loop and fresh-turn continues follow the
+Core mention as before, workers and recovery always select Core, and decision helpers still
+select neither. The exact Plugins app id comes
+only from this page's provider system hints and must match this installation's connector
+name, including its optional computer suffix. Missing, duplicate or foreign IDs
+produce no Plugins token, never a guessed or other-computer attachment; the prompt then
+keeps the Core mention (when that is on), so an account that attaches apps only on mention
+(#861) never loses its tools to a missing Plugins app. App-managed
+picture requests still suppress mentions; directly typed ChatGPT messages are untouched.
+The provider can withhold or cache tool declarations even with an authentic mention;
+this is not a repair of stale tool catalogs or ChatGPT-side exposure decisions.
 ChatGPT switches its own image tool off for a message that mentions an app (measured
 2026-10-05: per message, also as a follow-up in a chat whose first message had the mention). So a
 person's own message (`authoredSource` text, not `decision`/recovery/`finishOwner`, not a worker or
@@ -1569,7 +1624,14 @@ composer clear or a Stop button alone cannot supply a desktop delivery receipt. 
 shell can redraw its first exchange without the question before any read sees that row (#942);
 then the first `POST /backend-api/f/conversation` after this click, reported by `usage.js` as
 `cos-send-request` (exactly one user message id, never the prompt) within `SENT_REQUEST_MS`,
-supplies the id once the route is concrete. An older or later request cannot. After the click,
+supplies the id once the route is concrete. An older or later request cannot. The request counts
+in the epoch the Send started in, and an accepted receipt for exactly the new chat moves with it
+when that chat's first route advances the epoch. A hidden tab may change its route without
+drawing anything, and its timers can be held back for many seconds (Firefox's minimized window,
+2026-10-15): the page re-checks a waiting receipt right after adopting a new route, and the
+background sends the same document `clf-route-changed` (no payload; the page observes now) on
+each same-document address change. The Core mention's one-task wait before Send uses a message
+task, never a 0 ms timer. After the click,
 the wait for that receipt is bounded (`DESKTOP_RECEIPT_MS`) and never clicks again. When it ends
 unproven, the page reports the fixed reason `Native Send receipt was not confirmed.` and frees its
 input slot. `failBrowserInput` then retires the authorized row as the same uncertain send the
@@ -2087,7 +2149,7 @@ Refresh passes `fresh`. IPC `usage:providers` / preload `getProviderUsage(fresh)
 `ProviderUsage` (`src/shared/provider-usage.ts`). The Core tool `usage` (read-only, offered while a
 reading permission is on, like `read`) answers with ChatGPT's reported limits
 (`session/usage.ts` `reportedUsageLimits`), Codex's reported limits and both apps' counted tokens,
-each with its source and age; `src/main/usage-tool.ts` writes that text. Tests:
+each with its source and age; `src/main/usage-tool.ts` writes that text. Its answer depends on no chat, so the kernel never appends the Unattributed identity notice to it (`IDENTITY_FREE_TOOLS`): it answers before the page's evidence for its request arrives. Tests:
 `provider-usage-parse`, `provider-usage`, `usage-tool`, `renderer-usage`.
 
 ## 13. Extension, account models and browser preferences
@@ -2101,7 +2163,12 @@ preselected) or that browser, preserving the saved setting, and waits for ChatGP
 where it runs. The browser chosen for installation is a local choice until one place is picked;
 installation links use the fixed `browser:setupOpen` IPC without changing the setting.
 The bridge projects that browser apart using the explicit `x-extension-host: browser` header and
-its browser id. `browser-proof.ts` keeps, across restarts, the version last seen there and
+its browser id. While the CoS browser is chosen and its companion present, any other companion
+takes no new work (#1516): `/status` offers it no inputs, revivals, Project creations, plugin
+refreshes or model-list requests; `/input/claim` and `/repairs/claim` refuse it and
+`/commands/redeem` answers 409 `not_chosen_browser`. It still records and stops what the person
+opens there, and works on as before once the CoS browser is gone. The chosen CoS browser takes a
+new chat's opening custody over from another browser. `browser-proof.ts` keeps, across restarts, the version last seen there and
 ChatGPT's last signed-in answer, so a closed browser keeps its state and a logout stays a logout;
 a live answer always wins. The extension reports presence and that answer on its own
 (`POST /browser/presence`), from ChatGPT's `/api/auth/session` in an existing regular-profile tab,
@@ -4025,7 +4092,10 @@ whose question differs from the turn's recorded question (`timelineTurns[turnId]
 the moment the page switches turns cannot file the newer answer's outline under the earlier turn. A DIL reply whose
 `content` is only `::chatgpt-content-reference{…}` naming itself is read as the `fallbackMarkdown`
 of that one `dil` reference (`shellItemText`), so its recorded text is the reply rather than the
-directive. GPT-6 writes each interim sentence of a running turn as such an assistant message nested
+directive. That `fallbackMarkdown` can leave out what the drawing has (#1477): a table with only its
+header row, and a button as a bare `[label]` line. `shared/dil-tables.ts` (`completedDilText`) fills
+such a table from the recorded `renderedHtml` table with the same header and drops a line that is
+exactly a drawn button's label; the timeline and Copy/Export both apply it. GPT-6 writes each interim sentence of a running turn as such an assistant message nested
 in the `chatgpt-reasoning-group`; `shellTurnSource` records it as commentary (never the turn's end,
 whatever `phase` it carries) unless a top-level item owns that id. In that Markdown the timeline shows an `entity` widget as its name in bold and drops
 widgets it cannot draw (`image_group`). Formulas render with KaTeX (`renderer/math.ts`): `\( … \)`
@@ -4547,6 +4617,10 @@ Plugins catalog limit use proven ids first.
 and same-origin links to exact `plugin_asdk_app_*` management routes inside the page's `main`.
 A unique surface with account-proven App IDs accepts only its proven IDs, permitting
 renames before learned names catch up; a same-named foreign ID never falls back.
+An explicit observation retains its scoped enrolled App ID and first rediscovers that
+exact native installed link, rather than treating other proven aliases as competing targets.
+Its existing requested surface validates the ID through cross-surface name collisions;
+another surface, absent ID, name-only row or duplicate native link cannot substitute it.
 First enrollment and legacy buttons use the unique configured/learned name leaf.
 Unknown, catalog, external, transcript, hidden or ambiguous rows grant no authority.
 After awaits, the same unique connected visible link must retain its exact href;
@@ -4637,8 +4711,9 @@ Local and public URLs, tunnel ids and plugin sources/config never appear; free t
 one per read, cleared when the request is answered.
 
 The read routes (`control-reads.ts`) are `GET /v1/sessions`, `/v1/sessions/{id}`,
-`/v1/sessions/{id}/events`, `/v1/inputs`, `/v1/agents` and `/v1/log`. Each asks the owner that
-already feeds the renderer (`session/read-model.ts`, `listInputs`, `swarmState`, `getLog`) and
+`/v1/sessions/{id}/events`, `/v1/inputs`, `/v1/agents`, `/v1/log` and `/v1/models` (the saved
+model catalog; reading it never starts discovery). Each asks the owner that
+already feeds the renderer (`session/read-model.ts`, `listInputs`, `swarmState`, `getLog`, `getChatModels`) and
 projects the answer through an allowlist, so a field an owner grows later stays private until
 it is named there. `/v1/agents` mirrors the broker's `retainedHistory` boolean so a watcher can
 distinguish parked worker history from no retained history; it does not expose dormant family
@@ -4703,7 +4778,10 @@ reason, and answers with `Connection: close`.
 
 The action routes (`control-actions.ts`) are `POST /v1/inputs` (send a message to an existing chat,
 or without `sessionId` start a new chat with it, optionally in a `projectId`; the new session's id
-is the message id, as for the composer's New chat), `POST /v1/inputs/{id}/cancel`, and
+is the message id, as for the composer's New chat; an optional `model` and `reasoningEffort`, always
+together, must resolve in the saved catalog to an entry offering that effort and are filed under its
+id, else 409 `models_unknown`, `model_unknown` or `effort_unavailable`; without them the row keeps
+null and ChatGPT its own selection), `POST /v1/inputs/{id}/cancel`, and
 `POST /v1/sessions/{id}/stop` with `{ "turnId" }` from `live.activeTurnId`, which calls
 `stopSessionTurn` exactly as the Stop button does (Goal/Loop off, a 202 with the chat's `live`,
 409 `turn_not_running` when that answer is no longer running; the recorded `turn_end` is the proof
@@ -4831,11 +4909,18 @@ connection/document epochs fence delayed results. The bridge cache is presentati
 clears on disconnect/stop/reset. Request discovery, receipt, exact ownership and recorded tool
 activity remain distinct evidence. Optional embedded-host presentation does not enable or
 implement an embedded browser.
+The snapshot's optional `environment` (`CompanionEnvironment`) feeds the diagnostics report only:
+the browser's name and version, ChatGPT tabs counted by state, and `clf-page-checks` booleans plus
+the page language from the most recently used awake ChatGPT tab, read at most once a minute.
+`sanitiseCompanionDiagnostics` keeps names, versions, counts and booleans and drops everything else.
 
 `tunnel/*` owns pinned-client discovery, child lifetime, health metrics and confirmed outages;
 development discovery uses Electron's app root for `resources/tunnel`, independent of source
 nesting, bundle layout and the launching shell's working directory. Restore missing binaries
 with `npm run tunnel`, which verifies the pinned archive checksum before staging it.
+An `offline` report carries `offlineCause: 'service'` (into `ConnectionStatus.offlineCause`) when
+OpenAI's control plane answered a poll with 5xx in the last 3 minutes: the internet works and the UI
+says "OpenAI outage" instead of "No internet".
 `diagnostics.ts` tests the chain hop by hop. Transient health evidence must not produce repeated
 replacement tunnels or claim a broken provider was repaired. Update checks (§20), browser wake
 and MCP connection have separate lifecycles.
@@ -4852,6 +4937,15 @@ and enforcement while preserving stored preferences. Windows uses the bounded Po
 UIA helper; macOS uses Swift ScreenCaptureKit/AX/CGEvent through an architecture-matched N-API
 addon on an Electron worker. The packaged Electron app is the macOS permission subject; a
 standalone CLI probe does not prove Screen Recording/Accessibility permission for the app.
+
+macOS keeps those grants per code signature, and releases are ad-hoc signed, so after an update
+System Settings still shows a grant that no longer applies. `computer/macos-grants.ts` records
+which permissions the app was ever seen holding (durable `macos-permission-grants`) and exposes
+it as `MacOSDesktopAccessStatus.grantedBefore`. A missing permission that was granted before is
+shown in Settings and as the chat notice `#desktopAccessNotice` with Repair permissions
+(preload `repairDesktopAccess` → IPC `desktop:repairPermissions`): `tccutil reset` of this app's
+own missing entries (`MACOS_BUNDLE_ID`, electron-builder's `appId`), a screen-source request for
+Screen Recording and Electron's Accessibility prompt, so macOS asks again for the running build.
 
 `computer/index.ts` owns native actions, capture frames/accessibility refs, batching and
 postconditions. Registrars own live capability checks. Windows `windows-api.ts` implements the
@@ -4968,12 +5062,13 @@ lifetime; unrelated later settings saves do not silence them. Ordinary callers o
 predicate and retain the existing lifecycle behavior.
 
 **Explicit update command.** `update:all` / preload `updateAll()` groups concurrent presses
-and stages supported releases. Ready installers ask for native approval in the selected
-interface language; Keep working is the default. Cancellation grants neither shutdown nor
-connector intent. Approval commits exact-target intent before ordinary shutdown; the staged
+and stages supported releases. A ready installer answers `confirm` until the call names that
+exact version (`updateAll(version)`); the window asks in its own dialog (`#updateRestartDialog`,
+Keep working first and focused), never a system message box. Keep working grants neither
+shutdown nor connector intent. Approval commits exact-target intent before ordinary shutdown; the staged
 version is rechecked before quitting. Manual platform steps remain manual. A failed release
 check still requests the running connectors and preserves the app failure. Receipts
-`restarting/manual/checking-connectors/cancelled` prove no component completion. The explicit
+`restarting/manual/checking-connectors/confirm` prove no component completion. The explicit
 target build may connect once with auto-connect off without changing preferences. Startup
 consumes that reservation durably and uses the settings-incarnation predicate. Activity
 explains the connection exception and possible restart, retains errors until explicit retry,
@@ -5150,11 +5245,26 @@ partial file, verify SHA-256 before staging/adoption, and rehash at ordinary qui
 off. Windows NSIS/Linux AppImage can apply automatically; macOS/DEB present the supported manual
 path, development does not stage. Explicit install may relaunch; ordinary quit does not force
 relaunch. Failed checks never replace a verified staged candidate with unverified bytes.
+The updater classifies its own `TypeError('fetch failed')` as `GitHub could not be reached`,
+retaining the original diagnostic in its warning log. The card, update banners and retained
+Update all error share the renderer's update-error formatter; unknown errors remain literal.
 On Windows the handoff first repeats the installer's own `icacls` sandbox grant on the app folder;
 an exit code there means the folder needs an administrator, so the installer is started through
-`Start-Process -Verb RunAs` (#1490). The handoff leaves `updates/handoff.json`; a next start still
+`Start-Process -Verb RunAs` (#1490). That PowerShell stays attached (detached it has no console and
+runs nothing), and the handoff waits for Windows' answer, at most `ELEVATION_ANSWER_MS`, which the
+shutdown's update-handoff budget covers; a refusal is logged. The handoff leaves `updates/handoff.json`; a next start still
 older than that version reports `UpdateStatus.notInstalled` once (the update line says it did not
 install and never "Up to date" over it), and installing again clears it.
+A quit that installs for a person waiting on it (`installingVersion()`, set by Install or Update
+all) opens `update-progress.html` from `will-quit`: a frameless window without preload in the
+app's appearance colors and language, with texts only from `MAIN_TEXTS` (saving, Windows'
+permission, starting the new version; `onUpdateHandoffStep`). That handoff runs the Windows
+installer visibly (`--updated --force-run`, no `/S`, not `windowsHide`) and waits until it takes
+over (`onInstallerTakeover`): in update mode the installer closes the running app once its progress
+page shows, which closes the Installing window (bounded at 90 s). `scripts/windows-installer-acl.nsh` keeps an
+update's install mode without the "for whom" page (`customInstallMode`) and its finish page starts
+the app and ends instead of waiting for Finish (`customFinishPage`). An ordinary quit stays `/S`.
+`scripts/make-icon.mjs` draws the installer's header and sidebar bitmaps from the app icon.
 
 CI verifies supported OS families; native `release.yml` builds/smokes all six targets, then
 assembles installers, the Chromium extension ZIP, native-sources archive and `SHA256SUMS.txt`. `publish.yml`

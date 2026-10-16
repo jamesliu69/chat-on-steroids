@@ -2046,6 +2046,38 @@ it('Share a folder creates a sidebar project and keeps it when an older list ref
   expect(live.sent[0]).toMatchObject({ sessionId: null, projectId: project.id, text: 'Work in this folder' });
 });
 
+// #1469: the sidebar's + offers a folder on this computer or one on a server.
+it('offers a local folder and a server folder from the sidebar +, and marks a server project', async () => {
+  const { w } = await boot([], false);
+  const api = (w as any).api;
+  const doc = w.document;
+  const local = { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1', name: 'Local', path: '/local', createdAt: 1 };
+  const remote = { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee2', name: 'app', path: 'me@devbox:/srv/app', createdAt: 2, remote: { host: 'me@devbox', path: '/srv/app' } };
+  api.addProject = vi.fn(async () => ({ ok: true, data: local }));
+  api.addRemoteProject = vi.fn(async () => ({ ok: true, data: remote }));
+  const item = (action: string) => doc.querySelector<HTMLButtonElement>(`[data-row-action="${action}"]`);
+  (doc.getElementById('addProject') as HTMLButtonElement).click();
+  await settle();
+  expect(item('add-local-project')?.textContent).toContain('Folder on this computer');
+  item('add-local-project')!.click();
+  await settle();
+  expect(api.addProject).toHaveBeenCalledTimes(1);
+  expect(doc.querySelector(`[data-project-id="${local.id}"] .project-badge`)).toBeNull();
+  (doc.getElementById('addProject') as HTMLButtonElement).click();
+  await settle();
+  item('add-ssh-project')!.click();
+  await settle();
+  expect((doc.getElementById('sshProjectDialog') as HTMLDialogElement).open).toBe(true);
+  (doc.getElementById('sshProjectAddress') as HTMLInputElement).value = 'me@devbox';
+  (doc.getElementById('sshProjectFolder') as HTMLInputElement).value = '/srv/app';
+  doc.getElementById('sshProjectForm')!.dispatchEvent(new w.Event('submit', { cancelable: true }));
+  await settle();
+  expect(api.addRemoteProject).toHaveBeenCalledWith('me@devbox', '/srv/app');
+  const badge = doc.querySelector(`[data-project-id="${remote.id}"] .project-badge`);
+  expect(badge?.textContent).toBe('SSH');
+  expect(badge?.getAttribute('title')).toBe('me@devbox');
+});
+
 it('sends a new chat at once with Automatic when no model list is readable and none was asked for (#864)', async () => {
   // ChatGPT Go and Free show no model picker, so Send used to wait two minutes for a list that never came.
   const { w, live } = await boot([], false, [], [], { noModels: true });
@@ -4829,7 +4861,8 @@ it('retains the visible collapsed group beyond the normal resident target and st
   // One deliberate movement keeps filling the edge through collapsed batches.
   // Await the actual read result, including its animation-frame yields.
   pane.scrollTop = 0; pane.dispatchEvent(new w.WheelEvent('wheel', { deltaY: -100 }));
-  await vi.waitFor(() => expect(timeline.querySelectorAll('.ev-tool_call')).toHaveLength(rows.length), { timeout: 5000 });
+  // 2.7 s here; the macOS x64 release runner stopped at 300–390 of 400 rows after 5 s (2026-10-15).
+  await vi.waitFor(() => expect(timeline.querySelectorAll('.ev-tool_call')).toHaveLength(rows.length), { timeout: 20_000 });
   expect(timeline.querySelector('.tool-group')).toBe(group);
   expect(timeline.querySelectorAll('.raw')).toHaveLength(0);
   for (let i = 0; i < 14; i++) {
@@ -4874,6 +4907,25 @@ it('clears a delivered check when later model activity arrives without a timer',
   expect(receipt.hidden).toBe(true);
 });
 
+
+// 2026-10-15, the user's Mac: three fresh-turn continues that failed ("the browser did not pick up
+// this message within 60 seconds") stayed at the end of the chat as its newest messages, even after
+// the work moved on. A failed automatic continue belongs to its time, like a cancelled one.
+it('keeps a failed fresh-turn continue at its creation time, not at the end of the chat', async () => {
+  const app = await boot([
+    { seq: 1, time: T0, source: 'extension', kind: 'user_message', messageId: 'before-rotation', message: text('Original work') },
+    { seq: 2, time: T0 + 2000, source: 'extension', kind: 'user_message', messageId: 'after-rotation', message: text('Later continuation') }
+  ]);
+  const { w, live } = app;
+  live.inputs.push({ id: 'failed-rotation', sessionId: summary([]).id, conversationId: 'chat-b', text: 'Continue the task from where you are.',
+    mode: 'auto', dueAt: T0 + 1000, createdAt: T0 + 1000, state: 'failed', owner: null, model: null, reasoningEffort: null, purpose: 'rotation',
+    error: 'Not sent: the browser did not pick up this message within 60 seconds.' });
+  await app.append([]);
+  const timeline = w.document.getElementById('timeline')!;
+  expect(timeline.querySelector('[data-input-id="failed-rotation"]')).not.toBeNull();
+  expect(w.document.getElementById('inputQueue')!.textContent).not.toContain('Continue the task from where you are.');
+  expect(timeline.textContent!.indexOf('Continue the task from where you are.')).toBeLessThan(timeline.textContent!.indexOf('Later continuation'));
+});
 
 it('keeps a cancelled automatic draft at its creation time as later messages arrive', async () => {
   const app = await boot([
