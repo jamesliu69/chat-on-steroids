@@ -28,6 +28,13 @@ import { toVirtualPath } from '../sandbox.js';
 import { logWarn } from '../logger.js';
 import { withManagedSkills } from '../skill-access.js';
 
+/** Newer connector enrollment asks for catalogs even though these surfaces have none. */
+function answerEmptyCatalogs(server: McpServer): void {
+  server.server.setRequestHandler('resources/list', async () => ({ resources: [] }));
+  server.server.setRequestHandler('resources/templates/list', async () => ({ resourceTemplates: [] }));
+  server.server.setRequestHandler('prompts/list', async () => ({ prompts: [] }));
+}
+
 export function buildServer(
   ctx: ToolContext,
   surface: SurfaceId,
@@ -40,8 +47,9 @@ export function buildServer(
   const instructions = serverInstructions(ctx, surface);
   const server = new McpServer(
     { name: serverName, version: APP_VERSION },
-    { capabilities: { tools: {} }, instructions }
+    { capabilities: { tools: {}, resources: {}, prompts: {} }, instructions }
   );
+  answerEmptyCatalogs(server);
 
   const tools: PluginToolSchema[] = [];
   if (surface === 'plugins') {

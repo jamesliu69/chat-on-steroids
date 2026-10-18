@@ -21,7 +21,7 @@ describe('Firefox update manifest', () => {
         [FIREFOX_ADDON_ID]: {
           updates: [{
             version: '2.1.38',
-            update_link: `https://github.com/totec448-spec/chat-on-steroids/releases/download/v2.1.38/${FIREFOX_XPI}`,
+            update_link: 'https://github.com/jamesliu69/chat-on-steroids/releases/download/v2.1.38/' + FIREFOX_XPI,
             update_hash: `sha256:${'a'.repeat(64)}`
           }]
         }

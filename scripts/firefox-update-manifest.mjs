@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 export const FIREFOX_ADDON_ID = 'companion@chatonsteroids.app';
 export const FIREFOX_XPI = 'Chat-On-Steroids-Firefox.xpi';
 export const FIREFOX_UPDATES = 'firefox-updates.json';
-const RELEASES = 'https://github.com/totec448-spec/chat-on-steroids/releases';
+const RELEASES = 'https://github.com/jamesliu69/chat-on-steroids/releases';
 export const FIREFOX_UPDATE_URL = `${RELEASES}/latest/download/${FIREFOX_UPDATES}`;
 
 export function firefoxUpdateManifest({ version, sha256 }) {

@@ -44,7 +44,7 @@ describe('Firefox companion packaging groundwork', () => {
       gecko: {
         id: 'companion@chatonsteroids.app',
         strict_min_version: '140.0',
-        update_url: 'https://github.com/totec448-spec/chat-on-steroids/releases/latest/download/firefox-updates.json',
+        update_url: 'https://github.com/jamesliu69/chat-on-steroids/releases/latest/download/firefox-updates.json',
         data_collection_permissions: { required: ['personalCommunications', 'websiteContent'] }
       },
       // Mozilla's validator (2026-10-15): data_collection_permissions arrived in Firefox for

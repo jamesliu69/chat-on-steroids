@@ -41,7 +41,7 @@ import type {
   ToolEditReview
 } from '../../shared/session.js';
 import type { WorkerAssignmentSummary } from '../../shared/session.js';
-import { continuationMarkerOf, DEFAULT_RECORDING_STORAGE_GIB, eventTokens, MAX_TOOL_RESULT_TOKENS, normalizedToolOutcome, RECORDING_STORAGE_LIMITS_GIB, storedTextTokens, workSequence } from '../../shared/session.js';
+import { continuationMarkerOf, DEFAULT_RECORDING_STORAGE_GIB, eventTokens, MAX_TOOL_RESULT_TOKENS, normalizedToolOutcome, RECORDING_STORAGE_LIMITS_GIB, storedTextTokens, workSequence, UNATTRIBUTED_SESSION_TITLE } from '../../shared/session.js';
 import { applyTurnIdentity, authoredTimeOf, chronological, injectedUserMessage, positionOf, projectTimeline, residenceOf,
   recordedRequestTurn, responseTurnId, type Chronological, type TimelineTurns } from '../../shared/chronology.js';
 import { automaticTitle, firstTitleMessage, legacyContextTitle, legacyLabelPending, projectPageTitle, providerTitleIgnored, refreshUserTitle, userTitle } from './title.js';
@@ -940,7 +940,6 @@ async function rebuildSummaryFromHistory(
         agents: [...new Set([...checkpoint.agents, ...rebuilt.agents])]
       }
     : rebuilt;
-  logWarn(`session ${id}: rebuilt metadata from durable event/message history`);
   await writeSummary(summary, historySeq);
   return summary;
 }
@@ -1006,6 +1005,15 @@ async function readDurableSnapshot(id: string): Promise<DurableSessionSnapshot |
     if (!checkpoint && historySeq === 0) return null;
 
     const summary = await rebuildSummaryFromHistory(id, messages, checkpoint?.summary ?? null, historySeq, checkpoint?.historySeq === historySeq, !!checkpoint && !checkpoint.tokenEstimateCurrent);
+    // New derived fields and estimate versions deliberately replay old history after an
+    // update. That is a migration, not evidence of damaged history. A known stale watermark
+    // or missing checkpoint still needs a recovery warning, even during an upgrade.
+    // Report success only after the rebuilt checkpoint has actually reached disk.
+    if (checkpoint && (checkpoint.historySeq === null || checkpoint.historySeq === historySeq)) {
+      logInfo(`session ${id}: upgraded metadata from durable history (normal version migration)`);
+    } else {
+      logWarn(`session ${id}: rebuilt metadata from durable event/message history (${checkpoint ? 'history checkpoint out of date' : 'metadata checkpoint unavailable'})`);
+    }
     return { summary, messages, historySeq, reconciled: true };
   })();
   reconciling.set(id, work);
@@ -2385,7 +2393,7 @@ export async function rewriteUnattributedToolCalls(
   assertSessionId(sessionId);
   const entry = await ensureOpen(sessionId);
   const rewrite = entry.queue.then(async () => {
-    if (entry.summary.conversationId !== null || entry.summary.title !== 'Unattributed activity') {
+    if (entry.summary.conversationId !== null || entry.summary.title !== UNATTRIBUTED_SESSION_TITLE) {
       throw new Error(`Session ${sessionId} is not an Unattributed activity bucket`);
     }
 
@@ -3380,7 +3388,7 @@ export async function renameSession(id: string, title: string, source: SessionSu
     }
     if (source !== 'manual') {
       if (conversationId && entry.summary.conversationId !== conversationId) return;
-      if (!automaticTitle(entry.summary, firstTitleMessage(entry.messages.values()))) return;
+      if (!automaticTitle(entry.summary, firstTitleMessage(entry.messages.values(), entry.summary.origin?.branchOf))) return;
       if (source === 'fallback' && entry.summary.titleSource === 'provider') return;
       if (source === 'provider' && (providerTitleIgnored(entry.summary) || projectPageTitle(title))) return;
     }
@@ -3400,7 +3408,7 @@ export async function clearSessionName(id: string): Promise<void> {
   await enqueueSessionOperation(entry, 'rename', async () => {
     if (entry.summary.titleSource !== 'manual') return;
     const auto = entry.summary.autoTitle;
-    const first = firstTitleMessage(entry.messages.values());
+    const first = firstTitleMessage(entry.messages.values(), entry.summary.origin?.branchOf);
     entry.summary.title = auto?.title || (first ? userTitle(first.message.text, first.authoredText) : '') || 'ChatGPT session';
     entry.summary.titleSource = auto?.source ?? 'fallback';
     delete entry.summary.autoTitle;

@@ -2711,6 +2711,27 @@ describe('apply_patch', () => {
     expect(await fs.readFile(path.join(approved, 'fresh-sequential.ts'), 'utf8')).toBe('const fresh = 2;\n');
   });
 
+  it('keeps a file\'s own line endings when it edits it', async () => {
+    // The upstream default split a CRLF file on LF only: lines outside the hunk kept their CR,
+    // and the hunk's context and new lines lost it, so one edit left a Windows file mixed.
+    await fs.writeFile(path.join(approved, 'run.bat'), '@echo off\r\necho one\r\necho two\r\necho three\r\n');
+    await fs.writeFile(path.join(approved, 'unix.txt'), 'alpha\nbeta\ngamma');
+    const edited = await core('tools/call', {
+      name: 'apply_patch',
+      arguments: {
+        patch: [
+          '*** Begin Patch',
+          '*** Update File: /workspace/run.bat', '@@', ' echo one', '-echo two', '+echo TWO', '+echo extra', ' echo three',
+          '*** Update File: /workspace/unix.txt', '@@', ' alpha', '-beta', '+BETA',
+          '*** End Patch'
+        ].join('\n')
+      }
+    });
+    expect(edited.body.result?.isError).toBeFalsy();
+    expect(await fs.readFile(path.join(approved, 'run.bat'), 'utf8')).toBe('@echo off\r\necho one\r\necho TWO\r\necho extra\r\necho three\r\n');
+    expect(await fs.readFile(path.join(approved, 'unix.txt'), 'utf8')).toBe('alpha\nBETA\ngamma\n');
+  });
+
   it('adds, updates, moves and deletes through one tool', async () => {
     const added = await core('tools/call', {
       name: 'apply_patch',
@@ -4038,10 +4059,10 @@ describe('exec sessions belong to the chat that opened them', () => {
     expect(prove(`wfr_execown_old_recycled_${run}`, `conv-execown-old-${run}`)).toBe('stored');
     expect(prove(`wfr_execown_new_recycled_${run}`, `conv-execown-new-${run}`)).toBe('stored');
 
-    const allocate = unifiedExecManager.allocateProcessId.bind(unifiedExecManager);
+    // The allocator draws from a CSPRNG, so the pick is forced here: reserved the way it reserves.
     const allocation = vi.spyOn(unifiedExecManager, 'allocateProcessId').mockImplementation(() => {
-      const random = vi.spyOn(Math, 'random').mockReturnValue(0);
-      try { return allocate(); } finally { random.mockRestore(); }
+      (unifiedExecManager as unknown as { reservedProcessIds: Set<number> }).reservedProcessIds.add(recycledId);
+      return recycledId;
     });
     // Hold only publication of the real process result, not process creation or ownership.
     // The process is alive and writable, but the MCP handler has not yet installed its new

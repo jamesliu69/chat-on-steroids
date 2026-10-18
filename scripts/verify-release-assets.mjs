@@ -26,6 +26,7 @@ export const RELEASE_FILES = [
 const EXTENSION = 'Chat-On-Steroids-Extension.zip';
 const FIREFOX = 'Chat-On-Steroids-Firefox.xpi';
 const FIREFOX_UPDATES = 'firefox-updates.json';
+const FIREFOX_RELEASES = 'https://github.com/jamesliu69/chat-on-steroids/releases';
 
 function sha256(file) {
   return new Promise((resolve, reject) => {
@@ -71,7 +72,8 @@ export async function verifyReleaseAssets({ dir, tag }) {
     let offered = [];
     try { offered = Object.values(JSON.parse(readFileSync(updates, 'utf8')).addons ?? {}).flatMap(addon => addon.updates ?? []); } catch { /* reported below */ }
     const hash = `sha256:${await sha256(firefox)}`;
-    if (!offered.some(update => update.version === wanted && update.update_hash === hash && String(update.update_link).endsWith(`/v${wanted}/${FIREFOX}`))) {
+    const expectedLink = FIREFOX_RELEASES + '/download/v' + wanted + '/' + FIREFOX;
+    if (!offered.some(update => update.version === wanted && update.update_hash === hash && update.update_link === expectedLink)) {
       problems.push(`${FIREFOX_UPDATES} does not offer ${FIREFOX} of ${tag} with its checksum.`);
     }
   }

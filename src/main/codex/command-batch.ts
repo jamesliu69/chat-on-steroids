@@ -37,7 +37,8 @@ function powershellBatch(commands: readonly string[], marker: string): string {
     '    $__cos_batch_parse_failed = $false',
     '    $__cos_batch_script = $null',
     '    try {',
-    '      $__cos_batch_script = [ScriptBlock]::Create($__cos_batch_text)',
+    '      $global:__cos_batch_ok = $false',
+    "      $__cos_batch_script = [ScriptBlock]::Create($__cos_batch_text + \"`n\" + '$global:__cos_batch_ok = $?')",
     '    } catch {',
     // A standalone authenticated delimiter is invisible in the model-facing display but lets
     // parseCommandBatchSections distinguish ScriptBlock.Create failures from localized runtime
@@ -49,8 +50,8 @@ function powershellBatch(commands: readonly string[], marker: string): string {
     '    }',
     '    if (-not $__cos_batch_parse_failed) {',
     '      . $__cos_batch_script',
-    '      $__cos_batch_succeeded = $?',
-    '      $__cos_batch_code = if ($LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } elseif ($__cos_batch_succeeded) { 0 } else { 1 }',
+    // Capture the command status inside the block; dot-sourcing resets PowerShell's current status.
+    '      $__cos_batch_code = if ($global:__cos_batch_ok) { 0 } elseif ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } else { 1 }',
     '    }',
     '  } catch {',
     '    [Console]::Error.WriteLine($_.ToString())',
