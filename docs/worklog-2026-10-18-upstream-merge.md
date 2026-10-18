@@ -34,3 +34,9 @@
 ## 記錄時間點
 
 撰寫本記錄時尚未建立 merge commit 或推送；預設完整 `verify` 在這台 Windows 環境尚未取得全綠結果，因此當時沒有宣稱完整驗證通過的證據。當時尚未製作安裝程式或 portable 發行包，也未安裝或驗收真實 Chrome、Firefox 或 ChatGPT provider 行為。最後的 Git refs 與交付結果以實際完成狀態為準。
+
+## 最終交付
+
+- 最新上游 merge commit：`092ecf3bdda8b2fc1efe0128ab95daa05d91ee8a`，parents 為本地 Fork merge `1d577fe778b3d994b88104a4e84fc4d4cbee15ad` 與上游 `20a5c92204fb2929872fe4571a6c5ea161130ef8`。
+- 以 `git push origin fork-main:main` 快轉推送 Fork，`origin/main` 從 `fe9aa4f1` 前進至 `092ecf3b`；推送後重新 fetch，遠端 SHA 與本地 SHA 相同。
+- 上游 remote 僅 fetch；`totec448` 的 push URL 仍封鎖為 `https://invalid.invalid/no-push.git`。
