@@ -38,6 +38,9 @@
   "content_bootstrap_composer_replaced": {
     "message": "ChatGPT hat das Eingabefeld beim Einfügen des Starttexts ersetzt"
   },
+  "content_bootstrap_composer_never_ready": {
+    "message": "ChatGPT hat für den Start kein nutzbares Eingabefeld angezeigt"
+  },
   "content_bootstrap_composer_unavailable": {
     "message": "ChatGPT hat nach der Modellauswahl kein nutzbares Eingabefeld mehr angezeigt"
   },
@@ -337,9 +340,6 @@
   },
   "content_delivery_text_not_accepted": {
     "message": "ChatGPT hat den Text nicht angenommen$1"
-  },
-  "content_delivery_rotation_not_stopped": {
-    "message": "ChatGPT bot in der laufenden Antwort kein Senden an, und das Anhalten für das automatische Weiter wurde nicht fertig."
   },
   "content_delivery_turn_changed": {
     "message": "Der Durchlauf hat sich vor der direkten Zustellung geändert."
@@ -1231,5 +1231,11 @@
   },
   "popup_detail_total": {
     "message": "$1 gesamt"
+  },
+  "content_edit_message_missing": {
+    "message": "Diese Nachricht ist nicht mehr auf der ChatGPT-Seite und kann nicht bearbeitet werden."
+  },
+  "content_edit_unavailable": {
+    "message": "ChatGPT hat für diese Nachricht kein Bearbeiten angeboten. Öffne den Chat in ChatGPT und versuche es dann erneut."
   }
 }

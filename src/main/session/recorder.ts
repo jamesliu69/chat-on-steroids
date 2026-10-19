@@ -78,6 +78,8 @@ import {
 } from './correlation.js';
 import { RESUME_CLAIM_WINDOW_MS, dispatchedResumeFromSession, dispatchedResumeMarkerIn, resumeOpeningChat } from './resume-gate.js';
 import { summarizeToolCall } from './summarize.js';
+import { editReplacement, replacedQuestion } from './edits.js';
+import { takeAutomaticReply } from './automatic-replies.js';
 
 interface LiveConversation {
   conversationId: string;
@@ -1517,7 +1519,8 @@ async function fileToolCall(input: ToolCallInput, target: Target): Promise<ToolC
         // The one thing an unattributed call still carries: the server turn it belongs to.
         input.requestId ?? null,
         reopenedTurnId,
-        filed
+        filed,
+        input.tool
       );
     } catch (err) {
       logWarn(`call attribution listener failed: ${(err as Error).message}`);
@@ -1665,7 +1668,8 @@ let attributionListener:
       completedFinalAt: number | null,
       requestId: string | null,
       reopenedTurnId: string | null,
-      filedSession: SessionSummary | null
+      filedSession: SessionSummary | null,
+      tool: string
     ) => void)
   | null = null;
 
@@ -1681,7 +1685,8 @@ export function setCallAttributionListener(
         requestId: string | null,
         /** The turn this call reopened, when it proved the page's completed end false. */
         reopenedTurnId: string | null,
-        filedSession: SessionSummary | null
+        filedSession: SessionSummary | null,
+        tool: string
       ) => void)
     | null
 ): void {
@@ -1784,6 +1789,10 @@ export interface ChatObservation {
   /** Exact native user-message attachment metadata; no remote URL or image bytes. */
   attachments?: import('../../shared/input.js').InputAttachment[];
   reaction?: string | null;
+  /** user_message: its parent in ChatGPT's message tree ("root" for the first question). */
+  parentId?: string;
+  /** user_message: ChatGPT's own proof that questions sharing `parentId` are versions of one message. */
+  parentExact?: boolean;
   /** ChatGPT's already-rendered authored markup for this same logical message. */
   renderedHtml?: string;
   messageId?: string;
@@ -2228,6 +2237,10 @@ async function recordChatObservationsNow(
           ...(item.attachments?.length ? { attachments: item.attachments } : {}),
           ...(item.reaction !== undefined ? { reaction: item.reaction } : {}),
           ...(item.model ? { model: item.model } : {}),
+          ...(item.parentId ? { parentId: item.parentId } : {}),
+          ...(editReplacement(item.messageId) ? { replaces: editReplacement(item.messageId) }
+            : item.parentId && item.parentExact === true ? await replacedQuestion(sessionId, item.messageId, item.parentId) : {}),
+          ...(takeAutomaticReply(conversationId, item.text ?? '') ? { automatic: true as const } : {}),
           messageId: item.messageId
         }, { preferTime: item.authoredTime === true, work: item.authoredNow === true });
         if (!written.changed) continue;

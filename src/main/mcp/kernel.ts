@@ -92,6 +92,7 @@ import {
   noteOutcome,
   holdWhileSettling,
   runInCallContext,
+  noteCallReleased,
   runningToolProgress,
   setRequestOwner,
   trackInFlight,
@@ -99,6 +100,7 @@ import {
   type CallContext,
   type CallCaller
 } from './call-context.js';
+import { openCallHold } from '../rotation-hold.js';
 import {
   REQUEST_ID_GRACE_MS,
   awaitFreshCallOrigin,
@@ -674,10 +676,15 @@ export async function dispatch(
     );
     // In-process callers have no socket; resolving their outer invocation publishes it.
     if (!parent && !inboundPublication()) context.publication!.completedAt = Date.now();
+    // Only a provider request has a response ChatGPT receives; in-process callers prove nothing.
+    if (!parent && inboundPublication()) noteCallReleased(context);
     if (!result.isError) confirmUse?.();
     return result;
   } catch (error) {
-    if (!parent) context.publication!.failed = true;
+    if (!parent) {
+      context.publication!.failed = true;
+      if (inboundPublication()) noteCallReleased(context);
+    }
     throw error;
   }
 }
@@ -1187,6 +1194,9 @@ async function dispatchTracked(
   // are measured separately because a row cannot contain the time of its own later commit.
   const durationMs = recorderStartedAt - startedAt;
   markTiming('delivery');
+  // #1662: a call recorded while its answer is still held lets a due fresh-turn continue go in
+  // while ChatGPT still sees the call running; the answer waits for it below, bounded.
+  const closeHold = !nested && context.caller.conversationId ? openCallHold(context.caller.conversationId) : null;
   const recording = recordToolCall({
     nested,
     tool: name,
@@ -1211,7 +1221,7 @@ async function dispatchTracked(
   // broken history never breaks the tool itself. Only the degraded/unidentified path remains
   // fire-and-forget because it may still spend a grace window waiting for page evidence.
   if (context.caller.conversationId) {
-    await recording;
+    try { await recording; } finally { await closeHold?.(); }
   } else {
     void recording.then(() => logInfo(`mcp recording surface=${surface} recorder_async_ms=${Date.now() - recorderStartedAt}`));
     holdWhileSettling(context, recording);

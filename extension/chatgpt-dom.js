@@ -615,6 +615,21 @@ var CLF_DOM = (() => {
     if (!turn || !stamp?.startsWith(`${turn}:`)) return null;
     try { return decodeURIComponent(stamp.slice(turn.length + 1)) || null; } catch { return null; }
   }
+  /**
+   * Whether the page shows exactly one exchange, the chat's first, running without its question
+   * (fiber.js `data-clf-fiber-first`), and no user message anywhere. The stamp counts only under
+   * the exchange's current turn stamp, like every other MAIN stamp; a stale one is no evidence.
+   */
+  function firstQuestionPending() {
+    return safe(() => {
+      const all = turns();
+      if (all.length !== 1 || all[0].role !== 'assistant' || messages().some(message => message.role === 'user')) return false;
+      const section = all[0].node;
+      if (!section?.matches?.(SHELL_TURN)) return false;
+      const turn = section.getAttribute('data-clf-fiber-turn'), stamp = section.getAttribute('data-clf-fiber-first');
+      return !!turn && stamp === turn;
+    }, false);
+  }
   function turns() {
     return safe(() => {
       const out = [];
@@ -629,13 +644,17 @@ var CLF_DOM = (() => {
         if (node.matches?.(SHELL_TURN)) {
           const users = [...node.querySelectorAll('[data-content-search-unit-key$=":user"]')].filter(slot => slot.closest('[data-turn-key]') === node);
           const answered = node.querySelector('[data-chatgpt-agent-turn-start], [data-content-search-unit-key$=":assistant"]');
-          // Two user slots in one exchange are ambiguous and stay unread. A missing one is not: ChatGPT
-          // unmounts the question while its answer stays (#900), and skipping the whole exchange then
-          // hid that answer's final, so its turn never ended (#910). The answer keeps the exchange's
-          // own key; nothing here is joined by text or position.
+          // Two slots with the same key in one exchange are ambiguous and stay unread. Slots with
+          // their own keys are not: in a chat's later turns ChatGPT keeps a message sent into the
+          // running answer in the question's exchange, as its own slot (#1662). Skipping such an
+          // exchange hid the fresh turn's answer, and that turn never ended. A missing slot is not
+          // ambiguous either: ChatGPT unmounts the question while its answer stays (#900), and
+          // skipping the whole exchange then hid that answer's final, so its turn never ended (#910).
+          // The answer keeps the exchange's own key; nothing here is joined by text or position.
+          const keys = users.map(slot => slot.getAttribute('data-content-search-unit-key'));
           const unrendered = users.length ? null : unrenderedUserIdOf(node);
-          if (users.length > 1 || !id || (!users.length && !answered && !unrendered)) continue;
-          if (users.length) out.push({ node: users[0], nodes: [users[0]], id, role: 'user' });
+          if (new Set(keys).size !== keys.length || !id || (!users.length && !answered && !unrendered)) continue;
+          if (users.length) for (const slot of users) out.push({ node: slot, nodes: [slot], id, role: 'user' });
           else if (unrendered) out.push({ node, nodes: [node], id, role: 'user', unrenderedUserId: unrendered });
           if (answered) out.push({ node, nodes: [node], id, role: 'assistant' });
           previous = null; continue;
@@ -2350,7 +2369,14 @@ var CLF_DOM = (() => {
    * not a reason to hold a finished Goal reply at "sending" (2026-09-03: one letter did).
    */
   function insertPrompt(value, mode = false, failure = () => undefined) {
-    const box = composer();
+    return insertIntoEditor(composer(), value, mode, failure, box => composer() === box);
+  }
+
+  /**
+   * One native insertion into a ChatGPT editor: the composer, or the inline editor ChatGPT opens to
+   * edit a question (#365). `stillOwned` says the editor is still the one this insertion was for.
+   */
+  function insertIntoEditor(box, value, mode, failure, stillOwned) {
     const reject = reason => {
       // A bounded predicate survives tab retirement without exposing authored data.
       safe(() => failure(reason), undefined);
@@ -2377,7 +2403,7 @@ var CLF_DOM = (() => {
           value = `\n${value}`;
         }
       } else selection.selectAllChildren(box);
-      if (!box.isConnected || composer() !== box) return reject('editor_replaced');
+      if (!box.isConnected || !stillOwned(box)) return reject('editor_replaced');
       if (document.activeElement !== box) return reject('composer_not_focused');
       if (!selection.rangeCount || !box.contains(selection.anchorNode) || !box.contains(selection.focusNode)) return reject('selection_changed');
       // One native HTML edit uses the actual browser selection, including on a
@@ -2402,7 +2428,7 @@ var CLF_DOM = (() => {
       if (!document.execCommand('insertHTML', false, paragraph.innerHTML)) return reject('native_edit_rejected');
       const compact = text => String(text || '').replace(/\s+/g, '');
       const expected = mode === 'append' ? existing + value : value;
-      if (!box.isConnected || composer() !== box) return reject('editor_replaced');
+      if (!box.isConnected || !stillOwned(box)) return reject('editor_replaced');
       if (compact(box.textContent) !== compact(expected)) return reject('text_mismatch');
       return true;
     } catch {
@@ -2488,7 +2514,7 @@ var CLF_DOM = (() => {
     channel.port2.postMessage(null);
   }
 
-  async function send({ acceptanceTimeoutMs = 30000, stillCurrent = () => true, matchesUser = null, observeEvidence = null, clearAcceptedDraft = true, beforeSend = null, acceptUserReceipt = null, receiptTimeoutMs = null, mention = null, explain = null, sentRequest = null, whileGenerating = false } = {}) {
+  async function send({ acceptanceTimeoutMs = 30000, stillCurrent = () => true, stillCurrentAfterClick = null, matchesUser = null, observeEvidence = null, clearAcceptedDraft = true, beforeSend = null, acceptUserReceipt = null, receiptTimeoutMs = null, mention = null, explain = null, sentRequest = null, whileGenerating = false } = {}) {
     // Why a Send ended without acceptance, as one short code for the caller's diagnostics (#820).
     // It names the first refusal only and never changes what Send does.
     const refused = (why) => { try { explain?.(why); } catch { /* Diagnostics never change Send. */ } return false; };
@@ -2619,7 +2645,10 @@ var CLF_DOM = (() => {
         };
         const check = () => {
           if (done) return;
-          if (!stillCurrent() || (beforeConversation && conversationId() !== beforeConversation)) return finish(false, 'chat-changed');
+          // A caller's deadline may forbid the click without disowning a click already made: its
+          // receipt is evidence the caller still has to report (#1086 worker starts).
+          const owned = attempted && stillCurrentAfterClick ? stillCurrentAfterClick : stillCurrent;
+          if (!owned() || (beforeConversation && conversationId() !== beforeConversation)) return finish(false, 'chat-changed');
           if (attempted) {
             if (accepted()) finish(true);
             return;
@@ -3018,6 +3047,70 @@ var CLF_DOM = (() => {
     return 'clicked';
   }
 
+  /**
+   * Edit & resubmit (#365): opens ChatGPT's own editor on one question, without reading a label.
+   *
+   * The page world marks that question's Edit control by handler (fiber.js); pressing it puts an
+   * editor into that same turn, inside a form whose submit button resubmits the question and whose
+   * other button cancels. Returns a handle once the editor is there, or 'edit_message_missing' /
+   * 'edit_unavailable' after closing anything it opened. `isCurrent` fences every wait.
+   */
+  async function openQuestionEdit(messageId, isCurrent = () => true) {
+    const shown = node => !!node && node.isConnected && node.getClientRects().length > 0;
+    const until = async (read, ms = 3000) => {
+      for (const end = Date.now() + ms; Date.now() < end; await new Promise(resolve => setTimeout(resolve, 50))) {
+        if (!isCurrent()) return null;
+        const value = read();
+        if (value) return value;
+      }
+      return null;
+    };
+    const turnOf = () => {
+      const keyed = [...document.querySelectorAll('[data-turn-key]')].filter(node => node.getAttribute('data-turn-key') === messageId);
+      const legacy = [...document.querySelectorAll('[data-message-id]')].filter(node => node.getAttribute('data-message-id') === messageId)
+        .map(node => node.closest('[data-testid^="conversation-turn"], article'));
+      const turns = [...new Set([...keyed, ...legacy].filter(Boolean))];
+      return turns.length === 1 ? turns[0] : null;
+    };
+    if (!isCurrent()) return { failure: 'edit_unavailable' };
+    const turn = turnOf();
+    if (!turn) return { failure: 'edit_message_missing' };
+    const nonce = crypto.randomUUID();
+    const marked = await new Promise(resolve => {
+      const finish = value => { clearTimeout(timer); window.removeEventListener('message', receive); resolve(value); };
+      const receive = event => {
+        const data = event.data;
+        if (event.source === window && event.origin === location.origin && data?.source === 'clf-edit-reply' && data.nonce === nonce && data.v === 1) finish(data.marked);
+      };
+      const timer = setTimeout(() => finish(0), 1500);
+      window.addEventListener('message', receive);
+      window.postMessage({ source: 'clf-edit-ask', nonce, messageId }, location.origin);
+    });
+    const control = [...turn.querySelectorAll('button')].filter(button => button.getAttribute('data-clf-edit') === nonce);
+    if (marked !== 1 || control.length !== 1 || !isCurrent()) return { failure: 'edit_unavailable' };
+    control[0].removeAttribute('data-clf-edit');
+    control[0].click();
+    const opened = await until(() => {
+      const editors = [...turn.querySelectorAll('.ProseMirror[contenteditable="true"]')].filter(node => shown(node) && node.closest('form'));
+      if (editors.length !== 1) return null;
+      const form = editors[0].closest('form');
+      const submits = [...form.querySelectorAll('button[type="submit"]')].filter(shown);
+      const cancels = [...form.querySelectorAll('button[type="button"]')].filter(shown);
+      return submits.length === 1 && cancels.length === 1 ? { editor: editors[0], form, submit: submits[0], cancel: cancels[0] } : null;
+    });
+    if (!opened) return { failure: 'edit_unavailable' };
+    return {
+      editor: opened.editor,
+      /** The editor is still the one opened here, in the same turn. */
+      current: () => opened.editor.isConnected && turn.isConnected && opened.form.contains(opened.editor) && isCurrent(),
+      write: (value, failure = () => undefined) => insertIntoEditor(opened.editor, value, true, failure,
+        box => box === opened.editor && opened.form.contains(box)),
+      submit: () => { if (!opened.submit.isConnected || opened.submit.disabled) return false; opened.submit.click(); return true; },
+      // Closing without sending restores the question as it was; a closed editor needs nothing.
+      cancel: () => { if (opened.cancel.isConnected) opened.cancel.click(); }
+    };
+  }
+
   const normalizeModelLabel = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}.]/gu, '');
   /** One bounded read through the existing MAIN-world helper; no provider API or setters. */
   function readPickerState() {
@@ -3279,6 +3372,15 @@ var CLF_DOM = (() => {
   }
   async function selectModelSettings(model, effort, stillCurrent = () => true) {
     if (!model && !effort) return true;
+    // The page's own picker state, read without opening anything. A worker tab opens with its model
+    // in the address and ChatGPT applies it; opening the picker only to prove that left its closing
+    // animation unfinished in a hidden, throttled tab, its focus scope hid the composer, and every
+    // worker failed "after model selection" (#1086). The same account-evaluated proof as below.
+    if (!document.querySelector(PICKER)) {
+      const passive = await readPickerState();
+      const now = passive?.choices.find(choice => choice.bucket === passive.currentBucket);
+      if (now?.available && (!model || now.id === model || now.familyId === model) && (!effort || now.effort === effort)) return stillCurrent();
+    }
     const ui = modelPickerAccess(stillCurrent), original = await ui.open();
     if (!original) { await ui.close(); return false; }
     // Account-evaluated exact selection is already proof; visiting unrelated
@@ -3590,6 +3692,7 @@ var CLF_DOM = (() => {
     modelPickerReadable,
     newChatControl,
     branchInNewChat,
+    openQuestionEdit,
     projectCreateControl,
     projectCreateForm,
     revealSidebar,
@@ -3654,6 +3757,7 @@ var CLF_DOM = (() => {
     turns,
     presentationTurns,
     messages,
+    firstQuestionPending,
     messagesIn,
     sectionSignature,
     generating,

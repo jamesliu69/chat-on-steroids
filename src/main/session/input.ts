@@ -4,13 +4,16 @@ import { REASONING_EFFORTS, workSequence } from '../../shared/session.js';
  * Tool delivery repeats under a stable message id until a later request proves receipt.
  */
 import { z } from 'zod';
-import { browserInputModel, manualInput, queuedFollowup, MAX_INPUT_IMAGES, type InputImage } from '../../shared/input.js';
+import { authoredTextOf, browserInputModel, manualInput, queuedFollowup, MAX_INPUT_IMAGES, type InputImage } from '../../shared/input.js';
 import type { SessionSummary } from '../../shared/session.js';
 import { getConfig } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import { userTitle } from './title.js';
 import { readDurable, writeDurableNow, writeDurableSoon } from '../durable.js';
-import { getSession, findSessionByConversation, createSession, deleteSession, rebindSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, turnHasMcpCall, questionHasMcpCall, sessionDirectoryMissing, readCompletedFinal, readLatestUserMessage } from './store.js';
+import { getSession, findSessionByConversation, createSession, deleteSession, rebindSession, conversationWasSuperseded, readRecentEvents, listUsageSessions, turnHasMcpCall, questionHasMcpCall, sessionDirectoryMissing, readCompletedFinal, readLatestUserMessage, readEvents } from './store.js';
+import { noteEditReplacement } from './edits.js';
+import { userPromptText } from '../../shared/user-prompt.js';
+import type { SessionEvent } from '../../shared/session.js';
 import { assignSessionProject, getProject, getSessionProject, localProjectPath, projectWorkspace } from '../projects.js';
 import { isChatBlocked } from './blocked-chats.js';
 import { wakeBrowserWork } from '../browser-wake.js';
@@ -62,10 +65,17 @@ export const inputArgs = z.object({
     sessionId: z.string().min(8).max(64),
     conversationId: z.string().regex(NATIVE_ID),
     messageId: z.string().regex(NATIVE_ID)
-  }).strict().optional()
+  }).strict().optional(),
+  /**
+   * Edit & resubmit (#365): this message replaces the chat's question `messageId` through ChatGPT's
+   * own edit, which keeps the old version beside it and continues the chat from the new one.
+   */
+  edit: z.object({ messageId: z.string().regex(NATIVE_ID) }).strict().optional()
 });
 export type InputArgs = z.infer<typeof inputArgs>;
 const entrySchema = inputArgs.extend({
+  /** An edit of the chat's first question: its new version carries the chat's setup again. */
+  editFramed: z.literal(true).optional(),
   /** This exact outbox row owns the first native send of its reserved local session. */
   opening: z.literal(true).optional(),
   /** An explicit retry can keep its unbound local chat instead of reserving another. */
@@ -539,9 +549,11 @@ async function expireQueued(current: InputEntry[]): Promise<InputEntry[]> {
     // browser row past authorization is not preparable, so no path re-offers or
     // replays it. Left in place it still owns its whole session, so every later
     // message waits behind an outcome nobody will ever publish. Retire it visibly
-    // after a bounded wait. Automatic Continue, an opening's first send and a
-    // combined delivery keep their existing custody.
-    if (row.state === 'browser' && row.sendAuthorizedAt !== undefined && !row.recovery && !row.opening &&
+    // after a bounded wait; a late receipt still records the delivery. Automatic
+    // Continue and a combined delivery keep their existing custody. A new chat's
+    // first send is retired the same way: held for hours it was invisible and kept
+    // every automatic extension update waiting (2.1.41 release round).
+    if (row.state === 'browser' && row.sendAuthorizedAt !== undefined && !row.recovery &&
         !row.companionInputId && manualInput(row) && Date.now() - row.sendAuthorizedAt >= UNCERTAIN_SEND_MS)
       return { ...row, state: 'cancelled', error: UNCONFIRMED_SEND };
     if (row.state === 'browser' && row.sendAuthorizedAt !== undefined && Date.now() - row.sendAuthorizedAt >= ABANDONED_SEND_MS)
@@ -732,6 +744,32 @@ async function assertBranchSource(input: InputArgs, requested: SessionSummary | 
   // Its page is opened a second time to make the branch; never beside a turn still working there.
   if (source.activeTurnId) throw new Error('Wait until the chat you branch from finishes its turn, then send again');
 }
+/**
+ * An edit replaces one recorded question of the chat's current ChatGPT conversation, its newest
+ * version, as one plain message sent now, never beside a running turn. Whether the question is
+ * still on the page is the page's to prove, just before Send.
+ */
+async function assertEditSource(input: InputArgs, entry: InputEntry): Promise<void> {
+  const edit = input.edit!;
+  if (!input.sessionId || entry.opening) throw new Error('Edit a message in the chat it was sent in');
+  if (input.branch) throw new Error('Edit a message in the chat it was sent in');
+  if (input.mode !== 'auto' || input.stages?.length || input.delivery || input.attachmentDelivery || input.images?.length || input.attachments?.length)
+    throw new Error('Send an edit as one plain message');
+  const session = await getSession(input.sessionId);
+  if (!session || session.origin?.kind === 'worker' || session.origin?.kind === 'helper') throw new Error('This chat\'s messages cannot be edited');
+  if (!session.conversationId) throw new Error('This recording has no ChatGPT conversation');
+  if (isChatBlocked(session.conversationId)) throw new Error('Unblock this conversation before sending');
+  if (session.activeTurnId) throw new Error('Wait until this chat finishes its turn, then edit again');
+  // Only the chat ChatGPT shows now: a chat left through Compact & Resume has its own messages.
+  const since = Math.max(0, ...Object.values(session.retiredChatAt ?? {}));
+  const questions = (await readEvents(input.sessionId, { kinds: ['user_message'] }))
+    .filter((event): event is Extract<SessionEvent, { kind: 'user_message' }> => event.kind === 'user_message');
+  const versions = questions.filter(event => event.messageId === edit.messageId);
+  const latest = versions.at(-1);
+  if (!latest || versions[0]!.time < since) throw new Error('That message is no longer in this ChatGPT chat, so it cannot be edited');
+  if (questions.some(event => event.replaces === edit.messageId)) throw new Error('That message was edited already; edit its newest version');
+  if (userPromptText(latest.message.text) !== null) entry.editFramed = true;
+}
 async function finishInputCurrent(entry: InputEntry): Promise<boolean> {
   // Periodic generation was retired; persisted rows cannot regain delivery authority.
   if (!entry.finishOwner || entry.finishOwner.periodic || !entry.sessionId) return false;
@@ -753,7 +791,7 @@ async function materializeOpening(entry: InputEntry): Promise<void> {
     existing.conversationId === entry.conversationId &&
     existing.origin?.kind !== 'worker' && existing.origin?.kind !== 'helper';
   const session = recoveredExactOwner ? existing : await createSession({ reservedId: entry.sessionId,
-    title: userTitle(entry.text, entry.text), titleSource: 'fallback',
+    title: userTitle(entry.text, authoredTextOf(entry)), titleSource: 'fallback',
     origin: entry.branch
       ? { kind: 'desktop', fromSessionId: entry.branch.sessionId, agentId: null, task: '',
         branchOf: { conversationId: entry.branch.conversationId, messageId: entry.branch.messageId } }
@@ -788,6 +826,33 @@ export function fileRotationInput(sessionId: string, turnId: string): Promise<In
       conversationId: session.conversationId };
     await commit(append(current, entry));
     return { ...entry };
+  });
+}
+
+/**
+ * Where a fresh-turn continue (#1402) stands, for the tool call held for it (#1662): not yet sent,
+ * being sent (Send is authorized), or settled either way.
+ */
+export async function rotationDelivery(id: string): Promise<'pending' | 'sending' | 'settled'> {
+  const row = (await load()).find(entry => entry.id === id);
+  if (!row || row.purpose !== 'rotation') return 'settled';
+  if (row.state === 'queued' || (row.state === 'browser' && row.sendAuthorizedAt === undefined)) return 'pending';
+  return row.state === 'browser' ? 'sending' : 'settled';
+}
+
+/**
+ * Withdraws a fresh-turn continue that has not been sent, once the call it was held for has to
+ * answer. Sent after that answer it would land in the gap where ChatGPT queues it behind the
+ * reply. Nobody's message, so it leaves no notice; the turn is tried again at a later call.
+ */
+export function withdrawUnsentRotation(id: string): Promise<boolean> {
+  return serial(async () => {
+    const current = await load();
+    const row = current.find(entry => entry.id === id && entry.purpose === 'rotation' &&
+      (entry.state === 'queued' || (entry.state === 'browser' && entry.sendAuthorizedAt === undefined)));
+    if (!row) return false;
+    await commit(current.map(entry => entry === row ? { ...entry, state: 'cancelled' as const } : entry));
+    return true;
   });
 }
 
@@ -879,6 +944,7 @@ export function enqueueInput(raw: InputArgs, finishOwner?: InputEntry['finishOwn
     }
     if (input.branch || (requestedSession?.origin?.branchOf && !requestedSession.conversationId))
       await assertBranchSource(input, requestedSession, retryOpening);
+    if (input.edit) await assertEditSource(input, entry);
     if (finishOwner && !(await finishInputCurrent(entry))) throw new Error('The automatic follow-up no longer belongs to an active turn');
     if (injectionOwner) {
       policy = await sessionInputPolicy(input.sessionId!);
@@ -1252,7 +1318,11 @@ async function eligibleStageEnd(entry: InputEntry): Promise<string | null> {
   // Queue intent names the turn we were waiting for, not when Chrome reported it.
   // Other turns and legacy rows retain the later-completion rule. A rebind cannot
   // lend this reference to another frontend, even if its turn id happens to match.
-  const queuedHere = entry.queuedTurn?.conversationId === session.conversationId && entry.queuedTurn?.turnId === end.turnId;
+  // A silence ticket names its source turn the same way: that turn completing releases the message
+  // even when it completed before the message was queued, which is when the app still took a chat
+  // whose final it could not read yet for busy (2026-10-19). Its end is the one it waited for.
+  const queuedHere = (entry.queuedTurn?.conversationId === session.conversationId && entry.queuedTurn?.turnId === end.turnId) ||
+    (entry.silenceBoundary?.conversationId === session.conversationId && entry.silenceBoundary.turnId === end.turnId);
   if (!queuedHere && end.time < entry.createdAt) return null;
   if (!(await sessionInputPolicy(entry.sessionId)).settled) return null;
   return end.turnId;
@@ -1570,9 +1640,9 @@ async function completedStageBoundary(entry: InputEntry, current: InputEntry[]):
       row.dueAt <= Date.now() && ['queued', 'browser', 'tool'].includes(row.state))) return null;
   return turnId;
 }
-export function pendingBrowserInputs(): Promise<Array<{ id: string; conversationId: string | null; recovery?: { questionId: string; stop: boolean }; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner'; project?: string; branch?: { conversationId: string; messageId: string } }>> {
+export function pendingBrowserInputs(): Promise<Array<{ id: string; conversationId: string | null; recovery?: { questionId: string; stop: boolean }; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner'; project?: string; branch?: { conversationId: string; messageId: string }; edit?: { messageId: string } }>> {
   return serial(async () => {
-    const result: Array<{ id: string; conversationId: string | null; recovery?: { questionId: string; stop: boolean }; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner'; project?: string; branch?: { conversationId: string; messageId: string } }> = [];
+    const result: Array<{ id: string; conversationId: string | null; recovery?: { questionId: string; stop: boolean }; silenceTurnId?: string; directTurn?: InputEntry['directTurn']; supersededConversationId?: string; lifetime?: 'temporary-planner'; project?: string; branch?: { conversationId: string; messageId: string }; edit?: { messageId: string } }> = [];
     const current = await load();
     for (const entry of ordered(current)) {
       if (companionOf(current, entry)) continue;
@@ -1599,7 +1669,8 @@ export function pendingBrowserInputs(): Promise<Array<{ id: string; conversation
             ? { supersededConversationId: entry.conversationId } : {}),
           ...(entry.lifetime ? { lifetime: entry.lifetime } : {}),
           ...(chatgptProject?.state === 'linked' ? { project: chatgptProject.id } : {}),
-          ...(entry.branch && !conversationId ? { branch: { conversationId: entry.branch.conversationId, messageId: entry.branch.messageId } } : {}) });
+          ...(entry.branch && !conversationId ? { branch: { conversationId: entry.branch.conversationId, messageId: entry.branch.messageId } } : {}),
+          ...(entry.edit && conversationId ? { edit: { messageId: entry.edit.messageId } } : {}) });
       } catch { /* blocked/deleted stays user-visible */ }
     }
     return result;
@@ -1790,6 +1861,9 @@ export function acknowledgeBrowserInput(id: string, owner: string, conversationI
       entry.state !== 'cancelled' && (entry.opening || !entry.sessionId) && entry.automation && deliveredConversation && entry.purpose !== 'decision' ? [acknowledged] : [], 'after-send');
     if (entry.completedTurnId && entry.sessionId && deliveredConversation)
       await consumeGoalReplyForInputNow(deliveredConversation, entry.sessionId, entry.completedTurnId);
+    // The page saw its edit replace the question: that is known now, before ChatGPT draws its versions.
+    if (entry.edit && messageId && entry.sessionId) await noteEditReplacement(entry.sessionId, messageId, entry.edit.messageId)
+      .catch((err: Error) => logWarn(`input ${id}: could not mark the edited question (${err.message})`));
     logInfo(`input ${id}: browser acknowledged after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
     await publishHistory();
     return true;
