@@ -33,6 +33,7 @@ import {
   scopedServerName,
   type SurfaceId
 } from './surfaces.js';
+import { noteRouteRequestArrived } from '../tunnel/route-settle.js';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -230,6 +231,7 @@ interface SurfaceExposure {
 
 interface McpServerOptions {
   kept?: Partial<Record<SurfaceId, string>>;
+  port?: number;
   serverNameScope?: string;
 }
 
@@ -453,6 +455,7 @@ export async function startMcpServer(getContext: () => ToolContext, options: Mcp
     // The tool dispatch reads this back to join the call to the page request that issued
     // it; see inbound.ts for why it cannot be taken from the MCP call context.
     const requestId = requestIdFromHeader(req.headers['x-request-id']);
+    if (requestId) noteRouteRequestArrived(requestId);
     const dispatch = (body?: unknown): void => {
       if (stopping || res.destroyed) {
         if (!res.destroyed) {
@@ -504,13 +507,26 @@ export async function startMcpServer(getContext: () => ToolContext, options: Mcp
   server.requestTimeout = 300_000;
   server.maxRequestsPerSocket = 0;
 
-  await new Promise<void>((resolve, reject) => {
+  const listen = (port: number) => new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
       server.removeListener('error', reject);
       resolve();
     });
   });
+  // A kept port (a tunnel of the user's own points at it, #1550) when it is free; else any port.
+  // Retried briefly first: on a restart the previous instance may still be letting go of it.
+  let listening = false;
+  for (let tries = 1; options.port && !listening; tries += 1) {
+    try { await listen(options.port); listening = true; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EADDRINUSE' && tries < 5) { await new Promise(resolve => setTimeout(resolve, 200)); continue; }
+      logWarn(`Local port ${options.port} is not available (${code ?? (error as Error).message}); using another one, so a tunnel pointing at it needs the new port`);
+      break;
+    }
+  }
+  if (!listening) await listen(0);
 
   const address = server.address();
   if (address === null || typeof address === 'string') {

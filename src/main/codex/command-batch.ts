@@ -49,7 +49,9 @@ function powershellBatch(commands: readonly string[], marker: string): string {
     '      $__cos_batch_code = 1',
     '    }',
     '    if (-not $__cos_batch_parse_failed) {',
-    '      . $__cos_batch_script',
+    // Piped to Out-Default so table output is written before the following banner/exit. Windows
+    // PowerShell 5.1 otherwise buffers formatter output until after the wrapper exits.
+    '      . $__cos_batch_script | Out-Default',
     // Capture the command status inside the block; dot-sourcing resets PowerShell's current status.
     '      $__cos_batch_code = if ($global:__cos_batch_ok) { 0 } elseif ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } else { 1 }',
     '    }',

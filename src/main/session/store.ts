@@ -198,6 +198,12 @@ export function sessionSearchIndexPath(id: string): string {
   return path.join(sessionDir(id), 'search.txt');
 }
 
+/** The chat's bookmarked answers (bookmarks.ts); they live and are deleted with the session. */
+export function sessionBookmarksPath(id: string): string {
+  assertSessionId(id);
+  return path.join(sessionDir(id), 'bookmarks.json');
+}
+
 function sessionDir(id: string): string {
   assertReady();
   return path.join(root, id);
@@ -540,13 +546,19 @@ export async function flushSessions(): Promise<void> {
  * it also waits for an in-flight reconstruction of this exact session before deciding whether
  * there is anything live to flush.
  */
-async function flushSession(sessionId: string): Promise<void> {
+/**
+ * Waits until every append already queued for this chat is in events.jsonl, without writing
+ * its summary. Event readers need only that: an open chat's summary is read from memory, and
+ * meta.json (two disk syncs) stays batched by scheduleMeta. Each of them used to force that
+ * write first, so every tool call paid one before ChatGPT got its answer.
+ */
+async function settleSessionWrites(sessionId: string): Promise<void> {
   let entry = open.get(sessionId);
   if (!entry) {
     const reconstructing = opening.get(sessionId);
     if (reconstructing) entry = await reconstructing;
   }
-  if (entry) await flushSessionEntry(entry);
+  if (entry) await entry.queue;
 }
 
 async function flushSessionEntry(entry: OpenSession): Promise<void> {
@@ -1724,7 +1736,7 @@ export interface ReadOptions {
  */
 export async function readEvents(sessionId: string, options: ReadOptions = {}): Promise<SessionEvent[]> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   const from = options.from ?? 0;
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
 
@@ -1858,7 +1870,7 @@ export async function readRecentEvents(
   } = {}
 ): Promise<SessionEvent[]> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   return readRecentEventsFromDisk(sessionId, limit, options);
 }
 
@@ -1866,7 +1878,7 @@ export async function readRecentEvents(
  * which have no native user bubble and cannot grant another error reload. */
 export async function readLatestUserMessage(sessionId: string, _turnId?: string | null): Promise<Extract<SessionEvent, { kind: 'user_message' }> | undefined> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   const summary = await readAuthoritativeSummary(sessionId);
   const [message] = await readRecentEventsFromDisk(sessionId, 1, { kinds: ['user_message'], orderByOrigin: true,
     before: Number.POSITIVE_INFINITY, acceptEvent: (event: SessionEvent) => !injectedUserMessage(event, summary?.timelineTurns) });
@@ -1884,7 +1896,7 @@ function isTurnCorrection(event: SessionEvent, turnId?: string | null, turns?: T
  * retain their authored position so replaying an old question cannot cancel current work. */
 export async function readRecoveryBoundary(sessionId: string, turnId?: string | null): Promise<SessionEvent | undefined> {
   const entry = await ensureOpen(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   // Read under this session's existing queue. Another read or metadata flush
   // must not invalidate the boundary and permanently spend a valid silence grant.
   return enqueueSessionOperation(entry, 'recovery boundary read', async () => {
@@ -1905,7 +1917,7 @@ export async function readCompletedFinal(sessionId: string, conversationId: stri
   messageId: string; turnId: string | null; completedAt: number; contentSeq: number; text: string;
 } | null> {
   const entry = await ensureOpen(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   const revision = entry.nextSeq;
   if (entry.summary.conversationId !== conversationId) return null;
   const [recent, questions] = await Promise.all([
@@ -2010,7 +2022,7 @@ export async function readHandoffResponse(sessionId: string, conversationId: str
 > {
   const pending = { status: 'pending' } as const, ambiguous = { status: 'ambiguous' } as const;
   const entry = await ensureOpen(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   const revision = entry.nextSeq;
   if (entry.summary.conversationId !== conversationId) return pending;
   const anchor = entry.messages.get(`user_message\u0000${anchorMessageId}`);
@@ -2054,7 +2066,7 @@ export async function readHandoffResponse(sessionId: string, conversationId: str
 /** Recorded local execution, not a native tool label or a request-id sighting alone. */
 export async function turnHasMcpCall(sessionId: string, conversationId: string, turnId: string): Promise<boolean> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   // Attribution repair appends historical calls, often without a known turn. Such a tail
   // cannot erase earlier exact proof. Filter inside one bounded-buffer reverse scan so a
   // missing proof does not repeatedly rescan the journal for each presentation page.
@@ -2089,7 +2101,7 @@ export async function requestTurnOwnershipCutoff(
   conversationId: string
 ): Promise<number | null> {
   const entry = await ensureOpen(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   if (entry.summary.conversationId !== conversationId) return null;
   return Math.max(0, entry.nextSeq - 1);
 }
@@ -2101,7 +2113,7 @@ export async function turnEndedDurably(
   expectedTurnId: string
 ): Promise<boolean> {
   const entry = await ensureOpen(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   if (entry.summary.conversationId !== conversationId) return false;
   const sameTurn = (turnId: string | null | undefined): boolean =>
     !!turnId && responseTurnId(entry.summary.timelineTurns, turnId) ===
@@ -2146,7 +2158,7 @@ export async function conversationHasMcpCallSince(
   sessionId: string, conversationId: string, startedAt: number, turnId: string | null
 ): Promise<boolean> {
   assertSessionId(sessionId);
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   const calls = await readRecentEventsFromDisk(sessionId, 1, {
     kinds: ['tool_call'], before: Number.POSITIVE_INFINITY,
     // Repaired calls may lack a local turn id. Exact conversation and original call
@@ -2369,7 +2381,7 @@ export async function readHydratedActivityCall(
 export async function readToolEditReview(sessionId: string, callId: string, changeIndex: number): Promise<ToolEditReview | null> {
   assertSessionId(sessionId);
   if (!/^[0-9a-f-]{36}$/i.test(callId) || !Number.isSafeInteger(changeIndex) || changeIndex < 0 || changeIndex >= 64) return null;
-  await flushSession(sessionId);
+  await settleSessionWrites(sessionId);
   const [event] = await readRecentEventsFromDisk(sessionId, 1, {
     kinds: ['tool_call'], before: Number.POSITIVE_INFINITY,
     acceptEvent: value => value.kind === 'tool_call' && value.call.callId === callId
@@ -3154,6 +3166,34 @@ export async function conversationAttachment(
   const current = await findSessionByConversation(conversationId, { requireUnique: true });
   if (current) return 'current';
   return (await conversationWasSuperseded(conversationId)) ? 'superseded' : 'unknown';
+}
+
+/**
+ * Where the work of a replaced ChatGPT conversation continues: the current chat and title of the
+ * session that left it. A chat left twice points at the newest chat, never the middle one, since
+ * a session holds one current conversation. The placeholder title of a chat not yet named is no
+ * name, so it comes back empty. Null when no retained session left this one.
+ */
+export async function replacementOf(
+  conversationId: string,
+  sessionId: string | null = null
+): Promise<{ conversationId: string; title: string } | null> {
+  if (!conversationId) return null;
+  const from = (summary: SessionSummary | null | undefined) =>
+    summary && summary.chatIds.includes(conversationId) && summary.conversationId && summary.conversationId !== conversationId
+      ? { conversationId: summary.conversationId, title: summary.title === 'ChatGPT session' ? '' : summary.title }
+      : null;
+  if (sessionId) return from(await getSession(sessionId));
+  const catalog = await ensureAttachmentCatalog();
+  const sessionIds = new Set(catalog.historical.get(conversationId) ?? []);
+  for (const [id, entry] of open) {
+    if (entry.summary.chatIds.includes(conversationId)) sessionIds.add(id);
+  }
+  for (const id of sessionIds) {
+    const found = from(open.get(id)?.summary ?? catalog.summaries.get(id));
+    if (found) return found;
+  }
+  return null;
 }
 
 /**
