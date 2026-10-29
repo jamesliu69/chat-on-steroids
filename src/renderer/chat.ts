@@ -1,3 +1,4 @@
+import { DEFAULT_CHAT_PERSONALITY, DEFAULT_CHAT_WRITING_STYLE, MAX_CHAT_STYLE_CHARS } from '../shared/chat-style.js';
 import { hasProviderDirective, resolvedCapture, withoutProviderDirectives } from '../shared/content-reference.js';
 import { completedDilText } from '../shared/dil-tables.js';
 import { markdownVisibleText } from '../shared/markdown-text.js';
@@ -106,15 +107,18 @@ import {
 import { DEFAULT_HANDOFF_LENGTH, DEFAULT_HANDOFF_PROMPT, HANDOFF_LENGTHS, MAX_HANDOFF_PROMPT_CHARS, type HandoffLength } from '../shared/handoff.js';
 import { browserExtensionRequired, type AppState, type Config } from '../shared/types.js';
 import { $, ago, clockTime, compactNumber, disclosureChevron, el, icon, run, setIcon, toast } from './dom.js';
-import { APPROVAL_ANSWERED_TEXT, APPROVAL_PROGRESS_PREFIX, APPROVAL_WAITING_TEXT, type ApprovalCardView } from '../shared/approval-wait.js';
+import { APPROVAL_ANSWERED_TEXT, APPROVAL_PROGRESS_PREFIX, APPROVAL_REPAIR_DEFERRED_TEXT, APPROVAL_WAITING_TEXT, type ApprovalCardView } from '../shared/approval-wait.js';
 import { STRICT_REFUSAL_PROGRESS_PREFIX, UNPROVEN_WORKER_NOTICE, UNTRUSTED_NOTICE, UNTRUSTED_WORKER_NOTICE } from '../shared/trust-notices.js';
 import { closeRowMenu, onRowMenuChange, openRowMenu, rowMenuOpenFor, toggleRowMenu, type RowMenuItem, type RowMenuOptions } from './row-menu.js';
 import { createSearchPopup } from './search-popup.js';
 import { holdToTalkShortcut, holdToTalkSupported, primaryShortcut } from './shortcuts.js';
 import { initSshProjectDialog } from './ssh-project-dialog.js';
+import { firstTurnStart, renderTurnChanges, turnEditCount, turnFinished, turnFrom } from './turn-changes.js';
 import { initSharePage } from './share-page.js';
 import { initFeedbackDialog } from './feedback-dialog.js';
 import { createChatgptProjectPicker } from './chatgpt-project-picker.js';
+import { initScheduleDialog } from './schedule-dialog.js';
+import { nextRunAfter, sameLocalDay, type ScheduleRepeat } from '../shared/schedule.js';
 
 const api = window.api;
 let chatSearch: ChatSearch | null = null;
@@ -150,7 +154,7 @@ let filterFor: string | null = null;
 
 interface Deps {
   /** The renderer's single save path — reads every control, including ours. */
-  save: () => Promise<void>;
+  save: () => Promise<boolean>;
   state: () => AppState | null;
 }
 
@@ -173,6 +177,8 @@ let loadedOlderSessions = false;
 const projectHistory = new Map<string, { cursor: { updatedAt: number; id: string } | null; asked: boolean; loading: boolean; failed?: boolean }>();
 let activeId: string | null = null;
 let selectedId: string | null = null;
+/** #1826: the chat's schedule dialog, opened from its ⋯ menu and its schedule line. */
+let scheduleDialog: { open(sessionId: string, draft: string): Promise<void> } | null = null;
 let newChatSelected = true;
 let selectedProjectId: string | null = null;
 /** Branch in new chat (#482): the reply the new chat being written will branch from, if any. */
@@ -1247,6 +1253,11 @@ function sessionRow(summary: SessionSummary): HTMLElement {
       { action: 'share', icon: 'i-globe', label: () => t('Share as web page'),
         title: () => t('Save this chat as one web page file to send to anyone. You see the page before it is saved.'), run: () => openSharePage(summary.id) }
     );
+    // #1826: a chat sends its own message at set times; workers are started by their prime, never on a clock.
+    if (summary.origin?.kind !== 'worker') {
+      items.push({ action: 'schedule', icon: 'i-clock', label: () => t('Schedule…'), title: () => t('Send a message into this chat at set times'),
+        run: () => void scheduleDialog?.open(summary.id, summary.id === selectedId ? $<HTMLTextAreaElement>('chatInput').value : '') });
+    }
     items.push(...chatGroupMenuItems(summary));
     // The stop this app can actually make. It does not touch the running ChatGPT turn — nothing
     // here can — it takes this chat's tools away, and a model whose every call is refused with
@@ -2991,6 +3002,8 @@ function mergeDetailDelta(delta: SessionEvent[]): void {
 let controlsGeneration = 0;
 let controlledSessionId: string | null = null;
 let controlledTurnId: string | null = null;
+/** A turn the page still holds after the app stopped counting it as work: Stop only, no Working (2.1.47 round). */
+let controlledHeldTurnId: string | null = null;
 let controlledSelection = -1;
 let controlledStopPending = false;
 let controlledFinishWaiting = false;
@@ -3133,7 +3146,8 @@ function paintDeliveryControls(): void {
   if (canInject && explicitInjection && $<HTMLSelectElement>('sendMode').value === 'auto') $<HTMLSelectElement>('sendMode').value = 'tool';
   if (!canInject && !canSendDirectly && !queueAtFinish) $<HTMLSelectElement>('sendMode').value = 'auto';
   const pending = pendingComposerInput();
-  const stop = (working || !!pending) && !currentPreparedPlan() && !authoredComposerText().trim() && !(imageDrafts.get(draftKey())?.length);
+  const held = selectedId !== null && controlledSessionId === selectedId && controlledSelection === selectionGeneration && controlledHeldTurnId !== null;
+  const stop = (working || held || !!pending) && !currentPreparedPlan() && !authoredComposerText().trim() && !(imageDrafts.get(draftKey())?.length);
   // Hover selects delivery for the next message. Clicking the empty-composer
   // Stop still acts immediately; there is no second Stop action in the menu.
   $('sendOptions').hidden = !canInject && !canSendDirectly && !queueAtFinish;
@@ -3142,12 +3156,12 @@ function paintDeliveryControls(): void {
   send.disabled = !!preparedPlan && (preparedPlan.sending || preparedPlan.stages.some(stage => !stage.trim()));
   send.dataset.action = stop ? 'stop' : 'send';
   ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : t("Send message"));
-  if (stop && !working && pending) ui(send, 'aria-label', () => t("Cancel delivery"));
+  if (stop && !working && !held && pending) ui(send, 'aria-label', () => t("Cancel delivery"));
   const planAction = selectedId && !chatKnownIdle(selectedId) ? t("Queue plan at Session finish") : t("Start full plan");
   if (preparedPlan && !stop) send.setAttribute('aria-label', planAction);
   else if (planMode && !stop) ui(send, 'aria-label', () => t("Generate plan"));
   send.classList.toggle('is-plan-ready', !!preparedPlan && !stop);
-  ui(send, 'title', () => stop && !working && pending ? t("Cancel delivery") : preparedPlan && !stop ? planAction : planMode && !stop ? t("Click to generate plan") : '');
+  ui(send, 'title', () => stop && !working && !held && pending ? t("Cancel delivery") : preparedPlan && !stop ? planAction : planMode && !stop ? t("Click to generate plan") : '');
   send.classList.toggle('is-stop', stop);
   for (const button of $('sendOptions').querySelectorAll<HTMLElement>('[data-delivery]')) {
     button.setAttribute('aria-checked', String(button.dataset.delivery === (nativeFiles && working && $<HTMLSelectElement>('sendMode').value !== 'tool' ? 'after-turn' : $<HTMLSelectElement>('sendMode').value)));
@@ -3459,14 +3473,14 @@ async function refreshSessionControls(): Promise<void> {
     for (const action of ['compactSession', 'cancelCompaction']) $(action).hidden = true;
   }
   paintAutomationSwitch();
-  if (!id) { controlledSessionId = null; controlledTurnId = null; controlledPageless = false; paintDeliveryControls(); menu.hidden = false;
+  if (!id) { controlledSessionId = null; controlledTurnId = null; controlledHeldTurnId = null; controlledPageless = false; paintDeliveryControls(); menu.hidden = false;
     $<HTMLTextAreaElement>('sessionObjective').disabled = false;
     paintTaskActions();
     for (const action of ['compactSession', 'cancelCompaction']) $(action).hidden = true;
     return; }
   const opening = pendingComposerInputs.find(row => row.opening && row.sessionId === id && ['queued', 'browser'].includes(row.state));
   if (!sessions.find(row => row.id === id)?.conversationId) {
-    controlledSessionId = id; controlledSelection = selectionGeneration; controlledTurnId = null;
+    controlledSessionId = id; controlledSelection = selectionGeneration; controlledTurnId = null; controlledHeldTurnId = null;
     controlledCanInject = false; controlledCanSendDirectly = false; controlledQueueAtFinish = false;
     controlledStopPending = false; controlledFinishWaiting = false; controlledPageless = false;
     menu.hidden = false;
@@ -3487,6 +3501,7 @@ async function refreshSessionControls(): Promise<void> {
   controlledSessionId = id;
   controlledSelection = selectionGeneration;
   controlledTurnId = controls?.activeTurnId ?? null;
+  controlledHeldTurnId = controls?.heldTurnId ?? null;
   goalDraftView = controls?.goalDraft ?? null;
   goalWaitView = controls?.goalWait ?? null;
   finishGoalDraftView = controls?.finishGoalDraft ?? null;
@@ -5418,6 +5433,11 @@ function approvalRowText(text: string): string {
   return text;
 }
 
+function repairRowText(text: string): string {
+  return text === APPROVAL_REPAIR_DEFERRED_TEXT
+    ? t('Reload was deferred because ChatGPT showed a tool approval card.') : text;
+}
+
 /** A strict-trust notice in the interface language; older wordings stay as recorded. Literal keys for the catalog audit. */
 function trustNoticeText(text: string): string {
   if (text === UNTRUSTED_NOTICE) return t("A tool call from an untrusted chat was refused. To allow it, open this chat's ⋯ menu in the sidebar (or right-click its row) and choose Trust chat.");
@@ -5458,6 +5478,8 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
         attachments.append(slot);
         return slot;
       });
+      // #1826: a scheduled run keeps saying so once sent, as its queue row did.
+      if (event.scheduled) box.append(el('span', 'said-origin', () => scheduledLabel(event)));
       if (event.attachments?.length || assets.length || retained.length) box.append(attachments);
       if (!assets.length) for (const image of retained) preview(image.dataUrl, true);
       // Native ChatGPT can prepend a blank paragraph. Ignore it only when a
@@ -5545,6 +5567,7 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
         return el('p', 'meta is-progress', () => t(goalErrorMessage('goal_helper_stop_unverified')));
       }
       if (event.progressId?.startsWith(STRICT_REFUSAL_PROGRESS_PREFIX)) return el('p', 'meta is-progress', () => trustNoticeText(event.message.text));
+      if (event.source === 'app' && event.progressId?.startsWith('browser-repair:')) return el('p', 'meta is-progress', () => repairRowText(event.message.text));
       if (!event.progressId?.startsWith(APPROVAL_PROGRESS_PREFIX)) return el('p', 'meta is-progress', event.message.text);
       // ChatGPT's own tool approval card stands in this chat's page (approval-wait.ts). The app
       // writes the English source; only the user can answer the card, so the row opens the page.
@@ -6702,6 +6725,12 @@ function paintDetail(followBottom = historyBefore === null): void {
     // A final answer recorded outside any turn (copied branch history, an adopted chat) has the same actions.
     const looseAnswer = !answerTurn && item.kind === 'event' && item.event.kind === 'assistant_message' && !item.event.turnId &&
       !!item.event.messageId && looseAnchors.get(item.event.messageId) === item.event.seq;
+    // #1827: what a finished answer changed, once its turn is over, so the card never changes under the reader.
+    // A long turn's early edits can be outside the loaded page: an answer whose turn start is not
+    // loaded asks too, and its card stays hidden when the turn edited nothing. A new edit refreshes it.
+    const loadedEdits = answerTurn ? turnEditCount(events, answerTurn) : 0;
+    const changedFiles = !!answerTurn && item.kind === 'event' && turnFinished(events, answerTurn, item.event.seq) &&
+      (loadedEdits > 0 || !firstTurnStart(events, answerTurn));
     const held = item.kind === 'event' && item.event.kind === 'assistant_message' && writing && item.event.seq === writing.seq
       ? { ...item.event, message: { ...item.event.message, text: writing.shown, chars: writing.shown.length } } : null;
     // A held message is drawn again only when a block finishes or its sources change: each chunk
@@ -6710,7 +6739,7 @@ function paintDetail(followBottom = historyBefore === null): void {
     // Its final text is not held. The shown text itself is compared: a revision can rewrite it to the same length.
     const sig = (held ? `${itemSignature({ kind: 'event', event: { ...held, seq: 0, time: 0, renderedHtml: undefined } })}\u0000held${JSON.stringify(held.references ?? [])}\u0000${held.message.text}`
       : itemSignature(item)) + (item.kind === 'event' && item.event.kind === 'chat_error'
-      ? JSON.stringify(chatErrorPresentation(item.event, events)) : '') + (answerTurn || looseAnswer ? '\u0000answer' : '') +
+      ? JSON.stringify(chatErrorPresentation(item.event, events)) : '') + (answerTurn || looseAnswer ? '\u0000answer' : '') + (changedFiles ? `\u0000changes:${loadedEdits}` : '') +
       (item.kind === 'event' && stoppedTurnEnd(item.event, events) ? '\u0000stopped' : '') +
       (item.kind === 'compaction' && item !== latestCompaction ? '\u0000superseded' : '') +
       (item.kind === 'event' && editableQuestion(item.event, events) ? `\u0000edit:${laterMessages.get(item.event.seq) ?? 0}` : '');
@@ -6733,6 +6762,11 @@ function paintDetail(followBottom = historyBefore === null): void {
     if (answerTurn || looseAnswer) built.querySelector('.said')?.append(answerActions(answerTurn,
       item.kind === 'event' && item.event.kind === 'assistant_message' ? item.event.messageId : undefined,
       item.kind === 'event' && item.event.kind === 'assistant_message' ? { text: item.event.message.text, time: item.event.time } : undefined));
+    if (changedFiles && answerTurn && selectedId) {
+      const sessionId = selectedId;
+      built.querySelector('.said')?.append(renderTurnChanges({ sessionId, turnId: answerTurn, from: turnFrom(events, answerTurn),
+        current: () => selectedId === sessionId, openReview: selectedLocalProject() ? () => void reviewPanel?.show() : null }));
+    }
     if (item.kind === 'event' && editableQuestion(item.event, events)) {
       built.querySelector('.ev-body')?.append(questionActions(item.event, laterMessages.get(item.event.seq) ?? 0));
       built.dataset.questionId = item.event.messageId;
@@ -6849,7 +6883,7 @@ function paintRecoveryStatus(): boolean {
   if (host.hidden) return paintRecoveryVerdict(host, sessionId);
   if (!host.hidden && recovery?.kind === 'progress') {
     const row = el('div', 'recovery-notice');
-    row.append(icon('i-pulse'), el('span', 'queue-label', recovery.message.text),
+    row.append(icon('i-pulse'), el('span', 'queue-label', () => repairRowText(recovery.message.text)),
       dockAction(() => t('Dismiss recovery notice'), 'i-x', () => {
         if (sessionId) dismissedRecoveryNotices.set(sessionId, revision);
         host.hidden = true; host.replaceChildren();
@@ -8051,7 +8085,7 @@ function applyGoal(state: AppState, previous?: Config): void {
   if (goalModels.length > 0) paintGoalModels();
 }
 
-function wireGoal(save: () => Promise<void>): void {
+function wireGoal(save: () => Promise<boolean>): void {
   $<HTMLTextAreaElement>('handoffPrompt').maxLength = MAX_HANDOFF_PROMPT_CHARS;
   $('handoffPromptEdit').addEventListener('click', () => {
     const panel = $('handoffPromptPanel');
@@ -8074,9 +8108,39 @@ function wireGoal(save: () => Promise<void>): void {
   });
   $('customContinueReset').addEventListener('click', async () => {
     $<HTMLTextAreaElement>('customContinue').value = '';
-    await save();
-    toast(t('Continue prompt restored to default'));
+    if (await save()) toast(t('Continue prompt restored to default'));
   });
+  // #1856: Personality and Writing style of new chats; main.ts owns the ui fields they save into.
+  for (const [id, fallback, restored] of [
+    ['chatPersonality', DEFAULT_CHAT_PERSONALITY, () => t('Personality restored to default')],
+    ['chatWritingStyle', DEFAULT_CHAT_WRITING_STYLE, () => t('Writing style restored to default')]
+  ] as const) {
+    $<HTMLTextAreaElement>(id).maxLength = MAX_CHAT_STYLE_CHARS;
+    $(`${id}Edit`).addEventListener('click', async () => {
+      const panel = $(`${id}Panel`), box = $<HTMLTextAreaElement>(id);
+      if (!panel.hidden) {
+        // Closing with text not yet stored: it closes only once that text is saved. A refused save
+        // keeps the editor open with what was typed, instead of hiding it behind the stored value.
+        const draft = box.value, typed = draft.trim();
+        const wanted = typed === fallback.trim() ? undefined : typed;
+        // A failed save reloads the settings; a text stored before a later step of that save failed
+        // counts as saved, so only a text that really isn't stored keeps the editor open.
+        if (wanted !== deps.state()?.config.ui[id] && !(await save()) && wanted !== deps.state()?.config.ui[id]) {
+          box.value = draft;
+          box.focus();
+          return;
+        }
+      }
+      panel.hidden = !panel.hidden;
+      ui($(`${id}Edit`), 'textContent', () => panel.hidden ? t('Edit prompt') : t('Close prompt'));
+      if (!panel.hidden) box.focus();
+    });
+    $(`${id}Reset`).addEventListener('click', async () => {
+      $<HTMLTextAreaElement>(id).value = fallback;
+      // Said only when the save went through; a refused one keeps the person's text stored.
+      if (await save()) toast(restored());
+    });
+  }
   $<HTMLTextAreaElement>('goalPrompt').maxLength = MAX_GOAL_SYSTEM_PROMPT_CHARS;
   $('goalPromptEdit').addEventListener('click', () => {
     const panel = $('goalPromptPanel');
@@ -8243,7 +8307,9 @@ const CHAT_INPUTS = [
   'recordingStorageLimit',
   'goalPrompt',
   'goalObjectivePrompt',
-  'goalLoopPrompt'
+  'goalLoopPrompt',
+  'chatPersonality',
+  'chatWritingStyle'
 ];
 
 /** Writes app state into this panel's controls. Called from the renderer's apply(). */
@@ -8270,8 +8336,23 @@ let bridgePresent = true;
  * ChatGPT would otherwise keep that call's result (#1231). Mid-turn sends do not wait for calls,
  * and an after-turn message also waits for the answer to end, so neither claims this reason.
  */
-function queuedWaitReason(entry: InputEntry): 'extension' | 'tool-call' | 'chatgpt-project' | 'chatgpt-project-failed' | 'project-removed' | null {
+/** Why the person's send check holds this automatic send (#1794), or null when it does not. */
+function sendCheckHold(entry: InputEntry): string | null {
+  if (!heldBySendCheck(entry)) return null;
+  const hold = entry.sendCheck!;
+  if (!hold.answered) return t('Held: your send check did not answer');
+  return hold.reason ? t('Held by your send check: {0}', [hold.reason]) : t('Held by your send check');
+}
+/** Whether a send check is configured, from the last applied state; clearing it releases every hold at once. */
+let sendCheckConfigured = false;
+/** The app's own rule (session/input.ts): held only while a check is configured and its next ask is still ahead. */
+function heldBySendCheck(entry: InputEntry): boolean {
+  return entry.state === 'queued' && !!entry.sendCheck && sendCheckConfigured && entry.sendCheck.nextAt > Date.now();
+}
+
+function queuedWaitReason(entry: InputEntry): 'send-check' | 'extension' | 'tool-call' | 'chatgpt-project' | 'chatgpt-project-failed' | 'project-removed' | null {
   if (entry.state !== 'queued' || entry.error || entry.dueAt > Date.now() || entry.delivery === 'tool') return null;
+  if (heldBySendCheck(entry)) return 'send-check';
   if (!bridgePresent) return 'extension';
   const project = chatgptProjectWait(entry);
   if (project) return project;
@@ -8283,6 +8364,7 @@ export function chatApply(state: AppState, previous?: Config): void {
   const { config, bridge } = state;
   applyRouteSettling(state.status.routeSettlingUntil ?? 0);
   if (bridgePresent !== bridge.present) { bridgePresent = bridge.present; paintPendingInputs(); }
+  if (sendCheckConfigured !== !!config.ui.sendCheckUrl) { sendCheckConfigured = !!config.ui.sendCheckUrl; paintPendingInputs(); }
   if (visible && selectedId) void refreshSessionControls();
   applyChatModels(config, previous);
   // After the picker took this state: the meter's Pro rule reads the picker, and before it could
@@ -8434,6 +8516,15 @@ function historicalAutomaticInput(entry: InputEntry): boolean {
     entry.state === 'cancelled' && !!entry.error;
 }
 
+/** #1826: a run of the chat's schedule says so, and, when it went out late, when it was due. */
+function scheduledLabel(entry: { scheduled?: { dueAt: number; late: boolean } }): string {
+  const scheduled = entry.scheduled;
+  if (!scheduled) return '';
+  return scheduled.late
+    ? t('Scheduled · late, was due {0}', [new Date(scheduled.dueAt).toLocaleTimeString(currentLanguage(), { hour: '2-digit', minute: '2-digit' })])
+    : t('Scheduled');
+}
+
 function inputMessageRow(entry: InputEntry, notice: boolean): HTMLElement {
   const row = el('div', 'pending-message');
   row.classList.toggle('is-delivered', !entry.error && ['sent', 'tool'].includes(entry.state));
@@ -8447,13 +8538,14 @@ function inputMessageRow(entry: InputEntry, notice: boolean): HTMLElement {
   if (!visibleInputIds.has(entry.id)) row.classList.add('is-entering');
   visibleInputIds.add(entry.id);
   if (visibleInputIds.size > 100) visibleInputIds.delete(visibleInputIds.values().next().value!);
-  const status = () => entry.error ? t(entry.error) : held ? t("Sending in a moment…") : waiting === 'extension' ? t("Waiting for the browser extension to connect") : waiting === 'tool-call' ? t("Waiting for the running tool call to finish") : waiting === 'chatgpt-project' ? t("Creating this project in ChatGPT…") : waiting === 'chatgpt-project-failed' ? t("This project's ChatGPT Project isn't available. Retry it from the project's menu.") : waiting === 'project-removed' ? t("This chat's project was removed from the sidebar. Add its folder again to send this message, or cancel it.") : (entry.state === 'failed' ? t("Delivery not confirmed") : entry.state === 'decision' ? t("Preparing follow-up") : entry.state === 'browser' ? t("Delivery confirmation pending") : entry.state === 'tool' ? t("Sent to the active turn · awaiting receipt") : entry.dueAt > Date.now() ? t("Scheduled {0}", [new Date(entry.dueAt).toLocaleString(currentLanguage())]) : entry.delivery === 'tool' ? t("Waiting for the next tool call") : t("Queued"));
+  const status = () => entry.error ? t(entry.error) : held ? t("Sending in a moment…") : waiting === 'send-check' ? sendCheckHold(entry)! : waiting === 'extension' ? t("Waiting for the browser extension to connect") : waiting === 'tool-call' ? t("Waiting for the running tool call to finish") : waiting === 'chatgpt-project' ? t("Creating this project in ChatGPT…") : waiting === 'chatgpt-project-failed' ? t("This project's ChatGPT Project isn't available. Retry it from the project's menu.") : waiting === 'project-removed' ? t("This chat's project was removed from the sidebar. Add its folder again to send this message, or cancel it.") : (entry.state === 'failed' ? t("Delivery not confirmed") : entry.state === 'decision' ? t("Preparing follow-up") : entry.state === 'browser' ? t("Delivery confirmation pending") : entry.state === 'tool' ? t("Sent to the active turn · awaiting receipt") : entry.dueAt > Date.now() ? t("Scheduled {0}", [new Date(entry.dueAt).toLocaleString(currentLanguage())]) : entry.delivery === 'tool' ? t("Waiting for the next tool call") : t("Queued"));
   const files = el('div', 'message-attachments');
   if (entry.attachments?.length) files.append(...entry.attachments.map(file => attachmentCard(file)));
   for (const image of entry.images ?? []) { const preview = document.createElement('img'); preview.src = image.dataUrl; preview.alt = image.name; files.append(preview); }
   if (files.childElementCount) row.append(files);
   // What the person wrote: a plan's first message shows their request, as it will once recorded.
   const authored = authoredTextOf(entry);
+  if (entry.scheduled) row.append(el('div', 'pending-message-origin', () => scheduledLabel(entry)));
   if (authored) {
     const text = el('div', 'pending-message-text', authored);
     text.setAttribute('dir', 'auto');
@@ -8571,7 +8663,7 @@ function paintPendingInputs(): void {
   const host = $('inputQueue');
   const previous = new Map([...host.querySelectorAll<HTMLElement>(':scope > .pending-message')].map(row => [row.dataset.inputId, row]));
   const next = rows.filter(entry => !historicalAutomaticInput(entry)).map(entry => {
-    const sig = JSON.stringify([entry.text, entry.state, entry.error, entry.dueAt, notice(entry), routeHeld(entry), queuedWaitReason(entry), entry.stagesApplied,
+    const sig = JSON.stringify([entry.text, entry.state, entry.error, entry.dueAt, entry.scheduled, notice(entry), routeHeld(entry), queuedWaitReason(entry), entry.sendCheck, entry.stagesApplied,
       entry.stages, entry.attachments?.map(file => file.id), entry.images?.map(image => [image.name, image.dataUrl.length]),
       hasLaterModelActivity(entry.deliveredAt ?? entry.offeredAt ?? entry.createdAt)]);
     const old = previous.get(entry.id);
@@ -8582,7 +8674,55 @@ function paintPendingInputs(): void {
   reconcileChildren(host, [...next, ...host.querySelectorAll<HTMLElement>(':scope > .queued-input')]);
   holdSentMessage();
 }
+/** How a schedule repeats, in the chosen language: "every weekday at 09:00". */
+function repeatText(repeat: ScheduleRepeat): string {
+  if (repeat.kind === 'hours') return repeat.every === 1 ? t('every hour') : tn('every {0} hour', 'every {0} hours', repeat.every);
+  // The stored wall-clock time, written the way the next time beside it is (09:00 or 9:00 AM).
+  const [hour, minute] = repeat.at.split(':').map(Number) as [number, number];
+  const at = new Date(2024, 0, 1, hour, minute).toLocaleTimeString(currentLanguage(), { hour: '2-digit', minute: '2-digit' });
+  if (repeat.kind === 'daily') return t('every day at {0}', [at]);
+  if (repeat.kind === 'weekdays') return t('every weekday at {0}', [at]);
+  const day = new Intl.DateTimeFormat(currentLanguage(), { weekday: 'long' }).format(new Date(2024, 0, 7 + repeat.day));
+  return t('every {0} at {1}', [day, at]);
+}
+
+let scheduleLineGeneration = 0;
+/** #1826: the selected chat's schedule as one quiet line above its queue, with Pause and Edit. */
+async function paintScheduleLine(): Promise<void> {
+  const request = ++scheduleLineGeneration;
+  const sessionId = selectedId;
+  const line = $('scheduleLine');
+  const reply = sessionId ? await api.getSchedule(sessionId) : null;
+  if (request !== scheduleLineGeneration || sessionId !== selectedId) return;
+  const schedule = reply?.ok ? reply.data : null;
+  line.hidden = !schedule;
+  if (!schedule) return;
+  // A time today is its time alone; another day's names the day ("Wed 07:17" today read as next week).
+  const clock = (instant: number) => new Date(instant).toLocaleString(currentLanguage(), sameLocalDay(instant, Date.now())
+    ? { hour: '2-digit', minute: '2-digit' } : { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  const next = nextRunAfter(schedule, Math.max(Date.now(), schedule.lastDueAt ?? 0));
+  const parts = [schedule.paused ? t('Paused') : t('Scheduled'), repeatText(schedule.repeat)];
+  if (schedule.missedDueAt !== undefined) parts.push(t('missed {0}', [clock(schedule.missedDueAt)]));
+  if (!schedule.paused) parts.push(next === null ? t('ended') : t('next {0}', [clock(next)]));
+  ui($('scheduleLineText'), 'textContent', () => parts.join(' · '));
+  // Pause and Edit drawn like the Goal row's: the dock's own icon actions, named by tooltip.
+  const pause = $<HTMLButtonElement>('scheduleLinePause');
+  const pauseLabel = () => schedule.paused ? t('Resume schedule') : t('Pause schedule');
+  pause.replaceChildren(icon(schedule.paused ? 'i-play' : 'i-power'));
+  ui(pause, 'title', pauseLabel); ui(pause, 'aria-label', pauseLabel);
+  pause.onclick = async () => {
+    pause.disabled = true;
+    try { await run(api.pauseSchedule(schedule.sessionId, !schedule.paused)); } finally { pause.disabled = false; }
+    void paintScheduleLine();
+  };
+  const edit = $<HTMLButtonElement>('scheduleLineEdit');
+  if (!edit.firstChild) edit.append(icon('i-pencil'));
+  ui(edit, 'title', () => t('Edit schedule')); ui(edit, 'aria-label', () => t('Edit schedule'));
+  edit.onclick = () => void scheduleDialog?.open(schedule.sessionId, '');
+}
+
 async function refreshInputQueue(): Promise<void> {
+  void paintScheduleLine();
   const request = ++inputQueueGeneration;
   const selection = selectionGeneration;
   const [all, pausedHelpers] = await Promise.all([run(api.listInputs()), run(api.listPausedHelpers())]);
@@ -8627,7 +8767,10 @@ async function refreshInputQueue(): Promise<void> {
     const card = el('div', 'queued-input'); card.dataset.inputId = entry.id;
     if (projectedIds.has(entry.id)) ui(card, 'aria-label', () => t("Plan stage · waiting for the first message to be sent"));
     if (entry.recovery) ui(card, 'aria-label', () => t('Automatic Continue'));
-    const label = el('span', 'queue-label', entry.recovery ? () => `${t('Automatic Continue')} · ${entry.text}` : entry.text);
+    // Held by the send check: the card says so in place of the text, which stays in the tooltip.
+    const label = el('span', 'queue-label', entry.recovery ? () => `${t('Automatic Continue')} · ${sendCheckHold(entry) ?? entry.text}`
+      : entry.scheduled ? () => `${scheduledLabel(entry)} · ${sendCheckHold(entry) ?? entry.text}` : entry.text);
+    card.classList.toggle('is-held', !!sendCheckHold(entry));
     ui(label, 'title', () => `${entry.recovery
       ? t('Resumes without a final answer. If ChatGPT is still generating, the silent turn is stopped before Continue is sent.')
       : entry.state === 'queued' ? (entry.mode === 'after-turn' ? t("After the next completed answer") : t("At Session finish or after a completed answer")) : t("Awaiting receipt")} · ${entry.text}`);
@@ -8826,7 +8969,7 @@ function showAutoSkillReceipt(entry: Pick<InputEntry, 'autoSkills'>): void {
   if (entry.autoSkills?.length) toast(t('Auto-selected Skill: /{0}', [entry.autoSkills[0]!.id]));
 }
 async function stopCurrentTurn(): Promise<void> {
-  const id = selectedId, turnId = controlledTurnId, generation = selectionGeneration;
+  const id = selectedId, turnId = controlledTurnId ?? controlledHeldTurnId, generation = selectionGeneration;
   if (!id || controlledSessionId !== id || controlledSelection !== generation || !turnId || controlledStopPending) return;
   controlledStopPending = true; paintDeliveryControls();
   try { await run(api.stopSessionTurn(id, turnId)); }
@@ -8849,13 +8992,19 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
     if (!controlAction) return;
     const target = selectedId, selection = selectionGeneration;
     const sameSelection = () => selectedId === target && selectionGeneration === selection;
+    // The turn the button showed Stop for, before the refresh can change it (CodeRabbit).
+    const shownTurn = controlledSessionId === target && controlledSelection === selection ? controlledTurnId ?? controlledHeldTurnId : null;
     await refreshSessionControls();
     if (!sameSelection()) return;
     // An actual turn takes precedence over queued follow-ups. Stop never silently
     // becomes cancellation of a different pending input in that same chat.
-    if (target && controlledSessionId === target && controlledSelection === selection && controlledTurnId) {
+    const nowTurn = target && controlledSessionId === target && controlledSelection === selection ? controlledTurnId ?? controlledHeldTurnId : null;
+    if (nowTurn && (!shownTurn || nowTurn === shownTurn)) {
       await stopCurrentTurn(); return;
     }
+    // The turn it showed Stop for ended or changed meanwhile (or the read failed): stop nothing
+    // else, and cancel nothing either.
+    if (shownTurn) return;
     const pending = pendingComposerInput();
     if (pending && ['queued', 'browser'].includes(pending.state)) {
       const wasStarting = startingInputs.has(pending.id);
@@ -9453,6 +9602,7 @@ export function initChat(next: Deps): void {
   };
   // The composer's Share a folder means a folder on this computer: straight to the picker.
   $('composerFolder').addEventListener('click', () => void addLocalProject());
+  scheduleDialog = initScheduleDialog(api, () => void paintScheduleLine());
   let sshDialogGeneration = 0;
   const sshProjectDialog = initSshProjectDialog(api, (project, known, asked) => {
     showAddedProject(project, sshDialogGeneration);
@@ -9634,6 +9784,8 @@ export function initChat(next: Deps): void {
     const controlAction = event.submitter === $('chatSend') && $('chatSend').dataset.action === 'stop';
     if (currentPreparedPlan()) void sendPreparedPlan();
     else if (!controlAction && /^\s*\/[a-z]/i.test($<HTMLTextAreaElement>('chatInput').value)) void sendTypedCommand(controlAction);
+    // The button showed Stop (or Cancel): that is what it does, also with Plan armed (CodeRabbit).
+    else if (controlAction) void sendComposer(undefined, undefined, undefined, true);
     else if (taskPlans.has(draftKey())) {
       if (!$('createPlan').dataset.busy) void createTaskPlan(deps.state()?.config.ui.planBackend ?? 'chatgpt');
     } else void sendComposer(undefined, undefined, undefined, controlAction);

@@ -29,9 +29,12 @@ import type { PluginSnapshot, PluginInstallRequest, PluginConfigPatch } from '..
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { TurnFileChange } from '../main/session/turn-changes.js';
 import type { AppState, Capabilities, CommitFlow, CompanionDiagnostics, Config, Diagnosis, LogEntry, SettingsBackupChoice } from '../shared/types.js';
 import type { SoundCue } from '../shared/sound-cues.js';
 import type { CommitState } from '../shared/project-git.js';
+import type { ScheduledRun } from '../main/scheduled-runs.js';
+import type { ScheduleRepeat } from '../shared/schedule.js';
 import type {
   Handoff,
   ImageStorageClearMode,
@@ -173,6 +176,8 @@ const api = {
   testPhonePush: () => call<void>('phonePush:test', undefined),
   setPhonePushToken: (token: string) => call<AppState>('phonePush:token', { token }),
   markWhatsNewSeen: () => call<void>('ui:whatsNewSeen'),
+  /** #1833: the first-run tour was taken, skipped or declined. */
+  markTourDone: () => call<void>('ui:tourDone'),
   /** The one-time automatic plugin refresh offer: true turns it on; either answer is kept. */
   answerPluginRefreshOffer: (turnOn: boolean) => call<AppState>('pluginRefresh:offer', { turnOn }),
   petsImport: () => call<PetLibraryState | null>('pets:import'),
@@ -324,6 +329,11 @@ const api = {
   removeProject: (id: string) => call<LocalProject>('projects:remove', { id }),
   setProjectColor: (id: string, color: ProjectColor | null) => call<LocalProject>('projects:color', { id, color }),
   setProjectSecretsShieldOff: (id: string, off: boolean) => call<LocalProject>('projects:secrets-shield', { id, off }),
+  /** #1826: a chat's schedule (one per chat), or null. */
+  getSchedule: (sessionId: string) => call<ScheduledRun | null>('schedules:get', { sessionId }),
+  saveSchedule: (request: { sessionId: string; text: string; repeat: ScheduleRepeat; until: number | null; catchUp?: boolean }) => call<ScheduledRun>('schedules:save', request),
+  pauseSchedule: (sessionId: string, paused: boolean) => call<ScheduledRun | null>('schedules:pause', { sessionId, paused }),
+  deleteSchedule: (sessionId: string) => call<boolean>('schedules:delete', { sessionId }),
   listProjectFiles: (projectId: string, directory = '') => call<ProjectDirectoryListing>('projectFiles:list', { projectId, directory }),
   watchProjectFiles: (projectId: string | null, directories: string[]) => call<boolean>('projectFiles:watch', { projectId, directories }),
   onProjectFilesChanged: (listener: (event: ProjectFilesChanged) => void): (() => void) => {
@@ -348,6 +358,9 @@ const api = {
     call<CheckpointRestoreResult>('checkpoints:restore', { projectId, checkpointId, paths, expectedRevision }),
   getToolEditReview: (sessionId: string, callId: string, changeIndex: number) =>
     call<ToolEditReview | null>('sessions:toolEditReview', { sessionId, callId, changeIndex }),
+  /** #1827: what one answer changed, per file, read from the turn's first event (`from`, a sequence number) on. */
+  turnChanges: (sessionId: string, turnId: string, from: number) => call<{ changes: TurnFileChange[]; total: number }>('sessions:turnChanges', { sessionId, turnId, from }),
+  turnFileDiff: (sessionId: string, turnId: string, from: number, path: string) => call<{ before: string; after: string } | null>('sessions:turnFileDiff', { sessionId, turnId, from, path }),
   onProjectGitChanged: (listener: (event: ProjectGitChanged) => void): (() => void) => {
     const wrapped = (_event: unknown, change: ProjectGitChanged): void => listener(change);
     ipcRenderer.on('projectGit:changed', wrapped);

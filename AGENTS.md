@@ -284,6 +284,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Config/security | `src/main/config.ts`, `platform.ts`, `secrets.ts`, `sandbox.ts`, `redaction.ts`; `src/shared/types.ts`, `capabilities.ts`: permission and host projection, secrets, approved paths. |
 | Publication | `src/main/connection.ts`, `mcp/server.ts`, `mcp/surfaces.ts`, `tunnel/{index,health,locate}.ts`, `diagnostics.ts`: endpoint/tunnel generation and truthful status. |
 | Local control API | `src/main/control-api.ts`, `src/main/control-reads.ts`, `src/main/control-actions.ts`, `src/shared/control-api.ts`: opt-in loopback listener, per-launch token, allowlisted read-only projections of other owners, and (behind `controlApi.allowActions`) send and cancel through the outbox and Stop through `stopSessionTurn`. Owns no fact. The session list and event page it serves come from `session/read-model.ts`, the same functions the renderer's IPC handlers call. |
+| Send check (#1794) | `src/main/send-check.ts`, `src/shared/send-check.ts`; gates in `bridge.ts` (`/input/claim`, `/commands/redeem`), `goal.ts` (`sendCheckAllows`), `session/finish.ts`, `mcp/tools-core.ts` (agents `message`) |
 | Tool dispatch | `src/main/mcp/{tools,kernel,inbound,call-context,tool-declarations}.ts`, `tools-core.ts`, `tools-desktop.ts`, `tools-plugins.ts`: declarations, exact caller, live guards and evidence. |
 | Code composition | `src/main/mcp/code-mode-{tool,runtime,worker}.ts`: surface-scoped `exec`, QuickJS admission, limits and explicit emissions. |
 | Instructions/plan | `src/main/mcp/{instructions,coding-instructions,plan-tool}.ts`, `src/shared/agent-plan.ts`, `src/renderer/agent-plan.ts`: executor contract and displayed progress plan. |
@@ -332,7 +333,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Direct browser tool calls | `browser-control.ts` process epoch/pending claims; extension `storage.session.cosBrowserControl` | One claim per command; browser incarnation plus local-session tab lease. MV3 retains custody/receipt, never replays input. App restart invalidates outstanding claims. |
 | Workers and inboxes | `agents.ts` / swarm snapshot and retired-worker fences | Stage → critical durable snapshot → publish/open/report. |
 | Compaction | `continuation.ts` / continuation WAL + session metadata | Disk ownership decides restart outcome; transport phase alone does not. |
-| Goal control | `goal.ts` / `goal-objectives`, `goal-switches`, `goal-replies` | Objective, mode and reply debt are separate concepts; draft memory is disposable. See §21 for remaining atomicity gaps. |
+| Goal control | `goal.ts` / `goal-objectives`, `goal-switches`, `goal-replies`, `goal-outcomes` | Objective, mode and reply debt are separate concepts; draft memory is disposable. `goal-outcomes` keeps only a chat's "goal is met" decision for the window across a restart; a newer draft, a switch change or a new objective clears it, and it never drives anything. See §21 for remaining atomicity gaps. |
 | Stop/block/finish | Stop command; `blocked-chats.ts` durable set; finish facts in recorded progress/session projection | Each names exact chat/turn; no false terminal event. |
 | Browser repair | `bridge.ts` process-memory episodes | Re-earn from live evidence; never restore an old reload token as action authority. |
 | Catalog/usage | Saved successful `chat-models`; derived `usage-cache`; live usage snapshot | Catalog is observation, not a send receipt; estimates are not provider billing. |
@@ -517,7 +518,12 @@ not intercepted.
 
 `mcp/coding-instructions.ts` contains adapted upstream collaboration prose with provenance;
 `mcp/instructions.ts` adds currently available local-tool guidance and the user's bounded
-standing additions. There is no extra instructions tool or per-chat “already sent prompt” flag.
+standing additions. Its Personality and Writing style parts (#1856) live in `src/shared/chat-style.ts`
+and are the person's to replace (`ui.chatPersonality`, `ui.chatWritingStyle`, Settings → Agents &
+automation → Chat instructions): absent is the built-in text, `''` leaves that part out with its
+heading, and a `# ` heading typed into one becomes `## `, so it cannot pose as a fixed section.
+Everything else in that prose stays fixed. The plugin schema hash covers tools only, so an edit
+needs no plugin refresh; it reaches new chats' first messages and the MCP instructions. There is no extra instructions tool or per-chat “already sent prompt” flag.
 
 The whole message has a **96,000 UTF-16-character ceiling**, plus the input transport's UTF-8
 byte envelope. For eligible openings, authored work, complete Core instructions and selected
@@ -2072,6 +2078,28 @@ replacement invalidates the old attempt. Progress uses the existing mutable time
 notifications are scoped to that exact turn and may be suppressed when the app is open.
 No periodic generated-input daemon is part of this design; old periodic rows are retired.
 
+### Scheduled runs (#1826)
+
+A chat's own message sent into that same chat at set times; one schedule per chat, durable
+`scheduled-runs` (`main/scheduled-runs.ts`, rules in `shared/schedule.ts`). Kinds: every n hours
+(1–24, real hours from when it was saved), daily, weekdays and weekly at a local `HH:MM`. A time
+the spring clock change skips runs at the first minute after it; a repeated autumn hour runs once.
+Checked every 30 s and on `powerMonitor` resume. A due run is one `enqueueInput` row with
+`scheduled { scheduleId, dueAt, late }`, mode `after-turn` while the chat has an active turn
+(never joining it), else `auto`, so read-only mode, the "slow down" hold and a missing browser hold
+it like any automatic send. Exactly once: the row id is derived from the schedule id and `dueAt`, so
+a crash before the schedule is saved queues the same id and the queue keeps one row. Missed runs
+(app closed, asleep) send one run, `late` when more than 2 min after its time; a time whose previous
+run still waits in the queue is skipped; a refused queueing skips that time once (no 30 s retry
+loop); saving or resuming starts at the next time; an ended schedule sends nothing; a deleted chat's
+schedule is removed. IPC `schedules:get|save|pause|delete`; errors are sentences the renderer
+translates. Queue rows and pending messages say "Scheduled" (late: "Scheduled · late, was due …").
+The delivered `user_message` records `scheduled { dueAt, late }` (copied from the input in
+`recordDeliveredInput`, kept when a later page echo lacks it), so the sent message keeps the same
+line in the chat after the outbox row is pruned.
+One `scheduled run:` log line per decision, never the message. Tests: `test/schedule-rules.test.ts`,
+`test/scheduled-runs.test.ts`, the IPC and renderer timeline tests named "schedule".
+
 ## 12. Recording, history, context and usage
 
 **Intent:** preserve what the user and model actually said and what local tools actually did,
@@ -2461,6 +2489,14 @@ each with its source and age; `src/main/usage-tool.ts` writes that text. Its ans
 
 **Intent:** make native ChatGPT observable and controllable for an exact authorized operation,
 while leaving ChatGPT's messages, model execution and account permissions with the provider.
+
+A claimed message whose model or reasoning the native picker could not confirm fails as `desktop_input`
+`fail` with `error` in the page's language (`content_delivery_model_unconfirmed`) and `detail:
+'model-unconfirmed'`; `/input/fail` reads the code, not the words, to ask for the model list again
+(`requestChatModels(false)`). A ChatGPT limit shown instead, or a deleted chat, carries no code;
+that includes a limit dialog `CLF_DOM.errors()` read and acknowledged while the picker ran
+(`CLF_DOM.accessNoticeSince(choosingStartedAt)`), in both the ordinary and the edit path.
+`failBrowserInput` logs every failure it records once, after the record, with the page's reason and code.
 
 Setup's first step installs and version-checks the companion in the person's Chrome, Edge, Brave or Firefox,
 then offers two equally weighted places for ChatGPT to run: the built-in CoS browser (opt-in, never
@@ -2997,6 +3033,17 @@ own close entry never reached (a changed ChatGPT browser, an app restart); an ap
 `inputOpeningIds` closes nothing this way. A worker or handoff start page (`clf` marker) closes the
 same way once `commandIds` no longer lists its command, as a worker that failed before its first
 message left one behind; the page check then compares the `clf` marker.
+`/status` also sends `inputSendingIds`: the messages a browser is sending right now (`input.ts`
+`inBrowserDelivery`: state `browser`, or a Goal helper's `decision`; never `tool`, which an MCP caller holds). Only these, or an id whose tab this browser is still opening
+or preparing (`inputOpenings` stage `opening`/`preparing`; a `ready` tab only kept for it does not
+count), hold the extension's self-update as `sending`; a message that only waits in the queue does
+not (a blocked chat kept one for hours on 2026-10-28). An app that sends no `inputSendingIds` keeps
+the old rule: any id in `inputOpeningIds` holds it. `/extension/update` re-checks at the last moment
+and answers `{ ready: false, hold: 'sending' }` while any message is in browser delivery or any claim
+is still deciding (past the reload check, e.g. waiting for the send check); once it answers
+ready, `/input/claim` from that browser (`x-extension-browser`) hands out nothing for 20 s (checked
+again right before the claim takes its message), and the
+extension's `deliverDesktopInputs` starts nothing while its reload is pending.
 Managed idle/retired/duplicate pruning records a successful removal against the exact tab,
 document, navigation epoch and conversation in the existing session-storage snapshot. Its
 lifecycle event carries a non-manual departure through the close outbox; it does not create
@@ -3520,9 +3567,49 @@ without renewing on retries. Browser election is saved before opening; lost rece
 and user closure do not grant another opening for that command. A reopened page adopts the
 pending Stop only after matching its original native question, and rechecks that identity before
 clicking Stop. Newer questions never inherit the old Stop's authority.
+A turn the page still holds after the app stopped counting it as work (its activity ended; e.g.
+ChatGPT stopped loading the chat's history, so the answer never appeared) is `heldTurnId` in the
+session controls: the composer offers Stop for it without showing Working, and `stopSessionTurn`
+accepts it. The page, finding neither ChatGPT's Stop, an approval card nor any answer of that turn,
+ends it as `stopped` with the detail `content_turn_stop_unseen`; later exact work reopens it as usual.
 Block persists the exact conversation's local-tool refusal across all MCP surfaces; only a
 user release/deletion removes it. It does not remotely terminate ChatGPT or erase history.
 Neither action may spill into another local session merely because labels or timing match.
+
+### Send check: a local veto before automatic sends (#1794)
+
+`ui.sendCheckUrl` (Settings → General → For developers → Check automatic sends) names a program on
+this computer (`http://127.0.0.1|localhost|[::1]:<port>/…`, see `src/shared/send-check.ts`). Empty is
+off. When it is set, every send the app makes by itself is asked about first with one `POST`:
+`{ version: 1, kind, id, chat: { session, project, worker }, text, attempt }`. The kinds are
+`goal-step`, `loop-step`, `continue` (automatic Continue), `fresh-turn` (rotation and its after-Stop
+continue), `scheduled` (a chat's scheduled run), `worker-start` and `worker-message`. A message a person sends is never asked about, and
+neither are Stop or anything clicked in ChatGPT.
+
+- **Veto-only.** `200 {allow:true}` lets the send go; `200 {allow:false, reason?}` holds it. Anything
+  else (no answer within 3 s, an error, another status or body, a redirect) holds it too: a crashed
+  checker never opens the gate. A saved address that is not on this computer is never contacted and
+  holds. The answer can never change the text, model or target.
+- **One log line per decision**, never with the message: `send check: <kind> <id> attempt N allowed|held (why)`.
+- **Where it is asked**, each before anything is typed or filed:
+  - Outbox rows (`continue`, `fresh-turn`, `scheduled`): in `/input/claim` before `claimBrowserInput`, outside the
+    queue's lock. A hold stores `sendCheck {attempt, nextAt, reason, answered}` on the row;
+    `pendingBrowserInputs` and `pendingQueuedPickups` skip it until `nextAt` (30 s), so a held row is
+    neither offered nor taken for a failed pickup. Clearing the address releases it at once. The row
+    must still be queued with the same text after the ask, or it is asked about again.
+  - Goal/Loop steps: in `goal.ts run()` after the step is written, before it is settled `ready`. A hold
+    keeps the draft and asks again every 30 s with the same `id` (the draft token); it stops asking
+    while the chat's Goal/Loop is off and ends when the draft is no longer this chat's.
+  - Session Finish steps: in `finish.ts` before `enqueueInput`, asked once, because the step can reach
+    ChatGPT in that tool call's own result. A hold queues nothing and releases the finish hold, so
+    ChatGPT finishes its answer instead of calling session_finish again to be asked again.
+  - Worker start and wake: in `/commands/redeem` after the text is final. A hold answers the page
+    `503 send_check_held` (retryable), asks at most every 30 s, and sets `lastError`, so a command
+    whose deadline ends while held reports the hold. An allowed text is not asked about again.
+  - Messages to a worker (agents `message`): before staging. One held message fails the whole call
+    and nothing is queued. Messages to the prime are not asked about.
+- Not in phase 1: Compact & Resume prompts, the Goal helper's Temporary Chat, `/goal/open` opening
+  messages, and events about what happened after a send (#82).
 
 ## 15. Compact & Resume: same session, new frontend
 
@@ -4983,6 +5070,14 @@ only the bounded viewport. Unavailable reads reset lazy-load admission so closin
 retries, while a pending or successful read remains single-flight/cached. Inline syntax uses the
 file viewer's palette in the selected theme; dark overrides are scoped to dark mode for both
 surfaces. The existing Review dock remains available.
+Per answer (#1827, `main/session/turn-changes.ts`): `sessions:turnChanges` { sessionId, turnId, from }
+groups a turn's successful recorded edits by path (first-change order, the prime's own calls only,
+never a `worker-N` agent's) and gives each file one net diff, the first edit's before against the
+last edit's after, read from the review assets by id (`readEditReviewAsset`), counted with
+`lineDelta`: `edited`, `created`, `deleted` or `unchanged` (put back, or made and removed). An end the
+recording did not keep falls back to the summed recorded counts, marked approximate, with `diff`
+saying why. At most 50 files; `total` says how many there are. `sessions:turnFileDiff` adds `path`
+and returns that net before/after. `from` is the turn's first sequence number, so the read starts there.
 
 Unchanged session/directory updates preserve preview DOM and pending code loads. File reads keep
 the previous accepted preview until replacement content is ready; hidden previews stay hidden.
@@ -5857,6 +5952,13 @@ when the config file is missing, and through `ui:whatsNewSeen`, which can only r
 newer version (or no recorded one) with an entry: show, then record; anything else, a downgrade
 included: record. Each release PR adds its version's entry to `src/renderer/whats-new.ts`, with
 literal `t()` keys translated into every catalog. `verify-whats-new.cjs` checks it on real pixels.
+
+The first-run tour (#1833, `src/renderer/tour.ts`) is offered once, from Setup's last card, and never
+starts by itself. `ui.tourDone` records that the offer was answered: only the main process writes it,
+through `ui:tourDone`, which can only set it to `true` (never back). No thanks, Skip and Done set it;
+leaving the chat screen mid-tour (`tour.stop()` from `showTab`) only hides it and records nothing.
+Settings → Take the tour replays it whatever `tourDone` says. A step whose control is not on screen is
+left out, and the tour only points: it never clicks, sends or changes anything.
 
 `verify:notices` checks installed production dependencies against the lockfile and rejects
 missing license material or mismatched reviewed catalog hashes. Custom package updates cannot

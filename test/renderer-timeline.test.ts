@@ -905,6 +905,40 @@ it('identifies automatic Continue without user-task editing or reordering and ke
   expect(w.document.querySelectorAll('#finishQueue [aria-label="Edit queued task"]')).toHaveLength(2);
 });
 
+// #1826: a run of the chat's schedule says so in its queue row, and when it went out late.
+it('labels a scheduled run in the queue, with when it was due when it is late', async () => {
+  const { w, live, append } = await boot([]);
+  const dueAt = new Date(2026, 9, 24, 9, 0).getTime();
+  const run: InputEntry = { id: 'scheduled-run', sessionId: summary([]).id, text: 'Check the open issues', mode: 'auto',
+    dueAt: 0, model: null, reasoningEffort: null, state: 'queued', owner: null, createdAt: 0, conversationId: 'chat-b',
+    scheduled: { scheduleId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', dueAt, late: false } };
+  live.inputs.push(run);
+  await append([]);
+  const label = () => w.document.querySelector('#inputQueue [data-input-id="scheduled-run"] .pending-message-origin')?.textContent;
+  expect(label()).toBe('Scheduled');
+  expect(w.document.querySelector('#inputQueue [data-input-id="scheduled-run"] .pending-message-text')?.textContent).toBe('Check the open issues');
+  live.inputs[0] = { ...run, scheduled: { ...run.scheduled!, late: true } };
+  await append([]);
+  expect(label()).toBe(`Scheduled · late, was due ${new Date(dueAt).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}`);
+  // Waiting for a running turn, the run is a task card that carries the same label.
+  live.inputs[0] = { ...run, mode: 'after-turn' };
+  await append([]);
+  expect(w.document.querySelector('#finishQueue [data-input-id="scheduled-run"] .queue-label')?.textContent).toBe('Scheduled · Check the open issues');
+});
+
+// #1826: a sent run keeps its label in the chat, on time or late, and a typed message has none.
+it('keeps the scheduled label on the sent message in the chat', async () => {
+  const dueAt = new Date(2026, 9, 24, 9, 0).getTime();
+  const sent: SessionEvent = { kind: 'user_message', seq: 1, origin: 1, time: T0, source: 'app', messageId: 'scheduled-sent', inputId: 'scheduled-run',
+    message: text('Check the open issues'), scheduled: { dueAt, late: false } };
+  const typed: SessionEvent = { kind: 'user_message', seq: 2, origin: 2, time: T0 + 1, source: 'app', messageId: 'typed', message: text('And this one?') };
+  const { w, append } = await boot([sent, typed]);
+  const labels = () => [...w.document.querySelectorAll('.said.is-user')].map(bubble => bubble.querySelector('.said-origin')?.textContent ?? null);
+  expect(labels()).toEqual(['Scheduled', null]);
+  await append([{ ...sent, seq: 3, origin: 1, scheduled: { dueAt, late: true } }]);
+  expect(labels()).toEqual([`Scheduled · late, was due ${new Date(dueAt).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}`, null]);
+});
+
 // #1402: the app's own fresh-turn continue is no one's typed message. Waiting, it shows as the
 // message it is; dropped, it raises no delivery notice, because the app tries again by itself.
 it('shows a fresh-turn continue while it waits and raises no notice when it is dropped', async () => {
@@ -1160,6 +1194,104 @@ describe("a new chat's first message held for its project's ChatGPT Project", ()
     await append([]);
     await vi.waitFor(() => expect(w.document.querySelector('#inputQueue .pending-message')?.textContent ?? '').toContain(expected), { timeout: 5000 });
   });
+});
+
+it("shows the chat's schedule as one quiet line, with Pause and Edit, and a missed run (#1826)", async () => {
+  // A Wednesday at 08:00, so the weekday run at 09:00 is later today: the time alone (2.1.47 round).
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 28, 8, 0));
+  try {
+    const asked = Date.now() - 12_000;
+    const { w, live, append } = await boot([
+      { kind: 'user_message', seq: 1, origin: 1, time: asked, source: 'extension', messageId: 'q-sched', message: text('Check the issues') }
+    ]);
+    const api = (w as any).api;
+    const sessionId = summary(live.events).id;
+    const line = () => w.document.getElementById('scheduleLine')!;
+    // No schedule: no line.
+    api.getSchedule = vi.fn(() => Promise.resolve({ ok: true, data: null }));
+    await append([]); await append([]);
+    expect(line().hidden).toBe(true);
+    const schedule = { id: '0b6c4e1c-1f1e-4a4f-9d39-3c2f0e1a2b3c', sessionId, text: 'Check the issues', repeat: { kind: 'weekdays', at: '09:00' },
+      until: null, paused: false, createdAt: Date.now() - 86_400_000, lastDueAt: null };
+    api.getSchedule = vi.fn(() => Promise.resolve({ ok: true, data: schedule }));
+    api.pauseSchedule = vi.fn(() => Promise.resolve({ ok: true, data: { ...schedule, paused: true } }));
+    await append([]); await append([]);
+    expect(line().hidden).toBe(false);
+    expect(line().textContent).toMatch(/^Scheduled · every weekday at 09:00( AM)? · next (\S+ )?09:00/);
+    // A next run later today is its time alone; on another day it names the day (2.1.47 round).
+    const next = w.document.getElementById('scheduleLineText')!.textContent!.match(/· next (.+)$/)![1]!;
+    expect(next).toMatch(/^09:00( AM)?$/);
+    // Friday 10:00: the next weekday run is Monday's, so the day is named (CodeRabbit).
+    vi.setSystemTime(new Date(2026, 9, 30, 10, 0));
+    await append([]); await append([]);
+    expect(w.document.getElementById('scheduleLineText')!.textContent).toMatch(/· next Mon,? 09:00( AM)?$/);
+    // Pause and Edit are the dock's own icon actions, like the Goal row's, named for screen readers.
+    const pause = () => w.document.getElementById('scheduleLinePause')!;
+    const edit = w.document.getElementById('scheduleLineEdit')!;
+    expect(pause().classList.contains('dock-action')).toBe(true);
+    expect(edit.classList.contains('dock-action')).toBe(true);
+    expect(pause().getAttribute('aria-label')).toBe('Pause schedule');
+    expect(pause().title).toBe('Pause schedule');
+    expect(pause().querySelector('.ico')).not.toBeNull();
+    expect(edit.getAttribute('aria-label')).toBe('Edit schedule');
+    expect(edit.querySelector('.ico')).not.toBeNull();
+    pause().click();
+    await append([]);
+    expect(api.pauseSchedule).toHaveBeenCalledWith(sessionId, true);
+    api.getSchedule = vi.fn(() => Promise.resolve({ ok: true, data: { ...schedule, paused: true } }));
+    await append([]); await append([]);
+    expect(line().textContent).toMatch(/^Paused · every weekday at 09:00/);
+    expect(pause().getAttribute('aria-label')).toBe('Resume schedule');
+    expect(pause().title).toBe('Resume schedule');
+    // A run missed while the app was closed says so, beside the next time.
+    const missed = new Date(); missed.setHours(9, 0, 0, 0);
+    api.getSchedule = vi.fn(() => Promise.resolve({ ok: true, data: { ...schedule, missedDueAt: missed.getTime() } }));
+    await append([]); await append([]);
+    expect(line().textContent).toContain('missed 09:00');
+  } finally { vi.useRealTimers(); }
+});
+
+it('says when the send check holds an automatic message, with its reason', async () => {
+  // #1794: a held Continue or fresh turn shows why it waits, so the person can cancel it or fix the program.
+  const asked = Date.now() - 12_000;
+  const { w, live, append } = await boot([
+    { kind: 'user_message', seq: 1, origin: 1, time: asked, source: 'extension', messageId: 'q-held', message: text('Build it') }
+  ]);
+  const api = (w as any).api;
+  const chat = await import('../src/renderer/chat.js');
+  const state = (await api.getState()).data;
+  const checked = (url: string | undefined) => chat.chatApply({ ...state, bridge: { ...state.bridge, present: true },
+    config: { ...state.config, ui: { ...state.config.ui, sendCheckUrl: url } } });
+  checked('http://127.0.0.1:8123/check');
+  const hold = (attempt: number, reason: string, answered: boolean) => ({ attempt, nextAt: Date.now() + 30_000, reason, answered });
+  const held: InputEntry = { id: 'held-one', sessionId: summary(live.events).id, state: 'queued', owner: null, text: 'Continue',
+    mode: 'after-turn', model: null, reasoningEffort: null, dueAt: T0, createdAt: T0, conversationId: 'chat-a',
+    recovery: { questionId: 'q-held', pro: false, busyUntil: 0, phase: 'ready' }, sendCheck: hold(2, 'quiet hours', true) };
+  const card = () => w.document.querySelector('#finishQueue .queued-input')!.textContent ?? '';
+  live.inputs.push(held);
+  await append([]); await append([]);
+  expect(card()).toContain('Held by your send check: quiet hours');
+  live.inputs[0] = { ...held, sendCheck: hold(3, '', false) };
+  await append([]); await append([]);
+  expect(card()).toContain('Held: your send check did not answer');
+  live.inputs[0] = { ...held, sendCheck: hold(4, '', true) };
+  await append([]); await append([]);
+  expect(card()).toContain('Held by your send check');
+  // The fresh turn after a long one waits in the message queue, and says the same there.
+  live.inputs[0] = { id: 'rotation-one', sessionId: summary(live.events).id, state: 'queued', owner: null, text: 'Continue in a fresh turn',
+    mode: 'auto', model: null, reasoningEffort: null, dueAt: T0, createdAt: T0, conversationId: 'chat-a', purpose: 'rotation',
+    authoredSource: 'none', sendCheck: hold(1, 'budget', true) };
+  await append([]); await append([]);
+  expect(w.document.querySelector('#inputQueue .pending-message')?.textContent ?? '').toContain('Held by your send check: budget');
+  // The person clears the check's address: the app releases the message at once, and the queue stops saying it is held (CodeRabbit).
+  checked(undefined); await append([]); await append([]);
+  expect(w.document.querySelector('#inputQueue .pending-message')?.textContent ?? '').not.toContain('Held');
+  // A hold whose next ask has come is no longer a hold either.
+  checked('http://127.0.0.1:8123/check');
+  live.inputs[0] = { ...live.inputs[0]!, sendCheck: { attempt: 2, nextAt: Date.now() - 1, reason: 'budget', answered: true } };
+  await append([]); await append([]);
+  expect(w.document.querySelector('#inputQueue .pending-message')?.textContent ?? '').not.toContain('Held');
 });
 
 it('says why a queued message waits: no extension, or a running tool call', async () => {
@@ -4078,6 +4210,52 @@ it('stops directly from the empty composer without a second Stop menu action', a
   expect(input.value).toBe('');
 });
 
+it('offers Stop for a turn the page still holds after the app stopped counting it as work, without saying Working (2.1.47 round)', async () => {
+  const { w, append } = await boot([]);
+  const api = (w as any).api;
+  const stop = vi.fn(async () => ({ ok: true, data: {} }));
+  api.stopSessionTurn = stop;
+  api.getSessionControls = async (id: string) => ({ ok: true, data: { sessionId: id, conversationId: 'chat-a', automation: 'off', objective: '',
+    activeTurnId: null, heldTurnId: 'page-held-turn', finishHeld: false, blocked: '', job: null } });
+  await append([]); await append([]);
+  const send = w.document.getElementById('chatSend') as HTMLButtonElement;
+  expect(send.dataset.action).toBe('stop');
+  expect(send.getAttribute('aria-label')).toBe('Stop turn');
+  expect(w.document.getElementById('chatState')!.classList.contains('is-working')).toBe(false);
+  send.click();
+  await settle();
+  expect(stop).toHaveBeenCalledWith('2026-09-02-test0001', 'page-held-turn');
+  // Nothing held: the ordinary Send.
+  api.getSessionControls = async (id: string) => ({ ok: true, data: { sessionId: id, conversationId: 'chat-a', automation: 'off', objective: '',
+    activeTurnId: null, heldTurnId: null, finishHeld: false, blocked: '', job: null } });
+  await append([]); await append([]);
+  expect(send.dataset.action).toBe('send');
+});
+
+it('stops a held turn from the button with Plan armed, and stops nothing else when that turn changed meanwhile (CodeRabbit)', async () => {
+  const { w, append } = await boot([]);
+  const api = (w as any).api;
+  const stop = vi.fn(async () => ({ ok: true, data: {} }));
+  const plan = vi.fn(async () => ({ ok: true, data: null }));
+  api.stopSessionTurn = stop; api.draftTaskPlan = plan;
+  const controls = (turns: { activeTurnId: string | null; heldTurnId: string | null }) => async (id: string) => ({ ok: true,
+    data: { sessionId: id, conversationId: 'chat-a', automation: 'off', objective: '', finishHeld: false, blocked: '', job: null, ...turns } });
+  api.getSessionControls = controls({ activeTurnId: null, heldTurnId: 'page-held-turn' });
+  await append([]); await append([]);
+  (w.document.getElementById('createPlan') as HTMLButtonElement).click();
+  await settle();
+  const send = w.document.getElementById('chatSend') as HTMLButtonElement;
+  expect(send.dataset.action).toBe('stop');
+  send.click(); await settle();
+  expect(stop).toHaveBeenCalledWith('2026-09-02-test0001', 'page-held-turn');
+  expect(plan).not.toHaveBeenCalled();
+  // Shown for the held turn, but by the time it is read again a different turn runs: that one is not stopped.
+  stop.mockClear();
+  api.getSessionControls = controls({ activeTurnId: 'replacement-turn', heldTurnId: null });
+  send.click(); await settle();
+  expect(stop).not.toHaveBeenCalled();
+});
+
 describe('Esc in the empty composer during a turn', () => {
   const esc = (w: JSDOM['window'], init: KeyboardEventInit = {}) => {
     const event = new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...init });
@@ -4508,6 +4686,20 @@ it('docks recent app repair progress without hiding authored lookalikes', async 
   expect(w.document.querySelector('.ev-assistant_message')!.textContent).toContain('Reopened chat');
   w.document.getElementById('newChat')!.click();
   expect(w.document.getElementById('recoveryStatus')!.hidden).toBe(true);
+});
+
+it('translates the historical approval deferral in the timeline and recovery notice', async () => {
+  const { w } = await boot([{ seq: 1, time: Date.now(), source: 'app', kind: 'progress',
+    progressId: 'browser-repair:approval-deferred',
+    message: text('Reload was deferred because ChatGPT showed a tool approval card.') }], true, [], [], { developerMode: true });
+  const { setLanguage } = await import('../src/renderer/i18n.js');
+  try {
+    setLanguage('es');
+    const translated = 'Se pospuso la recarga porque ChatGPT mostró una tarjeta de aprobación de herramientas.';
+    expect(w.document.querySelector('.ev-progress')!.textContent).toContain(translated);
+    expect(w.document.getElementById('recoveryStatus')!.textContent).toContain(translated);
+    expect(w.document.querySelector('.approval-wait')).toBeNull();
+  } finally { setLanguage('en'); }
 });
 
 it('keeps historical repair details in developer mode without reviving a status', async () => {
@@ -4976,26 +5168,31 @@ it.each(['navigate', 'objective edit', 'mode change', 'automation change'] as co
 });
 
 it('shows Loop settling, its real waiting deadline, and generated text in the same row', async () => {
-  const { w, append } = await boot([]);
-  const api = (w as any).api;
-  const controls = { automation: 'loop', objective: 'Continue the task', blocked: '', job: null,
-    goalWait: { reason: 'quiet', until: Date.now() + 125_000 }, goalDraft: null as unknown };
-  api.getSessionControls = async () => ({ ok: true, data: controls });
-  await append([]);
-  const row = w.document.getElementById('goalLifecycle')!;
-  expect(row.hidden).toBe(false);
-  expect(row.textContent).toContain('Loop · Waiting for tool inactivity');
-  expect(row.querySelector('[role="timer"]')?.textContent).toContain('2:05');
-  expect(row.getAttribute('aria-busy')).toBe('true');
-  controls.goalDraft = { stage: 'answering', model: 'fixture', text: 'Continue with the remaining checks', error: null };
-  await append([]);
-  expect(w.document.getElementById('goalLifecycle')).toBe(row);
-  expect(row.textContent).toContain('Generating a continuation');
-  expect(row.textContent).toContain('Continue with the remaining checks');
-  expect(row.querySelector('[role="timer"]')).toBeNull();
-  controls.automation = 'off'; await append([]);
-  expect(row.hidden).toBe(true);
-  expect(row.textContent).toBe('');
+  // The clock stands still, so a slow run cannot tick the countdown from 2:05 to 2:04 (2.1.47 round).
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 28, 12, 0));
+  try {
+    const { w, append } = await boot([]);
+    const api = (w as any).api;
+    const controls = { automation: 'loop', objective: 'Continue the task', blocked: '', job: null,
+      goalWait: { reason: 'quiet', until: Date.now() + 125_000 }, goalDraft: null as unknown };
+    api.getSessionControls = async () => ({ ok: true, data: controls });
+    await append([]);
+    const row = w.document.getElementById('goalLifecycle')!;
+    expect(row.hidden).toBe(false);
+    expect(row.textContent).toContain('Loop · Waiting for tool inactivity');
+    expect(row.querySelector('[role="timer"]')?.textContent).toContain('2:05');
+    expect(row.getAttribute('aria-busy')).toBe('true');
+    controls.goalDraft = { stage: 'answering', model: 'fixture', text: 'Continue with the remaining checks', error: null };
+    await append([]);
+    expect(w.document.getElementById('goalLifecycle')).toBe(row);
+    expect(row.textContent).toContain('Generating a continuation');
+    expect(row.textContent).toContain('Continue with the remaining checks');
+    expect(row.querySelector('[role="timer"]')).toBeNull();
+    controls.automation = 'off'; await append([]);
+    expect(row.hidden).toBe(true);
+    expect(row.textContent).toBe('');
+  } finally { vi.useRealTimers(); }
 });
 
 it('names the wait for this chat’s own sub-agents without inventing a countdown', async () => {
@@ -8642,4 +8839,138 @@ describe('a formula in an answer', () => {
     expect(rightClick(w, paragraph.querySelector('.math-inline.is-source')!)).toBe(false);
     expect(w.document.querySelector('.row-menu')).toBeNull();
   });
+});
+
+// #1827 (Haz's review): one collapsed "Changed files" summary under a finished answer that edited files.
+it("sums up what a finished answer changed, collapsed, counting only real changes, with each file's net diff and Open in Review", async () => {
+  const project = { id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', name: 'Repo', path: '/repo', createdAt: 1 };
+  const { w, append } = await boot([], true, [], [project]);
+  const api = (w as any).api;
+  const changes = [
+    // Recorded as the tools saw them: under the approved root's virtual name.
+    { path: '/repo/src/app.ts', state: 'edited', added: 30, removed: 5, approximate: false, diff: 'kept', edits: 3 },
+    { path: '/repo/src/new-page.ts', state: 'created', added: 12, removed: 0, approximate: false, diff: 'kept', edits: 1 },
+    { path: '/repo/old/helper.ts', state: 'unchanged', added: 0, removed: 0, approximate: false, diff: 'kept', edits: 2 },
+    { path: '/repo/big.json', state: 'edited', added: 400, removed: 2, approximate: true, diff: 'too-large', edits: 1 }
+  ];
+  api.turnChanges = vi.fn(async () => ({ ok: true, data: { changes, total: 4 } }));
+  api.turnFileDiff = vi.fn(async () => ({ ok: true, data: { before: 'a\n', after: 'a\nb\n' } }));
+  const edit = (seq: number, path: string, kind: 'edit' | 'create', agent?: string): SessionEvent => {
+    const call = toolCall(seq, `edit-${seq}`) as Extract<SessionEvent, { kind: 'tool_call' }>;
+    return { ...call, turnId: 't-edit', ...(agent ? { agent } : {}), call: { ...call.call, tool: 'apply_patch', summary: { kind, tone: 'good', title: `Edited ${path}` },
+      changes: [{ path, added: 1, removed: 0, approximate: false, reviewAssetId: `asset-${seq}` }] } } as SessionEvent;
+  };
+  const answer = (seq: number): SessionEvent => ({ seq, time: T0 + seq * 1000, source: 'extension', kind: 'assistant_message', turnId: 't-edit',
+    messageId: 'answer-edit', message: text('Done: three files.'), final: true, state: 'final' } as SessionEvent);
+  await append([
+    { seq: 10, time: T0 + 10_000, source: 'extension', kind: 'turn_start', turnId: 't-edit' } as SessionEvent,
+    edit(11, 'src/app.ts', 'edit'), edit(12, 'src/new-page.ts', 'create'), answer(13)
+  ]);
+  // Still running: no card yet, so it never changes under the reader.
+  expect(w.document.querySelector('.turn-changes')).toBeNull();
+  await append([{ seq: 14, time: T0 + 14_000, source: 'extension', kind: 'turn_end', turnId: 't-edit', outcome: 'completed' } as SessionEvent]);
+  await append([]);
+  const card = w.document.querySelector<HTMLDetailsElement>('.turn-changes')!;
+  expect(card).not.toBeNull();
+  expect(api.turnChanges).toHaveBeenCalledWith(expect.any(String), 't-edit', 10);
+  // Collapsed, even for a few files; the headline counts net changes only, and says the rest.
+  expect(card.open).toBe(false);
+  expect(card.querySelector('summary')!.textContent).toBe('Changed 3 files · +442 −7 (approx.) · 1 put back');
+  card.open = true; card.dispatchEvent(new w.Event('toggle'));
+  const rows = [...card.querySelectorAll<HTMLDetailsElement>('.turn-change')];
+  // Each file named the way its tool row names it, without the root's virtual name; the full path in the tooltip.
+  expect(rows.map(row => row.querySelector('summary')!.textContent)).toEqual([
+    'src/app.ts+30 −5edited', 'src/new-page.ts+12created', 'old/helper.tsno net change', 'big.json+400 −2 (approx.)edited'
+  ]);
+  expect(rows[0]!.querySelector('summary')!.title).toBe('/repo/src/app.ts');
+  // Two approved roots with the same file: the shortened names would be equal, so both keep their root (CodeRabbit).
+  const { turnChangeLabels } = await import('../src/renderer/turn-changes.js');
+  expect(turnChangeLabels(['/repo-a/src/app.ts', '/repo-b/src/app.ts', '/repo-a/README.md', 'notes.md']))
+    .toEqual(['/repo-a/src/app.ts', '/repo-b/src/app.ts', 'README.md', 'notes.md']);
+  // A file's net diff loads when its row opens; one the recording did not keep says so.
+  rows[0]!.open = true; rows[0]!.dispatchEvent(new w.Event('toggle'));
+  await settle();
+  expect(api.turnFileDiff).toHaveBeenCalledWith(expect.any(String), 't-edit', 10, '/repo/src/app.ts');
+  rows[3]!.open = true; rows[3]!.dispatchEvent(new w.Event('toggle'));
+  await settle();
+  expect(rows[3]!.textContent).toContain('Diff unavailable: this edit was too large to keep');
+  expect(api.turnFileDiff).toHaveBeenCalledTimes(1);
+  expect(card.querySelector('.turn-changes-review')!.textContent).toBe('Open in Review');
+});
+
+// CodeRabbit on #1836: a long turn's early edits can be outside the loaded page; a turn can gain an edit
+// after its card loaded; a turn can start again after it ended.
+it('asks for the card of an answer whose turn start is not loaded, and shows none when it edited nothing', async () => {
+  const { w, append } = await boot([]);
+  const api = (w as any).api;
+  api.turnChanges = vi.fn(async () => ({ ok: true, data: { changes: [{ path: 'early.ts', state: 'edited', added: 2, removed: 1, approximate: false, diff: 'kept', edits: 1 }], total: 1 } }));
+  await append([
+    { seq: 501, time: T0 + 501_000, source: 'extension', kind: 'assistant_message', turnId: 't-long', messageId: 'a-long', message: text('All done.'), final: true, state: 'final' } as SessionEvent,
+    { seq: 502, time: T0 + 502_000, source: 'extension', kind: 'turn_end', turnId: 't-long', outcome: 'completed' } as SessionEvent
+  ]);
+  await append([]);
+  expect(api.turnChanges).toHaveBeenCalledWith(expect.any(String), 't-long', 0);
+  expect(w.document.querySelector('.turn-changes')?.textContent).toContain('Changed 1 file');
+});
+
+it('reads a reopened turn from its first start when only the reopening is loaded (CodeRabbit)', async () => {
+  // The first turn_start and its edits left the loaded page; the app-authored reopening (with \`detail\`) is still there.
+  const { w, append } = await boot([]);
+  const api = (w as any).api;
+  api.turnChanges = vi.fn(async () => ({ ok: true, data: { changes: [{ path: 'early.ts', state: 'edited', added: 2, removed: 1, approximate: false, diff: 'kept', edits: 1 }], total: 1 } }));
+  await append([
+    { seq: 700, time: T0 + 700_000, source: 'app', kind: 'turn_start', turnId: 't-reopened', detail: 'a tool call proved the turn was still running' } as SessionEvent,
+    { seq: 701, time: T0 + 701_000, source: 'extension', kind: 'assistant_message', turnId: 't-reopened', messageId: 'a-reopened', message: text('All done.'), final: true, state: 'final' } as SessionEvent,
+    { seq: 702, time: T0 + 702_000, source: 'extension', kind: 'turn_end', turnId: 't-reopened', outcome: 'completed' } as SessionEvent
+  ]);
+  await append([]);
+  // Not from 700: that would leave out every edit made before the reopening.
+  expect(api.turnChanges).toHaveBeenCalledWith(expect.any(String), 't-reopened', 0);
+  expect(w.document.querySelector('.turn-changes')?.textContent).toContain('Changed 1 file');
+});
+
+it('refreshes the card when its finished turn gains another edit, and hides it while the turn runs again', async () => {
+  const { w, append } = await boot([]);
+  const api = (w as any).api;
+  let files = 1;
+  api.turnChanges = vi.fn(async () => ({ ok: true, data: { changes: Array.from({ length: files }, (_, i) => ({ path: `f${i}.ts`, state: 'edited', added: 1, removed: 0, approximate: false, diff: 'kept', edits: 1 })), total: files } }));
+  const edit = (seq: number, path: string): SessionEvent => {
+    const call = toolCall(seq, `edit-late-${seq}`) as Extract<SessionEvent, { kind: 'tool_call' }>;
+    return { ...call, turnId: 't-late', call: { ...call.call, tool: 'apply_patch', summary: { kind: 'edit', tone: 'good', title: `Edited ${path}` },
+      changes: [{ path, added: 1, removed: 0, approximate: false, reviewAssetId: `asset-${seq}` }] } } as SessionEvent;
+  };
+  await append([
+    { seq: 600, time: T0 + 600_000, source: 'extension', kind: 'turn_start', turnId: 't-late' } as SessionEvent,
+    edit(601, 'f0.ts'),
+    { seq: 602, time: T0 + 602_000, source: 'extension', kind: 'assistant_message', turnId: 't-late', messageId: 'a-late', message: text('Done.'), final: true, state: 'final' } as SessionEvent,
+    { seq: 603, time: T0 + 603_000, source: 'extension', kind: 'turn_end', turnId: 't-late', outcome: 'completed' } as SessionEvent
+  ]);
+  await append([]);
+  expect(w.document.querySelector('.turn-changes')?.textContent).toContain('Changed 1 file');
+  files = 2;
+  await append([edit(604, 'f1.ts')]);
+  await append([]);
+  expect(w.document.querySelector('.turn-changes')?.textContent).toContain('Changed 2 files');
+  // The same turn starts again: its card waits until it is over again.
+  await append([{ seq: 605, time: T0 + 605_000, source: 'extension', kind: 'turn_start', turnId: 't-late' } as SessionEvent]);
+  await append([]);
+  expect(w.document.querySelector('.turn-changes')).toBeNull();
+});
+
+it('shows no Changed files card for a turn whose only edits were a worker\'s, or that edited nothing', async () => {
+  const { w, append } = await boot([]);
+  const api = (w as any).api;
+  api.turnChanges = vi.fn(async () => ({ ok: true, data: { changes: [], total: 0 } }));
+  const worker = toolCall(21, 'worker-edit') as Extract<SessionEvent, { kind: 'tool_call' }>;
+  await append([
+    { seq: 20, time: T0 + 20_000, source: 'extension', kind: 'turn_start', turnId: 't-w' } as SessionEvent,
+    { ...worker, turnId: 't-w', agent: 'worker-1', call: { ...worker.call, tool: 'apply_patch', summary: { kind: 'edit', tone: 'good', title: 'Edited a.ts' },
+      changes: [{ path: 'a.ts', added: 1, removed: 0, approximate: false }] } } as SessionEvent,
+    { ...toolCall(22, 'read-only'), turnId: 't-w' } as SessionEvent,
+    { seq: 23, time: T0 + 23_000, source: 'extension', kind: 'assistant_message', turnId: 't-w', messageId: 'a-w', message: text('Read it.'), final: true, state: 'final' } as SessionEvent,
+    { seq: 24, time: T0 + 24_000, source: 'extension', kind: 'turn_end', turnId: 't-w', outcome: 'completed' } as SessionEvent
+  ]);
+  await append([]);
+  expect(w.document.querySelector('.turn-changes')).toBeNull();
+  expect(api.turnChanges).not.toHaveBeenCalled();
 });
