@@ -1,4 +1,4 @@
-import { ageOf, type AgeUnit } from '../shared/age.js';
+import { ageOf, compactCount, elapsedParts, type AgeUnit } from '../shared/age.js';
 import { currentLanguage, t, ui } from './i18n.js';
 /**
  * The handful of DOM helpers both panels need.
@@ -222,16 +222,38 @@ export function compactAgeText(value: number, unit: AgeUnit): string {
   return t(key, [value]);
 }
 
+/** An elapsed time in the person's language, with the same tokens as ages: "3d 4h", German "3 T. 4 h". */
+export function elapsedDurationText(seconds: number, parts: 1 | 2): string {
+  return elapsedParts(seconds, parts).map(([value, unit]) => compactAgeText(value, unit)).join(' ');
+}
+
 /** A clock time for one event in a timeline. */
 export function clockTime(atMs: number): string {
   return new Date(atMs).toLocaleTimeString(currentLanguage());
 }
 
+/**
+ * A chat row's time: hours and minutes ("3:52 PM", "15:52"), its full date in the title, and a
+ * machine-readable `datetime`. Shown only with "Show message times" on.
+ */
+export function rowTime(atMs: number): HTMLTimeElement {
+  const time = document.createElement('time');
+  const at = new Date(atMs);
+  // A damaged saved time (say 1e20) has no date; the row shows none rather than failing to draw.
+  if (!Number.isFinite(at.getTime())) return time;
+  // Bound, so a language change repaints rows already drawn. The full date is also the accessible
+  // name: the title alone is out of reach without a pointer (CodeRabbit on #1948).
+  ui(time, 'textContent', () => at.toLocaleTimeString(currentLanguage(), { hour: 'numeric', minute: '2-digit' }));
+  ui(time, 'title', () => at.toLocaleString(currentLanguage()));
+  ui(time, 'aria-label', () => at.toLocaleString(currentLanguage()));
+  time.dateTime = at.toISOString();
+  return time;
+}
+
 /** "1.2k", "3.4M" — for token and character counts that get large. */
+/** A count in a few characters: "999", "1.0k", "12k", "1.3M", "2.0B" (never "1000k" or "2000.0M"). */
 export function compactNumber(value: number): string {
-  if (value < 1000) return String(value);
-  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`;
-  return `${(value / 1_000_000).toFixed(1)}M`;
+  return compactCount(value);
 }
 
 const cardMenuDocuments = new WeakSet<Document>();

@@ -2787,10 +2787,12 @@ var CLF_DOM = (() => {
       const actions = [...tileParent.querySelectorAll('button')];
       if (actions.length === 2 && actions[1] === button) {
         const open = actions[0], name = open.getAttribute('aria-label');
-        const removal = button.getAttribute('aria-label') || '';
+        const removal = (button.getAttribute('aria-label') || '').trim();
         const labelled = [...tileParent.querySelectorAll('span')].some(node =>
           !node.children.length && node.textContent === name);
-        if (name && removal !== name && removal.endsWith(` ${name}`) && labelled &&
+        // The tile's structure is the proof, not the remove label's wording: "Remove notes.zip" in
+        // English, "notes.zip entfernen" in German (#1942), and a label naming no file at all.
+        if (name && removal && removal !== name.trim() && labelled &&
             open.closest('[data-composer-attachments]') === attachmentHost) return name;
       }
     }
@@ -3688,15 +3690,16 @@ var CLF_DOM = (() => {
   }
 
   /**
-   * ChatGPT's own "new Project" control in its sidebar, or null.
-   *
-   * Located by the attribute ChatGPT's sidebar action carries, not by its label, which is in the
-   * account's language (measured 2026-10-10: `data-app-action-sidebar-project-create`, labelled
-   * "Adicionar novo projeto" on a pt-BR account). Exactly one shown control, or nothing.
+   * ChatGPT's native Project creation control, independent of the account's language.
+   * The Projects index now owns Create (2026-10-19). Older layouts put the action in the sidebar.
+   * Only an unambiguous visible control in the matching surface is eligible.
    */
   function projectCreateControl() {
     return safe(() => {
-      const shown = [...document.querySelectorAll('button[data-app-action-sidebar-project-create]')]
+      const selector = location.pathname === '/projects' && document.querySelector('#projects-index-search')
+        ? '[data-chatgpt-project-conversation-drop-target] > button[type="button"][data-color="primary"][data-variant="solid"]'
+        : 'button[data-app-action-sidebar-project-create]';
+      const shown = [...document.querySelectorAll(selector)]
         .filter(node => !node.closest(`${OWN_SURFACES},[hidden],[aria-hidden="true"],[inert]`) && node.getClientRects().length > 0 && !node.disabled);
       return shown.length === 1 ? shown[0] : null;
     }, null);
@@ -3744,6 +3747,37 @@ var CLF_DOM = (() => {
       }
       return out;
     }, []);
+  }
+
+  /**
+   * ChatGPT's own announcements over a page. On 2026-10-30 one ("Premium seats just got better")
+   * covered a new chat: Compact & Resume found no message box and gave up, and a worker could not
+   * choose its model. Closed here: a modal dialog this extension did not open, that is not the
+   * access-limit notice `errors()` reads, and that has nothing to type into, so a Settings dialog,
+   * a form or the model picker is never touched. Closed only by Escape, the way a person dismisses
+   * it: no button in it is pressed, so nothing is chosen. Returns the headings it closed.
+   */
+  async function dismissAnnouncements(stillCurrent = () => true, waitMs = 1500) {
+    const notices = new Set(errors().map(error => error.node));
+    const open = () => safe(() => [...document.querySelectorAll('[role="dialog"]')].filter(node =>
+      !node.closest(OWN_SURFACES) && !node.closest('[hidden],[inert],[aria-hidden="true"]') && node.getClientRects().length > 0 &&
+      node.getAttribute('data-state') !== 'closed' && !notices.has(node) &&
+      !node.querySelector('[data-testid="composer-intelligence-picker-content"]') &&
+      !node.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea, select, ' +
+        '[contenteditable="true"], [contenteditable=""], [role="textbox"], [role="combobox"], [role="searchbox"]')), []);
+    const closed = [];
+    for (const dialog of open()) {
+      if (!stillCurrent()) break;
+      const heading = ((dialog.querySelector('h1,h2,h3,[role="heading"]')?.textContent || dialog.getAttribute('aria-label') || '')
+        .replace(/\s+/g, ' ').trim()).slice(0, 80);
+      dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+      const until = Date.now() + waitMs;
+      while (dialog.isConnected && dialog.getClientRects().length > 0 && Date.now() < until) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      if (!dialog.isConnected || dialog.getClientRects().length === 0) closed.push(heading);
+    }
+    return closed;
   }
 
   /** ChatGPT's open "Create project" dialog: its name field and its one submit button. */
@@ -3904,6 +3938,7 @@ var CLF_DOM = (() => {
     thoughtActivityRows,
     toolLabel,
     errors,
+    dismissAnnouncements,
     accessNoticeSince,
     composer,
     composerSubmitReady,
