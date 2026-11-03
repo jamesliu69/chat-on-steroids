@@ -64,3 +64,5 @@ proof-*.txt
 /extension/build-stamp.txt
 Chat-On-Steroids-Migration-20260927.md
 /release-portable
+/.github
+/.githooks
