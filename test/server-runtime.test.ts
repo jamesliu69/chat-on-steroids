@@ -21,7 +21,7 @@ describe('headless server runtime', () => {
     expect(config.roots).toEqual([{ name: 'repos', path: '/srv/repos' }]);
     expect(config.capabilities.command).toBe(true);
     expect(DESKTOP_CAPABILITIES.every((capability) => config.capabilities[capability] === false)).toBe(true);
-    expect(config.sessions.record).toBe(false);
+    expect(config.sessions).toMatchObject({ record: false, retainDays: 0 });
     expect(config.compaction.auto).toBe(false);
     expect(config.multiAgent).toMatchObject({ enabled: false, allowUnattributedCalls: true, recoverAgentTabs: false });
     expect(config.goal.enabled).toBe(false);
@@ -48,7 +48,7 @@ describe('headless server runtime', () => {
     expect(normalized.roots).toEqual([{ name: 'repos', path: '/srv/repos' }]);
     expect(normalized.capabilities.command).toBe(true);
     expect(DESKTOP_CAPABILITIES.every((capability) => normalized.capabilities[capability] === false)).toBe(true);
-    expect(normalized.sessions.record).toBe(false);
+    expect(normalized.sessions).toMatchObject({ record: false, retainDays: 0 });
     expect(normalized.compaction.auto).toBe(false);
     expect(normalized.multiAgent).toMatchObject({ enabled: false, allowUnattributedCalls: true, recoverAgentTabs: false });
     expect(normalized.goal.enabled).toBe(false);
@@ -121,16 +121,16 @@ describe('headless server runtime', () => {
       setRuntimeConfigOverride(null);
       const loaded = await loadConfig({ allowDisabledRecording: true });
       const normalized = normalizeServerConfig(loaded);
-      expect(normalized.sessions.record).toBe(false);
+      expect(normalized.sessions).toMatchObject({ record: false, retainDays: 0 });
 
       const saved = await saveConfig(normalized, { allowDisabledRecording: true });
-      expect(saved.sessions.record).toBe(false);
-      expect(JSON.parse(await readFile(path.join(directory, 'config.json'), 'utf8')).sessions.record).toBe(false);
+      expect(saved.sessions).toMatchObject({ record: false, retainDays: 0 });
+      expect(JSON.parse(await readFile(path.join(directory, 'config.json'), 'utf8')).sessions).toMatchObject({ record: false, retainDays: 0 });
 
       const reloaded = await loadConfig({ allowDisabledRecording: true });
-      expect(reloaded.sessions.record).toBe(false);
-      setRuntimeConfigOverride(applyServerEnvironment(reloaded, { COS_TUNNEL_ID: 'environment-tunnel' }));
-      expect(getConfig().sessions.record).toBe(false);
+      expect(reloaded.sessions).toMatchObject({ record: false, retainDays: 0 });
+      setRuntimeConfigOverride(applyServerEnvironment(reloaded, { COS_TUNNEL_ID: 'environment-tunnel' }), { allowDisabledRecording: true });
+      expect(getConfig().sessions).toMatchObject({ record: false, retainDays: 0 });
     } finally {
       setRuntimeConfigOverride(null);
       initConfigPath(directory);

@@ -66,7 +66,7 @@ const {
   spawn,
   swarmStateForCaller
 } = await import('../src/main/agents.js');
-const { registerIpc, cleanSessionName } = await import('../src/main/ipc.js');
+const { registerIpc, cleanSessionName, personsMessage } = await import('../src/main/ipc.js');
 const { initSkillsPath, skillsDirectory } = await import('../src/main/skills.js');
 const { openInPreferredBrowser } = await import('../src/main/browser.js');
 const bridgeModule = await import('../src/main/bridge.js');
@@ -471,14 +471,14 @@ it('rejects stale profile tunnel edits after A to B to A while accepting unrelat
   expect(getConfig().setupProfiles).toHaveLength(1);
 });
 
-it.each([true, false])('respects recording=%s while projecting a delivered input receipt', async recording => {
+it('always anchors delivered input history when a legacy setting requests recording off', async () => {
   const input = await import('../src/main/session/input.js');
   const store = await import('../src/main/session/store.js');
   const previous = await readDurable('session-input');
   const session = await createSession({ title: 'Input commitment fixture', conversationId: 'input-commitment-fixture' });
   const id = '30000000-0000-4000-8000-000000000001';
   try {
-    await saveConfig({ ...getConfig(), sessions: { ...getConfig().sessions, record: recording } });
+    await saveConfig({ ...getConfig(), sessions: { ...getConfig().sessions, record: false } });
     await writeDurableNow('session-input', [{ id, sessionId: session.id, text: 'Delivered fixture', mode: 'auto', model: null,
       reasoningEffort: null, dueAt: 100, createdAt: 100, state: 'sent', owner: null, conversationId: 'input-commitment-fixture',
       messageId: `input:${id}`, offeredAt: 200, deliveredAt: 300, historyRecorded: false,
@@ -487,19 +487,13 @@ it.each([true, false])('respects recording=%s while projecting a delivered input
     const result = await handlers.get('sessions:outbox')!(null, undefined) as any;
     expect(result.ok).toBe(true);
     const row = result.data[0];
-    expect(getConfig().sessions).toMatchObject({ record: recording, retainDays: 30 });
+    expect(getConfig().sessions).toMatchObject({ record: true, retainDays: 0 });
     expect(row.historyRecorded).not.toBe(true);
     const canonical = (await store.readEvents(session.id)).filter(event => event.kind === 'user_message');
-    if (recording) {
-      expect(row.historyAnchored).toBe(true);
-      expect((await readDurable<any[]>('session-input'))![0].historyAnchored).toBe(true);
-      expect(canonical).toHaveLength(1);
-      expect(canonical[0]).toMatchObject({ inputId: id, time: 200 });
-    } else {
-      expect(row.historyAnchored).toBeUndefined();
-      expect((await readDurable<any[]>('session-input'))![0].historyAnchored).toBeUndefined();
-      expect(canonical).toHaveLength(0);
-    }
+    expect(row.historyAnchored).toBe(true);
+    expect((await readDurable<any[]>('session-input'))![0].historyAnchored).toBe(true);
+    expect(canonical).toHaveLength(1);
+    expect(canonical[0]).toMatchObject({ inputId: id, time: 200 });
   } finally {
     await writeDurableNow('session-input', previous ?? []);
     input.resetInputForTests();
@@ -1601,7 +1595,8 @@ describe('in-app feedback', () => {
 
   it.each([
     { kind: 'bug', what: '   ' },
-    { kind: 'idea', problem: 'p', proposal: '' },
+    // New features come as pull requests: the app opens no idea form (2026-11-01).
+    { kind: 'idea', problem: 'p', proposal: 'q' },
     { kind: 'bug', what: 'x', template: 'blank.yml' },
     { kind: 'bug', what: 'x', frequency: 'Always' },
     { kind: 'bug', what: 'x'.repeat(4001) },
@@ -3306,4 +3301,15 @@ describe('phone notifications over IPC', () => {
     expect(await handlers.get('phonePush:token')!(null, { token: '' })).toMatchObject({ ok: true, data: { hasPhonePushToken: false } });
     expect(await getSecret('ntfyToken')).toBeNull();
   });
+});
+
+// #1919: only a message the person wrote carries a moved chat's folder line.
+it('tells a person\'s message from the app\'s own', () => {
+  const base = { id: 'i1', sessionId: 's1', text: 'Next step', mode: 'auto', state: 'queued' } as never as Parameters<typeof personsMessage>[0];
+  expect(personsMessage(base)).toBe(true);
+  expect(personsMessage({ ...base, scheduled: { scheduleId: 'x', dueAt: 1, late: false } } as never)).toBe(true);
+  for (const own of [{ opening: true }, { recovery: { questionId: 'q' } }, { continuedFrom: 'recovery' }, { purpose: 'decision' },
+    { purpose: 'rotation' }, { finishOwner: 'f' }, { mode: 'finish', authoredSource: 'none' }, { authoredSource: 'none' }]) expect(personsMessage({ ...base, ...own } as never)).toBe(false);
+  // A message the person wrote and queued for the finish is still theirs (CodeRabbit on #1981).
+  expect(personsMessage({ ...base, mode: 'finish', authoredSource: 'text' } as never)).toBe(true);
 });

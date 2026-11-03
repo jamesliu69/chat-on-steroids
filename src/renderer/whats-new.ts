@@ -14,6 +14,24 @@ interface Highlight { icon: string; title: () => string; text: () => string }
 interface Release { lead: () => string; highlights: Highlight[] }
 
 const RELEASES: Readonly<Record<string, Release>> = {
+  '2.1.50': {
+    lead: () => t("Move chats between projects, chats that keep going, and an extension that updates during long runs."),
+    highlights: [
+      { icon: 'i-folder', title: () => t("Move chats between projects"), text: () => t("Drag a chat onto a project, or use Move to project in its menu. Undo puts it back.") },
+      { icon: 'i-retry', title: () => t("Chats keep going"), text: () => t("When a chat's next step is not picked up, the app keeps trying, tells you, and offers Continue now.") },
+      { icon: 'i-plug', title: () => t("The extension updates itself"), text: () => t("It no longer waits for every long-running chat to finish first.") },
+      { icon: 'i-bolt', title: () => t("Big chats stay fast"), text: () => t("Very long chats no longer slow the app down.") }
+    ]
+  },
+  '2.1.49': {
+    lead: () => t("Long chats that get through ChatGPT's limits, pop-ups out of the way, and message times."),
+    highlights: [
+      { icon: 'i-chat', title: () => t("Long chats keep going"), text: () => t("When ChatGPT limits a long chat's history, the app waits instead of reloading it.") },
+      { icon: 'i-check-circle', title: () => t("Pop-ups out of the way"), text: () => t("ChatGPT's announcements no longer block new chats or your messages.") },
+      { icon: 'i-lock', title: () => t("Your mouse stays yours"), text: () => t("Only chats this app can name use your screen, mouse and keyboard.") },
+      { icon: 'i-clock', title: () => t("Message times"), text: () => t("Turn on Show message times in Settings → General to see when each message was sent.") }
+    ]
+  },
   '2.1.48': {
     lead: () => t("A reviewer for Goal steps, a theme that follows your system, and a question before the mouse and keyboard."),
     highlights: [

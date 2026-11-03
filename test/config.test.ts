@@ -234,15 +234,26 @@ describe('settings migration', () => {
     await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, rotateTurnMinutes: 0 } });
     expect((await loadConfig()).ui.rotateTurnMinutes).toBe(0);
   });
-  it('keeps the stop fallback for fresh turns off unless chosen, also for legacy and malformed settings', async () => {
-    expect(defaultConfig().ui.rotateStopFallback).toBe(false);
-    const legacy = defaultConfig(); delete legacy.ui.rotateStopFallback;
+  // User decision 2026-10-31: fresh turns failed in long chats where ChatGPT shows only Stop, so the
+  // stop-and-continue fallback is on by default. Configs from before it are turned on once (a saved
+  // false there was the old default, not a choice); after that a person's off stays off.
+  it('turns the stop fallback for fresh turns on for new and earlier configs once, then keeps a later choice', async () => {
+    expect(defaultConfig().ui).toMatchObject({ rotateStopFallback: true, rotateStopFallbackAdopted: true });
+    const legacy = defaultConfig(); delete legacy.ui.rotateStopFallback; delete legacy.ui.rotateStopFallbackAdopted;
     await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(legacy), 'utf8');
-    expect((await loadConfig()).ui.rotateStopFallback).toBe(false);
-    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify({ ...legacy, ui: { ...legacy.ui, rotateStopFallback: 'yes', startAtLogin: true } }), 'utf8');
-    expect((await loadConfig()).ui).toMatchObject({ rotateStopFallback: false, startAtLogin: true });
-    await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, rotateStopFallback: true } });
+    expect((await loadConfig()).ui).toMatchObject({ rotateStopFallback: true, rotateStopFallbackAdopted: true });
+    // 2.1.48 wrote the old default with every save.
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify({ ...legacy, ui: { ...legacy.ui, rotateStopFallback: false } }), 'utf8');
     expect((await loadConfig()).ui.rotateStopFallback).toBe(true);
+    // A malformed value reads as the default.
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify({ ...legacy, ui: { ...legacy.ui, rotateStopFallback: 'yes', rotateStopFallbackAdopted: true, startAtLogin: true } }), 'utf8');
+    expect((await loadConfig()).ui).toMatchObject({ rotateStopFallback: true, startAtLogin: true });
+    // Switched off after the change: it stays off.
+    await saveConfig({ ...defaultConfig(), ui: { ...defaultConfig().ui, rotateStopFallback: false } });
+    expect((await loadConfig()).ui.rotateStopFallback).toBe(false);
+    // A damaged marker reads as adopted: the saved off is kept (CodeRabbit on #1954).
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify({ ...defaultConfig(), ui: { ...defaultConfig().ui, rotateStopFallback: false, rotateStopFallbackAdopted: 'yes' } }), 'utf8');
+    expect((await loadConfig()).ui.rotateStopFallback).toBe(false);
   });
   it('reads other apps’ usage for fresh and legacy settings and keeps it off once switched off', async () => {
     expect(defaultConfig().ui.localAppUsage).toBe(true);
@@ -312,8 +323,8 @@ describe('settings migration', () => {
     await saveConfig({ ...defaultConfig(), controlApi: { enabled: false, allowActions: true } });
     expect((await loadConfig()).controlApi).toEqual({ enabled: false, allowActions: false });
   });
-  it('keeps fork plugin auto-refresh off on fresh and legacy installs and preserves explicit choices', async () => {
-    expect(defaultConfig().ui.autoRefreshPlugins).toBe(false);
+  it('defaults fresh plugin auto-refresh on, keeps legacy installs off and preserves explicit choices', async () => {
+    expect(defaultConfig().ui.autoRefreshPlugins).toBe(true);
     const legacy = defaultConfig(); delete legacy.ui.autoRefreshPlugins;
     await saveConfig(legacy);
     expect((await loadConfig()).ui.autoRefreshPlugins).toBe(false);
@@ -337,7 +348,7 @@ describe('settings migration', () => {
       expect((await loadConfig()).goal).toMatchObject({ backend, loopBackend: 'api' });
     }
   });
-  it('preserves explicit recording-off and retention choices while disabling dependent Goal', async () => {
+  it('always records and retains history in the desktop app', async () => {
     const legacy = {
       ...defaultConfig(),
       sessions: { ...defaultConfig().sessions, record: false, retainDays: 30 },
@@ -345,12 +356,29 @@ describe('settings migration', () => {
     };
 
     const saved = await saveConfig(legacy);
-    expect(saved.sessions).toMatchObject({ record: false, retainDays: 30 });
-    expect(saved.goal.enabled).toBe(false);
+    expect(saved.sessions).toMatchObject({ record: true, retainDays: 0 });
+    expect(saved.goal.enabled).toBe(true);
 
     await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(legacy), 'utf8');
     const loaded = await loadConfig();
-    expect(loaded.sessions).toMatchObject({ record: false, retainDays: 30 });
+    expect(loaded.sessions).toMatchObject({ record: true, retainDays: 0 });
+    expect(loaded.goal.enabled).toBe(true);
+  });
+
+  it('allows the dedicated headless server to disable recording explicitly', async () => {
+    const headless = {
+      ...defaultConfig(),
+      sessions: { ...defaultConfig().sessions, record: false, retainDays: 30 },
+      goal: { ...defaultConfig().goal, enabled: true }
+    };
+
+    const saved = await saveConfig(headless, { allowDisabledRecording: true });
+    expect(saved.sessions).toMatchObject({ record: false, retainDays: 0 });
+    expect(saved.goal.enabled).toBe(false);
+
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify(headless), 'utf8');
+    const loaded = await loadConfig({ allowDisabledRecording: true });
+    expect(loaded.sessions).toMatchObject({ record: false, retainDays: 0 });
     expect(loaded.goal.enabled).toBe(false);
   });
 
@@ -690,8 +718,8 @@ describe('shipped defaults', () => {
     platform === 'win32' || !DESKTOP_CAPABILITIES.includes(capability) ||
     (platform !== 'darwin' && (capability === 'screen' || capability === 'control'));
 
-  it('records sessions from first launch', () => {
-    expect(defaultConfig().sessions).toMatchObject({ record: true, retainDays: 30 });
+  it('records sessions from first launch and keeps their history', () => {
+    expect(defaultConfig().sessions).toMatchObject({ record: true, retainDays: 0 });
   });
 
   it('keeps Chrome as the default browser on a first launch and moves no existing config', async () => {
@@ -824,12 +852,12 @@ describe('shipped defaults', () => {
     expect((await loadConfig()).multiAgent.autoWorktrees).toBe(false);
   });
 
-  it('preserves explicit recording-off and age-retention choices', async () => {
+  it('keeps desktop history regardless of legacy recording and retention choices', async () => {
     const config = defaultConfig();
     await saveConfig({ ...config, sessions: { ...config.sessions, record: false, retainDays: 3650 } });
-    expect((await loadConfig()).sessions).toMatchObject({ record: false, retainDays: 3650 });
+    expect((await loadConfig()).sessions).toMatchObject({ record: true, retainDays: 0 });
     const stored = JSON.parse(await fs.readFile(path.join(dir, 'config.json'), 'utf8'));
-    expect(stored.sessions).toMatchObject({ record: false, retainDays: 3650 });
+    expect(stored.sessions).toMatchObject({ record: true, retainDays: 0 });
   });
 
   it('applies the new default to a config written before the setting existed', async () => {

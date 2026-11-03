@@ -111,7 +111,7 @@ export function normalizeServerConfig(source: Config): Config {
   return {
     ...source,
     capabilities,
-    sessions: { ...source.sessions, record: false },
+    sessions: { ...source.sessions, record: false, retainDays: 0 },
     compaction: { ...source.compaction, auto: false },
     multiAgent: { ...source.multiAgent, enabled: false, allowUnattributedCalls: true, recoverAgentTabs: false },
     goal: { ...source.goal, enabled: false, impulseMinutes: 0 },

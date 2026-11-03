@@ -55,7 +55,7 @@ async function loadServerConfig(dataDir: string, persist: boolean): Promise<Conf
     await saveConfig(normalized, { allowDisabledRecording: true });
   }
   const effective = applyServerEnvironment(normalized);
-  if (persist) setRuntimeConfigOverride(effective);
+  if (persist) setRuntimeConfigOverride(effective, { allowDisabledRecording: true });
   return effective;
 }
 
