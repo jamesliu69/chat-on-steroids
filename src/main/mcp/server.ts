@@ -34,6 +34,8 @@ import {
   type SurfaceId
 } from './surfaces.js';
 import { noteRouteRequestArrived } from '../tunnel/route-settle.js';
+import { providerSessionKey } from './provider-session.js';
+import { observeProviderSessionRequest } from '../session/correlation.js';
 
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -222,11 +224,13 @@ export function tunnelProbeHeaders(): Record<string, string> {
  */
 interface SurfaceExposure {
   finishTool: boolean;
+  userRequests: boolean;
   caps: ToolContext['caps'] | null;
   sessionTools: boolean;
   planTools: boolean;
   agentTools: boolean;
   find: boolean | null;
+  linuxDesktop: boolean;
 }
 
 interface McpServerOptions {
@@ -249,7 +253,16 @@ const surfaceExposure = new Map<SurfaceId, SurfaceExposure>();
 function exposureFor(surface: SurfaceId): SurfaceExposure {
   let state = surfaceExposure.get(surface);
   if (!state) {
-    state = { finishTool: false, caps: null, sessionTools: false, planTools: false, agentTools: false, find: null };
+    state = {
+      finishTool: false,
+      userRequests: false,
+      caps: null,
+      sessionTools: false,
+      planTools: false,
+      agentTools: false,
+      find: null,
+      linuxDesktop: false
+    };
     surfaceExposure.set(surface, state);
   }
   return state;
@@ -276,6 +289,7 @@ export function forgetExposedSurface(): void {
 }
 
 export async function startMcpServer(getContext: () => ToolContext, options: McpServerOptions = {}): Promise<McpEndpoint> {
+  const providerProfileId = getContext().setupProfileId ?? null;
   // A per-session token in the path is what authorises callers. It is regenerated on
   // every app start, so a URL that leaks stops working when the app restarts, unless the
   // user opted into keeping it (`mcp.persistentUrls`, see persistent-paths.ts): then the
@@ -325,6 +339,9 @@ export async function startMcpServer(getContext: () => ToolContext, options: Mcp
     exposed.sessionTools = exposed.sessionTools || sessionTools;
     exposed.planTools = exposed.planTools || planTools;
     exposed.agentTools = exposed.agentTools || agentTools;
+    exposed.userRequests = exposed.userRequests ||
+      (sessionTools && (live.caps.command || (live.readOnly && config.capabilities.command)));
+    if (surface === 'desktop') exposed.linuxDesktop ||= config.ui.linuxDesktopEnabled === true;
     return {
       ...live,
       sessionTools,
@@ -334,7 +351,9 @@ export async function startMcpServer(getContext: () => ToolContext, options: Mcp
       exposedSessionTools: exposed.sessionTools,
       exposedPlanTools: exposed.planTools,
       exposedFinishTool: exposed.finishTool,
+      exposedUserRequests: exposed.userRequests,
       exposedAgentTools: exposed.agentTools,
+      exposedLinuxDesktop: exposed.linuxDesktop,
       exposedFind: exposed.find
     };
   };
@@ -456,7 +475,7 @@ export async function startMcpServer(getContext: () => ToolContext, options: Mcp
     // it; see inbound.ts for why it cannot be taken from the MCP call context.
     const requestId = requestIdFromHeader(req.headers['x-request-id']);
     if (requestId) noteRouteRequestArrived(requestId);
-    const dispatch = (body?: unknown): void => {
+    const dispatch = async (body?: unknown): Promise<void> => {
       if (stopping || res.destroyed) {
         if (!res.destroyed) {
           res.setHeader('connection', 'close');
@@ -475,6 +494,19 @@ export async function startMcpServer(getContext: () => ToolContext, options: Mcp
       };
       res.once('finish', release);
       res.once('close', release);
+      if ((body as { method?: unknown } | undefined)?.method === 'tools/call' && !selfTest && !tunnelProbe) {
+        const providerKey = providerSessionKey(route.id, providerProfileId, req.headers, body);
+        if (requestId && providerKey) {
+          try {
+            // A conflicting provider key supplies no identity. The registry logs the
+            // conflict once; ordinary dispatch still uses any native request proof.
+            await observeProviderSessionRequest(requestId, providerKey);
+          } catch {
+            logWarn(`MCP provider session binding ignored surface=${route.id} request=${requestId}; durable correlation unavailable; dispatch uses existing request identity`);
+          }
+        }
+      }
+      if (res.destroyed) return;
       withInboundRequestId(requestId, () => void route.handler(req, res, body), timing, publication, !selfTest && !tunnelProbe);
     };
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -490,11 +522,11 @@ export async function startMcpServer(getContext: () => ToolContext, options: Mcp
         }
         const named = (parsed.body as { method?: unknown } | undefined)?.method;
         if (typeof named === 'string' && /^[A-Za-z0-9_/.-]{1,80}$/.test(named)) rpcMethod = named;
-        dispatch(parsed.body);
+        void dispatch(parsed.body);
       });
       return;
     }
-    dispatch();
+    void dispatch();
   });
   server.on('connection', (socket) => {
     sockets.set(socket, new Set());

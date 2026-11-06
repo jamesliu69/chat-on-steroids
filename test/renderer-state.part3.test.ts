@@ -1042,7 +1042,129 @@ it('offers to ask before using the mouse and keyboard, off by default, under the
   linux.platform = { ...(linux.platform ?? {}), family: 'linux', name: 'Linux', desktopAutomation: false };
   mounted.push(linux);
   await settle();
-  expect(row.hidden).toBe(true);
+  expect(row.hidden).toBe(false); // Stage 3 permits optional, chat-scoped native approval.
+  expect(w.document.getElementById('desktopUnattributed')?.closest<HTMLElement>('.desktop-unattributed-row')?.hidden).toBe(false);
+  const native = w.document.getElementById('linuxDesktopEnabled') as HTMLInputElement;
+  expect(native.closest<HTMLElement>('.linux-desktop-row')?.hidden).toBe(false);
+  expect(native.checked).toBe(false);
+  native.checked = true;
+  native.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await settle();
+  expect(mounted.calls.at(-1)?.ui.linuxDesktopEnabled).toBe(true);
+  // The harness's save mock returns its original platform unless the test pushes it
+  // again; a real Linux app's platform remains Linux across a settings save.
+  const savedLinux = structuredClone(linux);
+  savedLinux.config.ui.linuxDesktopEnabled = true;
+  mounted.push(savedLinux);
+  await settle();
+  const consent = w.document.getElementById('linuxScreenshotConsent') as HTMLButtonElement;
+  expect(consent.closest<HTMLElement>('.linux-consent-row')?.hidden).toBe(false);
+  expect(consent.disabled).toBe(false);
+});
+
+it('requests Linux screenshot consent only after the user clicks, and shows a reply without image data', async () => {
+  const request = vi.fn(async () => ({ ok: true as const, data: { pngBytes: 640 } }));
+  const mounted = await mountChat({}, [], { linuxScreenshotConsent: request });
+  const w = mounted.window;
+  const button = w.document.getElementById('linuxScreenshotConsent') as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  const linux = structuredClone(mounted.state);
+  linux.platform = { family: 'linux', name: 'Linux', desktopAutomation: false };
+  linux.config.ui.linuxDesktopEnabled = true;
+  mounted.push(linux);
+  await settle();
+  expect(button.disabled).toBe(false);
+  expect(request).not.toHaveBeenCalled();
+  button.click();
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(w.document.getElementById('linuxScreenshotConsentResult')?.textContent).toContain('No image was saved'));
+  expect(button.disabled).toBe(false);
+});
+
+it('localizes unknown GNOME backend failures without displaying private text and restores keyboard focus', async () => {
+  const request = vi.fn(async () => ({ ok: false as const, error: 'PRIVATE_APP_TITLE: payroll' }));
+  const mounted = await mountChat({}, [], { linuxScreenshotConsent: request });
+  const doc = mounted.window.document;
+  const button = doc.getElementById('linuxScreenshotConsent') as HTMLButtonElement;
+  const linux = structuredClone(mounted.state);
+  linux.platform = { family: 'linux', name: 'Linux', desktopAutomation: false };
+  linux.config.ui.linuxDesktopEnabled = true;
+  mounted.push(linux);
+  await settle();
+  button.focus();
+  expect(doc.activeElement).toBe(button);
+  button.click();
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+  const status = doc.getElementById('linuxScreenshotConsentResult')!;
+  await waitFor(() => expect(status.textContent).toContain('GNOME screenshot permission could not be confirmed.'));
+  expect(status.textContent).not.toContain('PRIVATE_APP_TITLE');
+  expect(button.disabled).toBe(false);
+  expect(doc.activeElement).toBe(button);
+});
+
+it('shows actionable localized hints only for exact known GNOME consent errors', async () => {
+  const request = vi.fn();
+  const mounted = await mountChat({}, [], { linuxScreenshotConsent: request });
+  const doc = mounted.window.document;
+  const button = doc.getElementById('linuxScreenshotConsent') as HTMLButtonElement;
+  const status = doc.getElementById('linuxScreenshotConsentResult')!;
+  const linux = structuredClone(mounted.state);
+  linux.platform = { family: 'linux', name: 'Linux', desktopAutomation: false };
+  linux.config.ui.linuxDesktopEnabled = true;
+  mounted.push(linux);
+  await settle();
+  expect(button.disabled).toBe(false);
+
+  const cases = [
+    ['Activate the Chat On Steroids window before requesting screenshot permission.', 'Activate the Chat On Steroids window, then try again.'],
+    ['The Chat On Steroids window lost focus; no screenshot was requested.', 'Activate the Chat On Steroids window, then try again.'],
+    ['Enable native Linux Desktop and Screen access first.', 'Enable native Linux Desktop access and Screen permission, then try again.'],
+    ['Screen access was disabled before the screenshot request.', 'Enable native Linux Desktop access and Screen permission, then try again.'],
+    ['Native Linux Desktop or Screen access was disabled during the screenshot request.', 'Enable native Linux Desktop access and Screen permission, then try again.'],
+    ['Screenshot permission can be requested only from the Chat On Steroids main window.', 'Screenshot permission can be requested only from the Chat On Steroids main window.'],
+    ['A screenshot permission request is already running.', 'A screenshot permission request is already running.']
+  ] as const;
+  for (const [error, expected] of cases) {
+    request.mockResolvedValueOnce({ ok: false, error });
+    button.click();
+    await waitFor(() => expect(status.textContent).toContain(expected));
+    expect(button.disabled).toBe(false);
+  }
+
+  // A near-miss and an arbitrary backend detail must never reach the UI.
+  for (const error of [
+    'Activate the Chat On Steroids window before requesting screenshot permission. PRIVATE_TITLE',
+    'Native Linux Desktop or Screen access was disabled during the request.',
+    'SECRET_SCREEN_CONTENT'
+  ]) {
+    request.mockResolvedValueOnce({ ok: false, error });
+    button.click();
+    await waitFor(() => expect(status.textContent).toContain('GNOME screenshot permission could not be confirmed.'));
+    expect(status.textContent).not.toContain(error);
+    expect(button.disabled).toBe(false);
+  }
+  expect(request).toHaveBeenCalledTimes(cases.length + 3);
+});
+
+it('does not steal focus if the user switches controls while the GNOME request is pending', async () => {
+  let finish!: (value: { ok: true; data: { pngBytes: number } }) => void;
+  const request = vi.fn(() => new Promise<{ ok: true; data: { pngBytes: number } }>(resolve => { finish = resolve; }));
+  const mounted = await mountChat({}, [], { linuxScreenshotConsent: request });
+  const doc = mounted.window.document;
+  const button = doc.getElementById('linuxScreenshotConsent') as HTMLButtonElement;
+  const linux = structuredClone(mounted.state);
+  linux.platform = { family: 'linux', name: 'Linux', desktopAutomation: false };
+  linux.config.ui.linuxDesktopEnabled = true;
+  mounted.push(linux);
+  await settle();
+  button.focus();
+  button.click();
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+  const other = doc.getElementById('chatInput') as HTMLTextAreaElement;
+  other.focus();
+  finish({ ok: true, data: { pngBytes: 10 } });
+  await waitFor(() => expect(doc.getElementById('linuxScreenshotConsentResult')?.textContent).toContain('No image was saved'));
+  expect(doc.activeElement).toBe(other);
 });
 
 // CodeRabbit on #1864 (Haz's keyboard condition): the question waits in the app's window too, reachable by keyboard.
