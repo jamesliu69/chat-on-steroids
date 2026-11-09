@@ -89,7 +89,7 @@ function enqueue<T>(operation: () => Promise<T>): Promise<T> {
  * drafts, one per active provider), so they live under the same OS-backed encrypted blob
  * as the rest and never leave the main process.
  */
-export type SecretKey = 'openaiApiKey' | 'bridgeToken' | 'openRouterApiKey' | 'customProviderApiKey' | 'ntfyToken' | `plugin:${string}` | `setup:${string}` | `mcp:path:${string}`;
+export type SecretKey = 'openaiApiKey' | 'bridgeToken' | 'openRouterApiKey' | 'customProviderApiKey' | 'ntfyToken' | 'telegramBotToken' | `plugin:${string}` | `setup:${string}` | `mcp:path:${string}`;
 
 /**
  * Read-only secret source used by non-Electron runtimes such as the headless server.
