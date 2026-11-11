@@ -244,7 +244,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Automatic worker worktrees | Off. | `multiAgent.autoWorktrees` requires explicit opt-in on fresh and migrated configs. Existing isolated worker leases retain their own workspace when the setting is disabled. |
 | Wait for sub-agents | Off. | When on, a Goal/Loop chat's next automatic step waits for the workers that exact chat started. A chat with no run, or a run with no workers, waits either way. See §16. |
 | Unattributed allowance | True on first launch. | Relaxes ambiguity fences only; known blocked/retired/superseded ownership stays enforced. |
-| Auto-select Skills | Off. | When on, ordinary human-authored input with no explicit Skill directive may select at most one managed/imported Skill whose full id/name/display name is literally present after case and hyphen/whitespace normalization. Ambiguous or unnamed input selects none; explicit `/id` or `/prompt id` always wins. |
+| Auto-select Skills | Off. | When on, ordinary human-authored input with no explicit Skill directive may select at most one managed/imported Skill whose full id/name/display name is literally present after case and hyphen/whitespace normalization. Recognized Japanese particles may touch the full name; other word continuations and outer hyphen-joined compounds do not count as that name. Direct English/Japanese usage exclusions next to a name suppress that Skill, including coordinated lists and conflicting positive mentions. This is literal routing, not topic or general natural-language intent classification. If multiple matches remain or no name is present, nothing is selected; explicit `/id` or `/prompt id` always wins. |
 | Strict chat allowlist | Off. | When on, every model-facing tool call needs exact attribution. Existing/direct browser chats require explicit Trust from the chat list. A fresh chat opened by the CoS composer gains an explicit Trust entry only after its exact opening row authoritatively binds to the new conversation. Broker-owned workers follow their exact owning prime and a committed Compact & Resume successor follows its durable source lineage. Block still wins, revocation is dynamic, and unattributed calls are refused even when the ordinary unattributed allowance is on. |
 | Archive worker chats | Off (`multiAgent.archiveWorkerChats`). | #1460, #1701. A worker chat queues 2 min after its worker reports done (`onWorkerFinished`, from `publishFinish`; `dueAt`), and every chat the broker retires for good queues at once (`onWorkerChatsRetired`: an ended run, Clear workers retiring parked histories, or a parked history expiring after 7 days), in `worker-archive.ts` (`state/worker-archive.json`, which also remembers the chats it archived). A wake for such a chat is held in the bridge's `onReviveRequest` (`readyForWake`): a not-yet-started archive is dropped; an archived (or being-archived) chat gets an unarchive job first, handed out before archives as `{ conversationId: null, unarchive }` (an old extension reads nothing), retried from 15 s, and the wake is queued on `onWorkerChatReady` (unarchived, given up, or 90 s at most). Unarchiving ignores the setting. The extension's alarm pass takes one via `POST /worker-archive/next` (leased 2 min), asks any registered ChatGPT page (`clf-archive-chat`) to `PATCH /backend-api/conversation/<id>` `{ is_archived: true }` with the signed-in account, and reports `archived`/`unarchived`/`failed`/`deferred` to `POST /worker-archive/result`. `deferred` (no page) costs no attempt; failures back off from 5 min, 6 attempts or a week at most. ChatGPT's own reversible archive: nothing is deleted. Temporary Chats were rejected: tools work there, but a reload loses the conversation (2026-10-14). |
 | Recover ordinary/agent tabs | Off. | Goal/Loop can independently justify recovery; history alone cannot. |
@@ -264,7 +264,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Stop fallback for fresh turns | On since 2.1.49 (`ui.rotateStopFallback`; disabled while fresh turns are off). Earlier configs are turned on once (`adoptStopFallback`, marked `ui.rotateStopFallbackAdopted`), because every earlier save wrote the old default; a later off stays off. | Where ChatGPT shows only Stop at a tool result it offers no Send for the continue (`ROTATION_DECLINED`, `no-send`). After `STOP_FALLBACK_AFTER_DECLINES` (2) such declines in one turn and the usual minute, the next held result takes the fallback instead of a third continue (`stopFallbackDue`/`noteStopFallback`, once per turn): `rotation-fence.ts` arms a fence (the kernel refuses that chat's calls with `ROTATION_FENCE_REFUSAL`, nothing runs, so a Stop landing mid-call cannot repeat a call, #1662), and 500 ms later `stopSessionTurn(…, { rotation: true })` queues the native Stop without turning Goal/Loop off or cancelling Compact & Resume. The stopped end of exactly that turn lifts the fence and files `fileRotationContinueAfterStop`: a `purpose: 'rotation'`, `afterStop: true` ordinary message (no `directTurn`), which `typedAfterStop` lets through once the turn shows stopped and nothing runs. The fence lifts at the processed stopped end (which files the continue), at once when the page reports it could not send that Stop (a terminal-failure receipt) or when the person's own Stop takes the turn over (no continue follows; the pending Stop is first saved without its `rotation` mark, `withdrawStopRotation`, so a restart restores neither it nor its fence), or after the Stop's 120 s budget plus 15 s (`FENCE_MS`) without a stopped end; fences are kept in the durable store `rotation-fences` (`[{ conversationId,
 turnId, until }]`) and `restoreCommands` brings back what is left of each (`restoreRotationFences`), so a restart
 after ChatGPT took the Stop but before its stopped end still files the continue; the fresh-turn Stop
-goes out only once its fence is on disk (`armRotationFence` resolves), and not at all when it cannot be saved; a fresh-turn Stop carries `rotation: true`, so after a restart a pending one re-arms its fence for what is left of that time. With fresh turns at 0 minutes no fallback Stop is taken, even after declines. Live 2026-10-20 (VM): Stop 1 s after a result, then "continue", repeated no step (2 runs). |
+goes out only once its fence is on disk (`armRotationFence` resolves), and not at all when it cannot be saved; a fresh-turn Stop carries `rotation: true`, so after a restart a pending one re-arms its fence for what is left of that time. With fresh turns at 0 minutes no fallback Stop is taken, even after declines. The after-Stop continue stays owed until it is sent (`owed-continue.ts`, #2131): the stopped end that files it also notes the obligation, and while the chat is quiet for 45 s (any page report or tool call of that chat restarts the wait) a continue the page refused before Send is filed again, at most 4 times in all and for at most 2 hours; it ends when the continue was sent, anything else was written in the chat (the person's message, here or in ChatGPT), the chat is gone, or the person's own Stop. A running turn only postpones it. Live 2026-10-20 (VM): Stop 1 s after a result, then "continue", repeated no step (2 runs). |
 | Follow-up behavior | Join the running turn (`ui.followUp: 'steer'`; a broken value loads as that). | Codex's "Follow-up behavior". Each running turn starts the composer's delivery choice from this default (`queue` selects After this turn); a choice made in the send menu lasts for that turn. Cmd/Ctrl+Shift+Enter sends the other way (`sendComposer('auto' \| 'after-turn')`); with no running turn it is an ordinary send. |
 | Enter key | Enter sends (`ui.enterSends`, missing means true). | Codex's "Enter key behavior". With `false`, Enter adds a line in the composer and Cmd/Ctrl+Enter sends; Shift+Enter always adds a line and Cmd/Ctrl+Shift+Enter keeps sending the other way (Follow-up behavior). |
 | Code checkpoints | Off (`projects.codeCheckpoints`; missing or malformed means Off). | Settings → Workspace, Folders: “Save a checkpoint before each turn's first edit”. `checkpointBeforePatch` reads `getConfig()` in the main process at capture time (never a renderer claim), so a flip applies to the next patch without a restart. Off stops new turn checkpoints only: existing ones stay listed in Review and Restore, including its own “Before restore” undo entry, keeps working. §10. |
@@ -687,9 +687,17 @@ rule. Therefore “migrate this Dagster pipeline to Airflow” intentionally doe
 `migrating-dagster-to-airflow`; a literal full id/name/display-name invocation does. This
 precision-first rule may abstain even when the task would benefit from a Skill. The explicit
 picker/directive remains available rather than injecting a specialized Skill from generic wording.
-This matches literal name presence, not intent: it does not interpret negation or quoted examples.
-`allow_implicit_invocation=false`, invalid policy/config, no literal identity and multiple literal
-matches all fail to no selection. A routed choice is frozen in the durable input row as exact
+Recognized Japanese particles may directly adjoin the complete name; other word continuations and
+hyphen-joined compounds outside that name do not match. Particle recognition is lexical, not Japanese
+word segmentation, so very short/common Japanese names can still be ambiguous. Direct English/Japanese usage exclusions suppress the named Skill,
+including coordinated name lists, even when another mention of that same Skill is positive.
+An invocation alias `use X` after a comma (optionally followed by `and`) starts a new clause;
+a literal `Using X` name or an `or` list continues the exclusion instead.
+Unrelated negation does not veto an invocation. Quoted examples remain literal text; this is not
+general intent classification or semantic topic routing. The managed routing owner logs a fixed
+selection/skip reason without authored text, Skill names or paths.
+`allow_implicit_invocation=false`, invalid policy/config, no eligible non-excluded literal identity
+and multiple remaining matches all fail to no selection. A routed choice is frozen in the durable input row as exact
 Skill id + published SKILL.md revision before delivery, including an explicit empty decision.
 Retries/restarts reuse that record instead of rerouting. Prompt preparation reads only the chosen
 managed body through the existing selected-Skill path and rejects it if its revision changed.
@@ -2267,15 +2275,59 @@ A chat's own message sent into that same chat at set times; one schedule per cha
 (1–24, real hours from when it was saved), daily, weekdays and weekly at a local `HH:MM`. A time
 the spring clock change skips runs at the first minute after it; a repeated autumn hour runs once.
 Checked every 30 s and on `powerMonitor` resume. A due run is one `enqueueInput` row with
-`scheduled { scheduleId, dueAt, late }`, mode `after-turn` while the chat has an active turn
-(never joining it), else `auto`, so read-only mode, the "slow down" hold and a missing browser hold
+`scheduled { scheduleId, dueAt, late }`. The outbox chooses `after-turn` only for a
+recorded active turn with a durable completion boundary; browser-only activity without such a
+boundary remains an `auto` browser send that waits for the live idle policy. Scheduled rows never
+join the active model turn through the tool or direct-composer path; browser claim and Send
+authorization recheck eligibility. Read-only mode, the "slow down" hold and a missing browser hold
 it like any automatic send. Exactly once: the row id is derived from the schedule id and `dueAt`, so
 a crash before the schedule is saved queues the same id and the queue keeps one row. Missed runs
 (app closed, asleep) send one run, `late` when more than 2 min after its time; a time whose previous
-run still waits in the queue is skipped; a refused queueing skips that time once (no 30 s retry
-loop); saving or resuming starts at the next time; an ended schedule sends nothing; a deleted chat's
+run still waits in the queue is skipped; a deterministic admission refusal skips that time once,
+while a transient outbox read/write failure durably retains `retryDueAt` and retries the exact
+same occurrence id after restart instead of silently losing it. A pending retry also blocks a
+new random-id Run now until reconciled, avoiding duplicates. Saving or resuming starts at the
+next time; an ended schedule sends nothing; a deleted chat's
 schedule is removed. IPC `schedules:get|save|pause|delete`; errors are sentences the renderer
 translates. Queue rows and pending messages say "Scheduled" (late: "Scheduled · late, was due …").
+The global Scheduled page projects these same per-chat records with `schedules:list`, resolving
+current chat titles and bounded message previews rather than full stored prompts, without
+creating a second task store. It opens the existing chat and
+calls the existing pause/resume/delete actions. Only a chat already bound to a ChatGPT
+conversation can create or manually run a schedule. `schedules:runNow` queues a manual run through
+the same input outbox (waiting for the active turn if necessary) without advancing the
+recurrence cursor; it durably records a recoverable manual-run intent (the exact input id, text and
+time) before enqueue. Run now first checks the same outbox and returns `false` (already waiting)
+instead of queueing another identical message while any row for that schedule remains pending;
+the due runner checks every pending outbox row for the schedule id, not only the latest
+`lastInputId`, so a newer manual run cannot hide an older queued run. An interrupted manual intent
+is reconciled against its exact outbox row or replayed with the same id only after no different
+scheduled message is still pending. An unconfirmed authorized/cancelled browser Send also blocks
+another manual id until a definitive delivery/no-send receipt is available. If enqueue rejects,
+it re-reads the outbox:
+keep the intent when the row exists or the read fails, but drop it after a successful read proves
+the row is absent, so a pre-commit refusal does not retry forever. The intent is cleared only after
+that reconciliation is saved. If saving a new intent fails, the prior schedule snapshot supersedes
+that failed durable generation before returning; a refused click cannot become a hidden enqueue on
+retry or shutdown. Failure logs use safe error codes only, never raw error messages, local paths or
+chat ids. All schedule outcome logs omit local session ids. Schedule IPC returns only allowlisted,
+translated domain errors; unexpected persistence/queue failures become one generic translated
+message, never a native filesystem error or local path. A successful manual Run now clears an old
+`missedDueAt` marker just like a newly queued recurring run, but does not advance the recurrence
+cursor. A failed/absent manual enqueue leaves the missed marker intact. A failed session read is
+logged and retains the schedule. A deleted chat cannot be targeted, and a
+confirmed orphan record is removed and logged. A chat whose session directory is still present
+but whose metadata cannot be read is retained; only a positively absent session directory is
+treated as a deleted chat. A chat that cannot be read during the global list refresh is kept and
+omitted from that refresh while the other schedules continue loading. A missing schedules file
+is the only empty first-run state; invalid JSON, schema errors and a file from a newer version
+fail closed and remain on disk rather than being overwritten by the next edit. The runner
+notifies the renderer after each persisted schedule change, including recovered manual intents
+and missed/ended/blocked outcomes that do
+not enqueue a message. The global list projects `missedDueAt` until a later run is sent, so a run
+missed while the app was closed or asleep remains visible outside the chat. Its recurrence times
+use the selected locale's 12/24-hour clock, and keyboard focus is restored when a background
+refresh or language change rebuilds the rows.
 The delivered `user_message` records `scheduled { dueAt, late }` (copied from the input in
 `recordDeliveredInput`, kept when a later page echo lacks it), so the sent message keeps the same
 line in the chat after the outbox row is pruned.
@@ -2653,7 +2705,15 @@ estimated tokens and, for the seven counted days only, verified GPT-5.6/GPT-6 se
 before them, which is not zero), then the latest limit reading. The file opens with a note that
 these are local estimates, uses English column names, local times and a UTF-8 byte-order mark,
 guards text cells against spreadsheet formulas, and holds no path, chat, account or
-conversation id. Tests: `usage-export`, `renderer-usage`.
+conversation id. Before replacing an existing CSV, Linux asks through a main-process message
+box with Cancel as the default; Electron 44's GTK chooser can ignore its native overwrite flag.
+Windows/macOS keep the native save panel's confirmation. Cancelling leaves the destination unchanged.
+New Linux destinations are published without replacement through a hard link; a name taken while
+preparing the CSV asks the same question before replacement. Volumes without hard links remain
+usable: an explicit "Save here and replace any existing file?" question authorizes atomic rename.
+Publication never copies bytes into the visible destination. The staging file is cleaned up on
+success, cancellation and failure.
+Tests: `usage-export`, `usage-export-files`, `renderer-usage`.
 
 ### Other apps on this computer (#482)
 
@@ -4511,6 +4571,16 @@ its pending attempt. Objective text survives Off/completion for later reuse. Rep
 → On → Off must operate on current durable authority, not an old callback's enabled snapshot.
 Master Off clears ordinary chat overrides while keeping internal helper-role records.
 
+**Durable control publication.** `setGoalSwitchNow` and `setGoalObjectiveNow` use
+`saveGoalControl`: serialize the save, stage its snapshot outside the accepted maps, and
+publish only after `writeDurableNow` succeeds. Synchronous clear/set/restore operations fence
+pending saves; unrelated ledger changes cause rebasing. Compact & Resume retires pending
+source-switch saves and retargets pending objective saves to the replacement conversation.
+Failed or superseded saves repair disk from the current accepted projection rather than
+rolling memory back over newer changes. `test/goal-control-race.test.ts` covers delayed and
+rejected renames, supersession, movement, rebasing and corrective-write failures. This is the
+per-ledger publication boundary; master/config/secret changes remain separate ledgers (§21).
+
 Deliberate On files/rearms an obligation **only when the chat is idle**: a proven eligible final
 or an exhausted model-specific silence/failure window with no current work. Generating chats,
 running MCP calls and an unexpired ten-/two-minute window do not file a ticket merely because
@@ -4855,6 +4925,11 @@ evicted. Historical browsing leaves committed inputs with history. Never infer m
 the minimum event timestamp: old observations and tool start times can occur on newer pages.
 Pushes and async loads are scoped to selection/draft generation; a late load must not overwrite
 focused edits or a newer A → B → A view.
+The Scheduled list coalesces overlapping refreshes, but a mutation waits for only one read requested
+after the mutation; a continuing `session:changed` stream must not keep its controls disabled.
+The Refresh button remains enabled and keyboard-focusable during reads and exposes the read state
+through `aria-busy`; only an active mutation disables it. A successful background read clears a
+load error, never an action error.
 `session:changed` carries a `SessionChange`: the recorder coalesces the exact local ids it
 wrote in one 400 ms burst (`sessionIds`; input-history offered → confirmed revisions publish
 their owner there too), and a mutation without enumerable owners, such as image-storage
@@ -5095,7 +5170,9 @@ the moment the page switches turns cannot file the newer answer's outline under 
 of that one `dil` reference (`shellItemText`), so its recorded text is the reply rather than the
 directive. That `fallbackMarkdown` can leave out what the drawing has (#1477): a table with only its
 header row, and a button as a bare `[label]` line. `shared/dil-tables.ts` (`completedDilText`) fills
-such a table from the recorded `renderedHtml` table with the same header and drops a line that is
+such a table from the next recorded `renderedHtml` table with the same header, consuming matches
+in document order even when the Markdown already has all rows or the drawing is empty. Repeated
+headers therefore keep each table's own rows. It drops a line that is
 exactly a drawn button's label; the timeline and Copy/Export both apply it. GPT-6 writes each interim sentence of a running turn as such an assistant message nested
 in the `chatgpt-reasoning-group`; `shellTurnSource` records it as commentary (never the turn's end,
 whatever `phase` it carries) unless a top-level item owns that id. In that Markdown the timeline shows an `entity` widget as its name in bold and drops
@@ -5186,8 +5263,17 @@ own title is never changed.
 Chat search (#1107) is IPC `sessions:search { query ≤200 }` → `SessionSearchReply { results ≤50,
 indexed, total }`. `session/search.ts` never reads a journal per query: each chat gets
 `<session>/search.txt` (first line the stamp `version:updatedAt:events`, then the user's authored
-words and ChatGPT's answers, overflow text included, capped at 1M characters), built in the
-background newest first, reused while the stamp matches, deleted with the chat. Helper chats are
+words and ChatGPT's answers, overflow text included), built in the background newest first,
+reused while the stamp matches, deleted with the chat. Version 2 indexes cover the full transcript;
+version 1's potentially truncated indexes are rebuilt from the recording. Index construction writes
+one message at a time through a fixed `search.txt.tmp`, truncating an interrupted build on restart
+before atomic publication; failed publication removes that temporary. Queries stream 64 KiB UTF-8
+windows with overlap for words and snippets.
+Only indexes of at most 1M characters are cached, within the existing 24M-character cache budget;
+this is a memory bound, not a searchable-history cutoff. An unreadable index is rebuilt from the
+recording when its directory allows replacement. A missing/stale index discovered during a query
+clears only its own current stamp so polling can recover; this skip and a streamed result superseded
+by a newer stamp each log their reason. Helper chats are
 left out, as in the sidebar. Every query word must match (title or text, any order, case- and
 accent-folded with `foldCase`, which keeps UTF-16 lengths so ranges index the original; `ß` stays). Title matches rank
 first, then text matches, each newest first. `titleMatches` and `snippet.matches` are UTF-16
@@ -5197,6 +5283,11 @@ cover only indexed chats and the renderer asks again. `limited: true` means more
 not a sidebar field: the magnifier at the end of the app name's row, ⌘K (macOS) / Ctrl+K (except
 inside the terminal) and View → Search Chats open it. Empty, it lists up to 30 recent chats (helpers,
 sub-agents and diagnostics rows left out); it keeps one size while typing and fades in and out.
+Only a successful index build is marked current. A failed build stays pending (`indexed < total`)
+and later searches (including dialog polls) retry it at most once every 30 seconds for the same
+chat stamp. A changed stamp is tried immediately. The in-memory cooldown is cleared after success,
+deletion or restart; a continuing failure logs once per chat stamp, not once per poll or retry.
+Title search remains usable during the cooldown.
 Opening a text match calls `sessions:locate-match { id, query }` → `SessionSearchLocation | null`
 (the first user/assistant message holding a query word, read from the recording only then); the
 timeline shows it from the loaded page or loads the page around it as history, centered and briefly
@@ -5209,7 +5300,25 @@ Captured ChatGPT HTML passes a strict allowlist; authored plain text stays text.
 citation ranges use Unicode code points and map to UTF-16 before slicing. Exact uploaded-file
 names render as plain chips; unresolved file citations do not gain invented local links.
 Plain text leaving the timeline (Markdown export, search index and snippets, turn notifications and `modelFacingText` for Goal/Loop and completed answers) passes `providerEntitiesAsMarkdown` first: the raw text's private-use entities (U+E200 name U+E202 field … U+E201) become `[label](address)` for `url` and are dropped otherwise, so a link card never reads as "urlLabelhttps://…".
+Answer actions, direct answer export and `/copy` share `shared/markdown-export.ts::completedTurnIds`:
+a later-sequence `turn_start` revokes completion until that same turn ends as `completed` again.
+Boundary sequence numbers, not display order, decide this even when chronology regroups the starts. Older
+completed turns and final messages recorded outside a turn remain available; whole-chat export is unchanged.
+Copy and Markdown/HTML export read overflow for both the answer text and its recorded drawing
+through `session/markdown-export.ts::fullText` before filling DIL table rows. Recovery is serialized
+across copy/export/preview calls so only one item owns large asset buffers at a time; rejection
+releases the next item. Only a recovered drawing whose UTF-16 length matches its recorded `chars`
+and whose UTF-8 re-encoding exactly matches the stored bytes is marked complete.
+An absent, unreadable, oversized, length-mismatched or invalid-UTF-8 drawing keeps its
+truncated flag, is not used as evidence of a whole table, and logs why without content or identity. Drawing
+reads use `readAsset`'s bounded byte path, up to four UTF-8 bytes per supported overflow character
+(32 MiB, including legacy assets above today's write cap). Saved fields and renderer bounds stay unchanged.
 A whole chat as one HTML page is built by `shared/html-export.ts` `transcriptHtml` and only through Share's preview (`sessions:sharePage`, §9): what a person wrote is escaped plain text; answers are Markdown drawn with raw HTML escaped (a block keeps its lines), a picture becomes a link to it and only http(s)/mailto links stay links. The page has inline styles only and a `default-src 'none'` policy, so it runs no script and loads nothing. Its title and texts always pass `redactSecretText`; with `hide`, also `redactPersonalText` (email addresses, the user name in home-folder paths). Every "[redacted]" then shows as one `.hidden` mark in the interface language, never inside a link or attribute; `hiddenCount` counts them. The Markdown export stays exact.
+Answer copy, Markdown transcript and shared HTML use `shared/markdown-export.ts::trimMarkdown`
+to remove surrounding blank lines without stripping first-line code indentation. User-message
+whitespace handling is unchanged.
+Multi-message answers insert an empty HTML comment before a later message's indented code,
+closing the previous list/paragraph; ordinary messages retain their blank-line separator.
 An assistant message may carry `references`: the sources behind its inline
 `:chatgpt-content-reference{index="N"}` citations. `extension/fiber.js` `citedSources` reads
 them from each citation pill's own props (the list its hover card pages through, plus the reply
@@ -6300,7 +6409,7 @@ remain semantically targetable; they never receive image coordinates or supply d
 Operational Desktop errors expose their original code, nullable completion evidence and a concrete
 recovery step. Recovery never dispatches another input or treats a target failure as global
 read-only mode. Preserve exact identity, generation, geometry, clipboard and browser policy checks.
-See `docs/worklog-2026-09-19-computer-use-audit.md` for the forty-chat audit and regression coverage.
+See `docs/archive/worklog-2026-09-19-computer-use-audit.md` for the forty-chat audit and regression coverage.
 
 For Chromium browser windows, `BrowserRootView` owns the current accessibility tree, including
 the address bar and displayed document. Legacy renderer HWNDs can expose old tabs with plausible
@@ -6667,10 +6776,10 @@ shared-tree change may already have addressed them.
   and phase rather than ordinary-turn idleness. Suspended-tab repair retains its separate
   existing action checks.
   Keep their operation-specific authority current through the browser action boundary.
-- **Goal publication:** explicit switch writes serialize, but mutate shared memory before
-  the awaited durable write; synchronous clear/move paths and objective/reply mutations do not
-  all share the same semantic transaction. Intent is durable commit before visible state, with
-  rollback unable to overwrite a newer accepted change.
+- **Goal reply publication:** reply-obligation mutations such as `acceptGoalReplyNow` still
+  change the shared reply map before their durable write and restore a snapshot on failure.
+  They do not use the staged switch/objective control boundary in §17; reply-ledger concurrency
+  still needs its own semantic transaction review.
 - **Goal cross-ledger controls:** master/config/secret changes still cross separate ledgers.
   Attempt invalidation now preserves debt, but these remaining controls still need one durable
   semantic transaction and effective current-setting enforcement.

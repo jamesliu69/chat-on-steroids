@@ -2008,17 +2008,55 @@ var CLF_DOM = (() => {
    * taken (a page reloaded since has none of its own); an attachment or a busy page keeps it.
    */
   function clearResumeResidue() {
-    // Only a brief this page typed itself, word for word: one a person added to stays (CodeRabbit on #2069).
-    return clearOwnResidue(RESUME_RESIDUE, text => typedBriefs.includes(text));
+    // Only a brief the app typed itself, word for word, here or on an earlier page of this tab: one a person
+    // added to stays (CodeRabbit on #2069). The page that typed it may be gone (#2115), so the record is stored.
+    return clearOwnResidue(RESUME_RESIDUE, text => ownBrief(text));
   }
 
-  /** The Compact & Resume briefs this page typed, compacted as residue is compared; the newest few. */
+  /**
+   * The Compact & Resume briefs the app typed, as short fingerprints of their compacted text. They are kept in
+   * the page's storage, not only in memory: ChatGPT keeps the text across a reload, an app restart and other
+   * tabs, and a page that reloaded since no longer remembered typing it, so every later Compact & Resume in the
+   * Project waited for an empty editor until it gave up (#2115). A fingerprint, not the text: a brief is tens
+   * of thousands of characters.
+   */
+  const TYPED_BRIEFS_KEY = 'clf-typed-briefs-v1';
+  const MAX_TYPED_BRIEFS = 12;
   const typedBriefs = [];
+  function briefFingerprint(text) {
+    // cyrb53: a fast 53-bit hash. Identity, not security; two briefs sharing one is not a concern.
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return `${text.length}:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+  }
+  function storedBriefs() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(TYPED_BRIEFS_KEY) || '[]');
+      return Array.isArray(raw) ? raw.filter(value => typeof value === 'string').slice(-MAX_TYPED_BRIEFS) : [];
+    } catch { return []; }
+  }
+  function ownBrief(text) {
+    const fingerprint = briefFingerprint(text);
+    return typedBriefs.includes(fingerprint) || storedBriefs().includes(fingerprint);
+  }
   function rememberTypedBrief(value) {
     const text = compactDraft(value);
-    if (!RESUME_RESIDUE.test(text) || typedBriefs.includes(text)) return;
-    typedBriefs.push(text);
-    if (typedBriefs.length > 4) typedBriefs.shift();
+    if (!RESUME_RESIDUE.test(text)) return;
+    const fingerprint = briefFingerprint(text);
+    if (!typedBriefs.includes(fingerprint)) {
+      typedBriefs.push(fingerprint);
+      if (typedBriefs.length > MAX_TYPED_BRIEFS) typedBriefs.shift();
+    }
+    try {
+      const stored = storedBriefs().filter(value => value !== fingerprint);
+      stored.push(fingerprint);
+      localStorage.setItem(TYPED_BRIEFS_KEY, JSON.stringify(stored.slice(-MAX_TYPED_BRIEFS)));
+    } catch { /* Storage can be unavailable or full: this page's own memory still works. */ }
   }
 
   /**
@@ -3552,7 +3590,24 @@ var CLF_DOM = (() => {
     if (!closed) failure('picker_close_failed');
     return restored && closed && stillCurrent() && result.size ? [...result.values()] : null;
   }
+  /**
+   * Why the last model/effort selection was not confirmed, in a few words for the log and the failure
+   * text (#2085): a report said "could not be confirmed" for 40 workers and nothing said which step
+   * had failed or what the picker offered. Reset by every selection; empty after a success.
+   */
+  let modelSelectionWhy = '';
+  const selectionFailed = reason => { modelSelectionWhy = reason; return false; };
+  /** The models and efforts the picker offered, from every version read, as one short line (capped). */
+  const offeredSummary = choices => safe(() => {
+    const byFamily = new Map();
+    for (const choice of choices ?? []) {
+      if (choice.available === false) continue;
+      const key = choice.familyId || choice.id; const efforts = byFamily.get(key) ?? new Set(); if (choice.effort) efforts.add(choice.effort); byFamily.set(key, efforts);
+    }
+    return [...byFamily].slice(0, 6).map(([key, efforts]) => `${String(key).slice(0, 24)}:${[...efforts].join('/')}`).join(' ').slice(0, 160);
+  }, '');
   async function selectModelSettings(model, effort, stillCurrent = () => true) {
+    modelSelectionWhy = '';
     if (!model && !effort) return true;
     // The page's own picker state, read without opening anything. A worker tab opens with its model
     // in the address and ChatGPT applies it; opening the picker only to prove that left its closing
@@ -3564,7 +3619,7 @@ var CLF_DOM = (() => {
       if (now?.available && (!model || now.id === model || now.familyId === model) && (!effort || now.effort === effort)) return stillCurrent();
     }
     const ui = modelPickerAccess(stillCurrent), original = await ui.open();
-    if (!original) { await ui.close(); return false; }
+    if (!original) { await ui.close(); return selectionFailed('the picker did not open or could not be read'); }
     // Account-evaluated exact selection is already proof; visiting unrelated
     // versions can reset it or fail unnecessarily. Captions and denied choices
     // do not qualify, and native closure still has to succeed.
@@ -3572,7 +3627,8 @@ var CLF_DOM = (() => {
     if (current?.available && (current.id === model || current.familyId === model) &&
         (!effort || current.effort === effort)) {
       const closed = await ui.close();
-      return closed && stillCurrent();
+      if (!closed) return selectionFailed('the picker did not close');
+      return stillCurrent() || selectionFailed('the chat changed meanwhile');
     }
     let selected = false, closed = false;
     try {
@@ -3586,10 +3642,11 @@ var CLF_DOM = (() => {
         : name && normalizeModelLabel(choice.familyLabel) === name ? 1 : 0;
       // Every available choice of the requested model, read once across versions, so the effort
       // can be resolved against what the account actually offers before anything is moved.
-      const offered = [];
+      const offered = [], seen = [];
       for (const version of [original.versions.find(v => v.id === original.version), ...original.versions.filter(v => v.id !== original.version)]) {
-        const state = await ui.version(version.id); if (!state) return false;
+        const state = await ui.version(version.id); if (!state) return selectionFailed('a model version could not be read');
         for (const choice of state.choices) {
+          seen.push(choice);
           const rank = choice.available ? modelRank(choice) : 0;
           if (rank) offered.push({ version: version.id, choice, rank });
         }
@@ -3628,19 +3685,23 @@ var CLF_DOM = (() => {
       // Latest/version entries may describe the same pair; distinct families may not.
       const rank = Math.max(0, ...candidates.map(candidate => candidate.rank));
       const matches = candidates.filter(candidate => candidate.rank === rank);
-      if (!matches.length || (model && new Set(matches.map(candidate => candidate.choice.familyId)).size !== 1) ||
-          (model && wantedEffort && new Set(matches.map(candidate => `${candidate.choice.id}\u0000${candidate.choice.effort}`)).size !== 1)) return false;
+      if (!matches.length) return selectionFailed(`${model ? `model ${String(model).slice(0, 30)}` : 'the current model'}${wantedEffort ? ` with ${wantedEffort}` : ''} is not offered; the picker offers ${offeredSummary(seen) || 'nothing readable'}`);
+      if (model && new Set(matches.map(candidate => candidate.choice.familyId)).size !== 1) return selectionFailed('more than one model matches the request');
+      if (model && wantedEffort && new Set(matches.map(candidate => `${candidate.choice.id}\u0000${candidate.choice.effort}`)).size !== 1) return selectionFailed('more than one choice matches the request');
       const wanted = matches.find(candidate => candidate.version === original.version && candidate.choice.bucket === original.currentBucket) || matches[0];
       const state = await ui.version(wanted.version), choice = wanted.choice;
       // Versions can change while traversing the UI. Revalidate before moving its slider.
-      if (!state?.choices.some(next => next.bucket === choice.bucket && next.available && next.id === choice.id && next.effort === choice.effort)) return false;
+      if (!state?.choices.some(next => next.bucket === choice.bucket && next.available && next.id === choice.id && next.effort === choice.effort)) return selectionFailed('the picker changed while it was read');
       const after = await ui.bucket(choice.bucket);
       const confirmed = after?.choices.find(c => c.bucket === after.currentBucket);
       selected = stillCurrent() && confirmed?.available === true && confirmed.id === choice.id && confirmed.effort === choice.effort;
+      if (!selected) selectionFailed(!stillCurrent() ? 'the chat changed meanwhile'
+        : `the picker showed ${confirmed ? `${String(confirmed.id).slice(0, 24)}/${confirmed.effort}` : 'nothing readable'} after choosing ${String(choice.id).slice(0, 24)}/${choice.effort}`);
     } finally {
       if (!selected && stillCurrent() && await ui.version(original.version)) await ui.bucket(original.currentBucket);
       closed = await ui.close();
     }
+    if (selected && !closed) return selectionFailed('the picker did not close');
     return selected && closed && stillCurrent();
   }
 
@@ -3698,7 +3759,7 @@ var CLF_DOM = (() => {
       new URL(link.href, location.href).origin === location.origin &&
       projectHomeId(new URL(link.href, location.href).pathname) === entry.id);
     return new Promise(resolve => {
-      let clicked = false, done = false, lastObservation = 'source-not-ready', residueCleared = false;
+      let clicked = false, done = false, lastObservation = 'source-not-ready', residueClears = 0;
       // Where the source chat was when the link was clicked, and how many times its own route
       // rewrite has since taken that click away.
       let clickedPath = '', reclicks = 0;
@@ -3721,7 +3782,8 @@ var CLF_DOM = (() => {
         if (clicked && projectHomeId() === entry.id) {
           if (!composer()?.isConnected || !composerSubmitReady()) {
             // An earlier brief of the app's own that ChatGPT kept in this Project home (#2068).
-            if (!residueCleared && clearResumeResidue()) { residueCleared = true; return check(); }
+            // ChatGPT can restore the draft after it was emptied, so this may happen again, a few times only.
+            if (residueClears < 3 && clearResumeResidue()) { residueClears++; return check(); }
             lastObservation = 'composer-not-ready';
             return;
           }
@@ -3979,6 +4041,7 @@ var CLF_DOM = (() => {
     pluginInstalledButtons,
     pluginManagementIdle,
     selectModelSettings,
+    modelSelectionFailure: () => modelSelectionWhy,
     temporaryChatReady: () => safe(() => {
       // The page's own state, where a mounted turn has published it. The glyph below is the only
       // evidence an empty document has, and a layout that stops drawing it stops proving the

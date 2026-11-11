@@ -1,6 +1,7 @@
 import { nextWorkerArchive, onWorkerChatReady, readyForWake, settleWorkerArchive } from './worker-archive.js';
 import { considerTurnRotation, noteRotationDeclined, noteStopFallback, stopFallbackDue, type RotationDeps } from './turn-rotation.js';
 import { armRotationFence, clearRotationFence, FENCE_MS, restoreRotationFences, rotationFenced, rotationFenceTurn } from './rotation-fence.js';
+import { clearOwedContinue, noteOwedActivity, noteOwedContinue, type OwedDeps } from './owed-continue.js';
 import { conversationProgress } from './session/progress.js';
 import { cosSignInTransfer, SignInTransferError } from './cos-browser/sign-in-transfer.js';
 import { externalBrowserProof, noteExternalInstalled, noteExternalSignedIn, resetBrowserProofForTests } from './browser-proof.js';
@@ -2489,6 +2490,8 @@ export async function endOwnWorkAfterStop(sessionId: string, expectedTurnId: str
   const silenced = repair?.reason === 'silence' && repair.silenceGrant?.turnId === expectedTurnId;
   if (silenced) repairsInFlight.delete(id);
   if (activeUntil.get(id)?.turnId === expectedTurnId) { endActivity(id); ended.push('the silence watch of that answer'); }
+  // A Stop by the person ends what the app owed that chat after its own rotation Stop (#2131).
+  clearOwedContinue(id);
   // A fresh turn the app was starting after that answer is cancelled, as a Stop of it cancels it.
   if (rotationFenceTurn(id) === expectedTurnId) {
     if (!await clearRotationFence(id)) logWarn(`turn rotation: ${id} — the cancelled fresh turn could not be saved; a restart within ${Math.round(FENCE_MS / 1000)} s could still continue after the person's Stop`);
@@ -2512,6 +2515,9 @@ export async function stopSessionTurn(sessionId: string, expectedTurnId: string,
   };
   await assertCurrent();
   if (!options.rotation) {
+    // A turn the stopped request reopened is the person's to stop: what the app still owed after its own
+    // rotation Stop ends with theirs, or it would file a Continue behind the Stop they asked for (CodeRabbit on #2136).
+    clearOwedContinue(id);
     // The person's Stop takes over a pending fresh-turn Stop of the same turn: no automatic continue
     // may follow the stop they asked for (CodeRabbit on #1954). The saved Stop loses its fresh-turn
     // mark first, so a restart restores neither it nor its fence.
@@ -9389,6 +9395,27 @@ function queueBrowserRecovery(
 }
 
 /**
+ * What the owed after-Stop Continue (#2131) needs to know: whether it was sent, whether the chat moved on
+ * without it, and whether a turn is running. Read from the session and its inputs at the time of the check.
+ */
+const owedContinueDeps: OwedDeps = {
+  now: () => Date.now(),
+  file: (sessionId, turnId) => fileRotationContinueAfterStop(sessionId, turnId),
+  state: async (sessionId, conversationId, since) => {
+    const session = await getSession(sessionId);
+    if (!session || session.conversationId !== conversationId) return 'gone';
+    const rows = (await listInputs()).filter(row => row.sessionId === sessionId && row.createdAt >= since - 1_000);
+    if (rows.some(row => row.purpose === 'rotation' && row.afterStop === true &&
+        (row.state === 'sent' || (row.state === 'browser' && row.sendAuthorizedAt !== undefined)))) return 'delivered';
+    // Anything the person wrote after the Stop (here or in ChatGPT) is the chat's next turn: the Continue is not owed any more.
+    if (rows.some(row => !(row.purpose === 'rotation' && row.afterStop === true) && row.state !== 'cancelled' && row.state !== 'failed')) return 'moved';
+    const [lastQuestion] = await readRecentEvents(sessionId, 1, { kinds: ['user_message'] });
+    if (lastQuestion && lastQuestion.time > since) return 'moved';
+    return session.activeTurnId ? 'busy' : 'open';
+  }
+};
+
+/**
  * Meaningful page/call activity is the episode boundary; empty polling is intentionally absent.
  *
  * Two reasons are exempt, because neither is about whether the chat is doing something. An
@@ -9417,6 +9444,7 @@ async function noteRecoveryObservations(
     (item.blocking === true ||
       /^too many requests\b.*temporarily limited.*access.*few minutes/i.test((item.text ?? '').replace(/\s+/g, ' ')));
   noteProviderHistoryBackoff(conversationId, observations);
+  if (observations.length) noteOwedActivity(conversationId);
   // A second chat limited within ten minutes makes the pause every chat's (#1694, only while that
   // setting is on). Every access-limit notice counts, with or without a retry time, at the time the
   // page saw it, so a replayed old notice is not new evidence (CodeRabbit on #2051).
@@ -9517,6 +9545,9 @@ async function noteRecoveryObservations(
   const fencedTurn = rotationFenceTurn(conversationId);
   if (lastEnd === 'stopped' && sessionId && fencedTurn && ended?.turnId === fencedTurn) {
     void clearRotationFence(conversationId);
+    // Owed from here until it is sent: a page that refuses it before Send, or a stopped request that keeps
+    // working, no longer leaves the chat idle (#2131).
+    noteOwedContinue(conversationId, sessionId, fencedTurn, owedContinueDeps);
     void fileRotationContinueAfterStop(sessionId, fencedTurn).then(row => {
       logInfo(row ? `turn rotation: ${conversationId} — turn ${fencedTurn} stopped; continuing in a fresh turn`
         : `turn rotation: ${conversationId} — turn ${fencedTurn} stopped; a message was already waiting, so it goes instead of the continue`);
@@ -11049,6 +11080,8 @@ function noteCallAttribution(
     // when Chrome, the tab or a reload destroyed the page's local turn projection.
     const sourceTurnId = filedSession?.activeTurnId ?? previous?.turnId ??
       goalPendingReplyFor(conversationId)?.silenceSourceTurnId ?? filedSession?.finishTurn?.turnId ?? null;
+    // A call of a request the app stopped (ChatGPT may keep it running) is activity: the owed Continue waits (#2131).
+    noteOwedActivity(conversationId);
     grantActivity(conversationId, sessionId, continuingMcp ? Date.now() : pro ? Math.min(Date.now(), startedAt) : Date.now(), CHAT_SILENCE_MS,
       { turnId: sourceTurnId, model: pro ? 'pro' : previous?.model ?? 'unknown', mcpBacked: true });
     // #1402: a long turn continues in a fresh one, right after this tool result. Pro thinks long on
@@ -12091,9 +12124,16 @@ function expire(command: Command): void {
   deliver();
 }
 
+/** Why a command ran out of time, for the log line. Exported for its test. */
+export function commandExpiryReasonForTests(command: Pick<Command, 'lastError' | 'claimedAt' | 'owner' | 'progress'>): string {
+  return commandExpiryReason(command as Command);
+}
 /** Timer and sweep describe the same delivery evidence, preserving a recorded failure. */
 function commandExpiryReason(command: Command): string {
   if (command.lastError) return command.lastError;
+  // A command no page ever took (no owner) is not "a chat this app opened": a Stop sent into a chat whose tab
+  // is closed read "the chat this app opened did not report back (no browser opened it)", which contradicts itself (#2103).
+  if (command.claimedAt !== null && command.owner === null) return `no page picked this command up before its deadline (${commandProgress(command)})`;
   if (command.claimedAt !== null) return `the chat this app opened did not report back in time (${commandProgress(command)})`;
   const step = command.progress?.step;
   return step && REVIVAL_WAIT_STEPS.has(step)
@@ -12111,7 +12151,7 @@ function commandProgress(command: Command, now = Date.now()): string {
   if (command.owner === null) {
     if (progress.opened === 'browser') return 'the browser opened it, but the page never picked up its task';
     if (progress.opened === 'os') return 'it was opened through the operating system, and no page with the extension picked up its task';
-    return 'no browser opened it';
+    return 'nothing recorded how the chat was opened';
   }
   if (!progress.step || REVIVAL_WAIT_STEPS.has(progress.step) || progress.stepAt === undefined) return 'the page picked up its task, then reported nothing more';
   const seconds = Math.max(0, Math.round((now - progress.stepAt) / 1000));
