@@ -524,9 +524,9 @@ async function removeProjectFromSidebar(id: string): Promise<void> {
         inputDrafts.set(draftKey(), authoredDraft); inputDrafts.delete(oldKey); newChatTasks.delete(oldKey);
         skillPicker?.restore();
         const images = imageDrafts.get(oldKey);
-        if (images) imageDrafts.set(draftKey(), images);
-        else imageDrafts.delete(draftKey());
-        imageDrafts.delete(oldKey);
+        if (images) setDraftAttachments(draftKey(), images);
+        else deleteDraftAttachments(draftKey());
+        deleteDraftAttachments(oldKey);
         setComposerPlaceholder(() => t('Ask anything…'));
       } else selectedProjectId = null;
     }
@@ -609,6 +609,37 @@ const inputDrafts = createComposerDrafts({
 const newChatTasks = new Map<string, { objective: string; automation: string; loopDelivery: string }>();
 const imageDrafts = new Map<string, Array<InputImage | InputAttachment>>();
 const startingInputs = new Map<string, InputEntry>();
+let publishedDraftAttachments: string | undefined;
+function publishDraftAttachments(): void {
+  const retained = new Set<string>();
+  for (const images of imageDrafts.values()) for (const file of images) if ('id' in file) retained.add(file.id);
+  // A send clears its composer before admission. Keep its files until the outbox owns them
+  // or a rejected send has restored the draft, even if the person changes chats meanwhile.
+  for (const row of startingInputs.values()) for (const file of row.attachments ?? []) retained.add(file.id);
+  const ids = [...retained].sort();
+  const signature = ids.join(',');
+  if (signature === publishedDraftAttachments) return;
+  publishedDraftAttachments = signature;
+  const retryOnNextChange = () => { if (publishedDraftAttachments === signature) publishedDraftAttachments = undefined; };
+  void api.retainDraftAttachments?.(ids).then(result => { if (!result.ok) retryOnNextChange(); }, retryOnNextChange);
+}
+function setDraftAttachments(key: string, attachments: Array<InputImage | InputAttachment>): void {
+  if (attachments.length) imageDrafts.set(key, attachments);
+  else imageDrafts.delete(key);
+  publishDraftAttachments();
+}
+function deleteDraftAttachments(key: string): void {
+  imageDrafts.delete(key);
+  publishDraftAttachments();
+}
+function setStartingInput(id: string, row: InputEntry): void {
+  startingInputs.set(id, row);
+  publishDraftAttachments();
+}
+function forgetStartingInput(id: string): void {
+  startingInputs.delete(id);
+  publishDraftAttachments();
+}
 const visibleInputIds = new Set<string>();
 // Window-local presentation only: a new incident or changed status is visible again.
 const dismissedRecoveryNotices = new Map<string, string>();
@@ -951,7 +982,7 @@ function paintComposerImages(): void {
     const tile = 'dataUrl' in image ? el('div', 'composer-image') : attachmentCard(image, true);
     if ('dataUrl' in image) { const preview = document.createElement('img'); preview.src = image.dataUrl; preview.alt = image.name; tile.append(preview); }
     const remove = el('button', 'image-remove', '×'); remove.setAttribute('type', 'button'); ui(remove, 'aria-label', () => t("Remove {0}", [image.name]));
-    remove.addEventListener('click', () => { imageDrafts.set(key, images.filter((_entry, at) => at !== index)); paintComposerImages(); });
+    remove.addEventListener('click', () => { setDraftAttachments(key, images.filter((_entry, at) => at !== index)); paintComposerImages(); });
     tile.append(remove); box.append(tile);
   });
   paintDeliveryControls();
@@ -1637,6 +1668,7 @@ async function deleteSession(id: string): Promise<void> {
   sessions = sessions.filter((entry) => entry.id !== id);
   // Its saved draft goes with the chat; text still on screen stays in the composer.
   inputDrafts.delete(id);
+  deleteDraftAttachments(id);
   pressure.delete(id);
   sessionTotal = Math.max(0, sessionTotal - 1);
   if (selectedId === id) {
@@ -5729,12 +5761,13 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
         frame.replaceChildren(el('p', 'meta', () => {
         if (event.previewStatus === 'pending') return t("Image preview is loading");
         if (event.previewError === 'removed') return t("Image removed from local storage");
+        if (event.previewError === 'session_quota') return t("Image preview unavailable — this chat reached its 192 MB storage limit");
         if (event.previewError === 'quota') return t("Image preview unavailable — recording storage is full");
         if (event.previewError === 'oversized') return t("Image preview unavailable — image exceeds the recording limit");
         return t("Image preview unavailable");
         }));
-        // Freeing storage helps only a full store or a removed picture; it cannot shrink one or load it.
-        if (event.previewStatus !== 'pending' && (event.previewError === 'quota' || event.previewError === 'removed')) frame.append(imageStorageButton());
+        // Freeing storage helps when global storage is full, a session hit its 192 MB cap, or an image was removed.
+        if (event.previewStatus !== 'pending' && (event.previewError === 'quota' || event.previewError === 'session_quota' || event.previewError === 'removed')) frame.append(imageStorageButton());
       };
       if (event.asset) frame.append(el('p', 'meta', () => t("Image preview is loading")));
       else unavailable();
@@ -9004,8 +9037,8 @@ function inputMessageRow(entry: InputEntry, notice: boolean): HTMLElement {
           editingQuestion = { sessionId: selectedId!, messageId: edit.messageId, later, previousDraft: '' };
         } else toast(t("That message can no longer be edited, so this is restored as a new message."));
       }
-      if (entry.images?.length) imageDrafts.set(draftKey(), [...entry.images]);
-      if (entry.attachments?.length) imageDrafts.set(draftKey(), [...(entry.images ?? []), ...entry.attachments]);
+      if (entry.images?.length) setDraftAttachments(draftKey(), [...entry.images]);
+      if (entry.attachments?.length) setDraftAttachments(draftKey(), [...(entry.images ?? []), ...entry.attachments]);
       rememberDraft(); skillPicker?.restore(); paintComposerImages(); paintDeliveryControls(); paintEditNotice(); input.focus();
       dismissInputNotice(entry.id);
     };
@@ -9044,9 +9077,9 @@ async function adoptAcceptedOpening(entry: InputEntry): Promise<boolean> {
   const from = draftKey();
   inputDrafts.set(summary.id, authoredComposerText());
   const images = imageDrafts.get(from);
-  if (images) imageDrafts.set(summary.id, images);
+  if (images) setDraftAttachments(summary.id, images);
   selectSession(summary.id);
-  inputDrafts.delete(from); imageDrafts.delete(from); newChatTasks.delete(from);
+  inputDrafts.delete(from); deleteDraftAttachments(from); newChatTasks.delete(from);
   return true;
 }
 /** A repaint for when the oldest shown page hold lapses, so a reason no page repeats goes away. */
@@ -9381,7 +9414,7 @@ async function retryPlannedInput(entry: InputEntry): Promise<void> {
       if (!selection?.model) { toast(t("Model refresh could not confirm your selection. Choose an available model, then retry the plan.")); return; }
       Object.assign(args, selection);
     }
-    startingInputs.set(args.id, { ...args, state: 'queued', owner: null, createdAt: args.dueAt, conversationId: null });
+    setStartingInput(args.id, { ...args, state: 'queued', owner: null, createdAt: args.dueAt, conversationId: null });
     if (sessionId === null) pendingNewInput = { id: args.id, generation };
     paintDeliveryControls(); void refreshInputQueue();
     const result = await run(api.sendInput(args));
@@ -9396,7 +9429,7 @@ async function retryPlannedInput(entry: InputEntry): Promise<void> {
     if (accepted) dismissInputNotice(entry.id);
     if (!accepted && !cancelledStarts.has(args.id)) dismissedInputNotices.delete(entry.id);
     if (!accepted && pendingNewInput?.id === args.id) pendingNewInput = null;
-    cancelledStarts.delete(args.id); startingInputs.delete(args.id);
+    cancelledStarts.delete(args.id); forgetStartingInput(args.id);
     paintDeliveryControls(); void refreshInputQueue();
   }
 }
@@ -9459,7 +9492,7 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
       if (wasStarting) cancelledStarts.add(pending.id);
       const cancelled = await run(api.cancelInput(pending.id));
       if (cancelled) {
-        startingInputs.delete(pending.id);
+        forgetStartingInput(pending.id);
         pendingComposerInputs = pendingComposerInputs.filter(row => row.id !== pending.id);
         dismissInputNotice(pending.id);
         paintDeliveryControls();
@@ -9504,7 +9537,7 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
     ? { sessionId: newChatBranch.sessionId, conversationId: newChatBranch.conversationId, messageId: newChatBranch.messageId }
     : reserved?.origin?.branchOf && reserved.origin.fromSessionId && !reserved.conversationId
       ? { sessionId: reserved.origin.fromSessionId, ...reserved.origin.branchOf } : undefined;
-  startingInputs.set(id, { id, sessionId, projectId, text, ...attachmentPayload, ...(branch ? { branch } : {}), ...(edit ? { edit } : {}), stages: plan?.slice(1), objective, authoredSource, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn',
+  setStartingInput(id, { id, sessionId, projectId, text, ...attachmentPayload, ...(branch ? { branch } : {}), ...(edit ? { edit } : {}), stages: plan?.slice(1), objective, authoredSource, mode: mode === 'finish' ? 'finish' : mode === 'auto' ? 'auto' : 'after-turn',
     dueAt, ...modelSettings, state: 'queued', owner: null, createdAt: dueAt, conversationId: null });
   replaceComposerDraft();
   input.value = ''; inputDrafts.delete(key);
@@ -9514,7 +9547,7 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
     if (editing.previousDraft) { input.value = editing.previousDraft; inputDrafts.set(key, editing.previousDraft); }
   }
   skillPicker?.restore();
-  imageDrafts.delete(key); paintComposerImages();
+  deleteDraftAttachments(key); paintComposerImages();
   if (sessionId === null) pendingNewInput = { id, generation };
   // A page of history takes no live rows: a message sent while one is shown (a search result, or the
   // reply a cancelled branch went back to) reached ChatGPT unseen. The chat returns to its end first.
@@ -9544,7 +9577,7 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
         inputDrafts.set(key, authoredDraft); input.value = authoredDraft; skillPicker?.restore();
       }
       else if (!inputDrafts.get(key)) inputDrafts.set(key, authoredDraft);
-      if (images.length) imageDrafts.set(key, [...images, ...(imageDrafts.get(key) ?? [])]);
+      if (images.length) setDraftAttachments(key, [...images, ...(imageDrafts.get(key) ?? [])]);
       if (draftKey() === key) paintComposerImages();
       if (pendingNewInput?.id === id) pendingNewInput = null;
       return;
@@ -9564,7 +9597,7 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
     $('composerStatus').textContent = '';
     void refreshInputQueue();
     return true;
-  } finally { cancelledStarts.delete(id); startingInputs.delete(id); paintDeliveryControls(); void refreshInputQueue(); }
+  } finally { cancelledStarts.delete(id); forgetStartingInput(id); paintDeliveryControls(); void refreshInputQueue(); }
 }
 
 // ------------------------------------------------------------------- wiring
@@ -9709,6 +9742,7 @@ function selectNewChat(projectId: string | null = null, branch: typeof newChatBr
 }
 
 export function initChat(next: Deps): void {
+  publishDraftAttachments();
   selectedTabFollow = createSelectedTabFollow(id => api.followSessionTab?.(id));
   sidebarCompletion = createSidebarCompletionState();
   sidebarPins = createSidebarPins();
@@ -9900,7 +9934,7 @@ export function initChat(next: Deps): void {
           const entry: InputEntry = { id: inputId, sessionId: null, projectId, text: opening.reply, objective: draft.trim(), authoredSource: 'objective', automation: mode,
             loopAfterTurn: openingLoopDelivery(),
             mode: 'auto', dueAt, model, reasoningEffort, state: 'queued', owner: null, createdAt: dueAt, conversationId: null };
-          startingInputs.set(inputId, entry); pendingNewInput = { id: inputId, generation: selection };
+          setStartingInput(inputId, entry); pendingNewInput = { id: inputId, generation: selection };
           goalProgress = { requestId, selection, inputId, phase: 'queued', text: '' }; paintDeliveryControls();
           try {
             const accepted = await run(api.sendInput(entry));
@@ -9913,7 +9947,7 @@ export function initChat(next: Deps): void {
               await adoptAcceptedOpening(accepted);
               if (current()) objective.dataset.saved = draft;
             } else if (goalProgress?.requestId === requestId) { goalProgress.phase = 'failed'; goalProgress.error = 'Opening message could not be queued'; }
-          } finally { startingInputs.delete(inputId); paintDeliveryControls(); void refreshInputQueue(); }
+          } finally { forgetStartingInput(inputId); paintDeliveryControls(); void refreshInputQueue(); }
         } finally { delete button.dataset.busy; paintTaskActions(); }
         return;
       }
@@ -9965,7 +9999,7 @@ export function initChat(next: Deps): void {
     if (!ownsComposerDraft(owner)) { toast(t("Files were not added because the draft changed.")); return false; }
     const combined = [...(imageDrafts.get(owner.key) ?? []), ...chosen];
     if (combined.length > 20 || combined.reduce((sum, file) => sum + ('size' in file ? file.size : 0), 0) > 512 * 1024 * 1024) { toast(t("Attach up to 20 files and 512 MB per message")); return false; }
-    imageDrafts.set(owner.key, combined); paintComposerImages();
+    setDraftAttachments(owner.key, combined); paintComposerImages();
     return true;
   };
   filePanel = createFilePanel({
