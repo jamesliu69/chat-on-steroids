@@ -2030,6 +2030,7 @@ export async function readRecentEvents(
     maxBytes?: number; before?: number; after?: number; orderByOrigin?: boolean;
     /** History pages for reading: a turn's final answer sits beside its end (`residenceOf`). */
     byResidence?: boolean;
+    acceptEvent?: (event: SessionEvent) => boolean;
   } = {}
 ): Promise<SessionEvent[]> {
   assertSessionId(sessionId);
@@ -2225,8 +2226,9 @@ export async function readCompletedFinal(sessionId: string, conversationId: stri
       return !!own && !!finalTurn && own !== finalTurn && own.endOrigin !== undefined && own.origin < finalTurn.origin;
     }
     return nativeFinal && recent.some(end => end.kind === 'turn_end' && end.outcome === 'completed' &&
-      sameTurn(end.turnId, finalTurnId) && end.seq < event.seq &&
-      !recent.some(start => start.kind === 'turn_start' && sameTurn(start.turnId, finalTurnId) && start.seq > end.seq && start.seq < event.seq));
+      sameTurn(end.turnId, finalTurnId) &&
+      !recent.some(start => start.kind === 'turn_start' && sameTurn(start.turnId, finalTurnId) && start.seq > end.seq &&
+        (end.seq < event.seq ? start.seq < event.seq : true)));
   };
   if (recent.some(event => {
     if (event === final || workSequence(event) <= seq || lateNote(event)) return false;
@@ -2690,7 +2692,9 @@ export async function readEditReviewAsset(sessionId: string, assetId: string): P
 
 /** Retrieves one immutable, bounded edit artifact by its durable session/call/index identity. */
 
-export async function readToolEditReview(sessionId: string, callId: string, changeIndex: number): Promise<ToolEditReview | null> {
+export async function readToolEditReview(sessionId: string, callId: string, changeIndex: number,
+  allowed?: (event: Extract<SessionEvent, { kind: 'tool_call' }>, index: number) => Promise<boolean>
+): Promise<ToolEditReview | null> {
   assertSessionId(sessionId);
   if (!/^[0-9a-f-]{36}$/i.test(callId) || !Number.isSafeInteger(changeIndex) || changeIndex < 0 || changeIndex >= 64) return null;
   await settleSessionWrites(sessionId);
@@ -2706,6 +2710,7 @@ export async function readToolEditReview(sessionId: string, callId: string, chan
   try {
     const parsed = JSON.parse(data.toString('utf8')) as { before?: unknown; after?: unknown };
     if (typeof parsed.before !== 'string' || typeof parsed.after !== 'string') return null;
+    if (allowed && !await allowed(event, changeIndex)) return null;
     return { callId, changeIndex, path: change.path, added: change.added, removed: change.removed,
       baseText: parsed.before, currentText: parsed.after };
   } catch { return null; }
