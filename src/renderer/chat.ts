@@ -1912,7 +1912,11 @@ async function loadProjectHistory(id: string): Promise<void> {
       state.cursor = page.nextCursor ?? null;
       const rows = page.sessions.filter(row => {
         const current = sessions.find(entry => entry.id === row.id);
-        if (current && current.updatedAt >= row.updatedAt) return false;
+        if (current && current.updatedAt >= row.updatedAt) {
+          // 同時間戳的歷史列仍可能帶著最新頁重新整理前送達的首次 conversation 綁定；
+          // 僅在現有列尚無綁定時放行，較新的現有狀態（含既有綁定）仍然優先。
+          if (!(current.updatedAt === row.updatedAt && !current.conversationId && row.conversationId)) return false;
+        }
         if (newestSessionPage && newestSessionPage !== newestAtStart &&
             !newestSessionPage.sessions.some(entry => entry.id === row.id)) {
           const oldest = newestSessionPage.sessions.at(-1);
