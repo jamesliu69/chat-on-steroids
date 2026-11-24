@@ -385,7 +385,8 @@ async function readDisabledSkills(directory: string): Promise<Set<string>> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Managed Skill enablement is invalid');
   const object = value as Record<string, unknown>;
-  if (Object.keys(object).sort().join(',') !== 'disabled,version' || object.version !== 1 ||
+  const keys = Object.keys(object);
+  if (keys.length !== 2 || !keys.includes('disabled') || !keys.includes('version') || object.version !== 1 ||
       !Array.isArray(object.disabled) || object.disabled.length > MAX_SKILLS ||
       !object.disabled.every(id => typeof id === 'string' && validSkillId(id)) ||
       new Set(object.disabled).size !== object.disabled.length)
@@ -408,7 +409,8 @@ async function writeDisabledSkills(directory: string, next: Set<string>): Promis
   try {
     const handle = await fs.open(temporary, 'wx', 0o600);
     try {
-      await handle.writeFile(JSON.stringify({ version: 1, disabled: [...next].sort() }));
+      const disabled = [...next].sort((left, right) => left.localeCompare(right, 'en'));
+      await handle.writeFile(JSON.stringify({ version: 1, disabled }));
       await handle.sync();
     } finally { await handle.close(); }
     await assertManagedRoot(directory);
