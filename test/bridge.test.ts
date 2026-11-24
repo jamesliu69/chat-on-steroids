@@ -545,6 +545,37 @@ describe('explicit CoS sign-in transfer over the paired bridge', () => {
   });
 });
 
+it('offers a one-shot Web title check over the paired bridge and rejects another browser', async () => {
+  await pair();
+  const before = getConfig();
+  const { acceptWebChatTitle, cancelWebChatTitleCheck, readWebChatTitle } = await import('../src/main/web-chat-title.js');
+  const conversationId = randomUUID();
+  const options = { browser: 'titlecheckbrowser001', host: 'browser' };
+  try {
+    await saveConfig({ ...before, ui: { ...before.ui, chatBrowser: 'chrome' },
+      sessions: { ...before.sessions, checkWebChatTitles: true } });
+    const check = readWebChatTitle(conversationId);
+    const body = { openConversations: [conversationId] };
+    await saveConfig({ ...getConfig(), ui: { ...getConfig().ui, chatBrowser: 'firefox' } });
+    expect((await request('POST', '/status', { ...options, body })).body.webChatTitleCheck).toBeUndefined();
+    const firefox = { ...options, browser: 'firefoxtitlebrowser01', engine: 'gecko' };
+    const status = await request('POST', '/status', { ...firefox, body });
+    const offer = status.body.webChatTitleCheck;
+    expect(offer).toEqual({ id: expect.any(String), conversationId });
+    expect((await request('POST', '/status', { ...firefox, body })).body.webChatTitleCheck).toBeUndefined();
+    const answer = { ...offer, title: 'Sample Web title' };
+    expect((await request('POST', '/browser/web-chat-title', { ...firefox, auth: null, body: answer })).status).toBe(401);
+    expect((await request('POST', '/browser/web-chat-title', { ...firefox, browser: 'othercheckbrowser001', body: answer })).status).toBe(409);
+    expect((await request('POST', '/browser/web-chat-title', { ...firefox, engine: undefined, body: answer })).status).toBe(409);
+    expect((await request('POST', '/browser/web-chat-title', { ...firefox, body: answer })).status).toBe(200);
+    await expect(check).resolves.toBe('Sample Web title');
+    expect(acceptWebChatTitle(firefox.browser, answer)).toBe(false);
+  } finally {
+    cancelWebChatTitleCheck();
+    await saveConfig(before);
+  }
+});
+
 describe('direct browser control over the paired bridge', () => {
   it('recovers request-owned browser tabs only from exact server-side correlation, including a resumed session', async () => {
     browserControl.reset(); await pair();
@@ -618,6 +649,48 @@ describe('direct browser control over the paired bridge', () => {
 });
 
 describe('who is allowed to talk to it', () => {
+  // 2026-11-20: the request window opened at a clock reading that was later corrected backwards (a
+  // wrong clock set right, a resumed VM). `now - start` stayed negative, the window never closed,
+  // and every later request counted against it until the clock caught up: the extension got 429 for
+  // as long as the correction was big.
+  it('does not lock the extension out when the clock is corrected backwards', async () => {
+    await pair();
+    const logger = await import('../src/main/logger.js');
+    const info = vi.spyOn(logger, 'logInfo');
+    const real = Date.now();
+    let now = real + 60 * 60_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      expect((await request('GET', '/status')).status).toBe(200);
+      now = real;
+      // Three minutes of ordinary traffic (400 a minute, 1,200 in all) after the correction.
+      const statuses = new Set<number>();
+      for (let minute = 0; minute < 3; minute += 1) {
+        for (let index = 0; index < 400; index += 1) statuses.add((await request('GET', '/status')).status);
+        now += 61_000;
+      }
+      expect([...statuses]).toEqual([200]);
+      // One line says why the count started again, not one per request.
+      expect(info.mock.calls.map(([line]) => String(line)).filter(line => line.includes('the clock moved back'))).toEqual([
+        'bridge: the clock moved back 3600 s; the request limit starts counting again'
+      ]);
+    } finally { clock.mockRestore(); info.mockRestore(); }
+  });
+
+  it('still refuses more than 900 requests inside one minute, and allows them again the next minute', async () => {
+    await pair();
+    const real = Date.now();
+    let now = real;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      let refused = 0;
+      for (let index = 0; index < 930; index += 1) if ((await request('GET', '/status')).status === 429) refused += 1;
+      expect(refused).toBeGreaterThan(0);
+      now += 61_000;
+      expect((await request('GET', '/status')).status).toBe(200);
+    } finally { clock.mockRestore(); }
+  });
+
   it('logs only bounded close-outbox decision codes and only once per extension report', async () => {
     await pair();
     const logger = await import('../src/main/logger.js');
@@ -4920,6 +4993,42 @@ describe('automatic compaction', () => {
       await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
       expect(await takeRepair()).toBeNull();
       expect(continuationByToken(token)).toMatchObject({ automatic: true, state: 'awaiting-summary' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an asking compaction pending and retries after a Temporary Chat reload is skipped', async () => {
+    vi.useFakeTimers();
+    try {
+      await pair();
+      const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac0d';
+      await request('POST', '/events', {
+        body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'manual handoff', messageId: 'temporary-pickup' }] }
+      });
+      const filed = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
+      const token = filed.body.token as string;
+
+      const takeRepair = async () => {
+        await sweepStaleSwarm(Date.now());
+        return (await request('GET', '/status')).body.repairs?.[0] as { conversationId: string; reason: string; token: string } | undefined;
+      };
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      const first = await takeRepair();
+      expect(first).toMatchObject({ conversationId, reason: 'compaction' });
+      await request('GET', `/status?repaired=${first!.token}&repairAction=preserved&preservedFor=temporary-chat`);
+
+      expect(continuationByToken(token)).toMatchObject({ state: 'awaiting-summary' });
+      expect(getLog().some(entry => entry.message === `bridge: ${conversationId}: Temporary Chat, not reloaded`)).toBe(true);
+      expect(getLog().some(entry => entry.message.includes(`compaction ticket ${token.slice(0, 8)} asking pickup 1 of 5`))).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      const retry = await takeRepair();
+      expect(retry).toMatchObject({ conversationId, reason: 'compaction' });
+      expect(retry!.token).not.toBe(first!.token);
+      expect(continuationByToken(token)).toMatchObject({ state: 'awaiting-summary' });
+      expect(getLog().some(entry => entry.message.includes(`compaction ticket ${token.slice(0, 8)} asking pickup 2 of 5`))).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -13421,6 +13530,23 @@ describe('unattributed activity recovery', () => {
     expect((await request('POST', '/repairs/claim', { body: { token: retry!.token } })).body.allowed).toBe(true);
   });
 
+  it('logs a Temporary Chat repair that the extension leaves open', async () => {
+    await pair();
+    await events(PRIME, [
+      { kind: 'user_message', time: Date.now(), messageId: 'temporary-question', text: 'Keep working' },
+      openTurn('temporary-answer'),
+      { kind: 'chat_error', time: Date.now(), turnId: 'temporary-answer', text: 'Connection interrupted', recoverable: true }
+    ]);
+    const repair = await maintenance();
+    expect(repair?.reason).toBe('assistant-error');
+    expect((await request('POST', '/repairs/claim', { body: { token: repair!.token } })).body.allowed).toBe(true);
+
+    await request('GET', `/status?repaired=${repair!.token}&repairAction=preserved&preservedFor=temporary-chat`);
+
+    expect(getLog().some(entry => entry.message === `bridge: ${PRIME}: Temporary Chat, not reloaded`)).toBe(true);
+    expect(await maintenance()).toBeNull();
+  });
+
   it('does not refund error recovery when reload remints a generation for the same authored question', async () => {
     vi.useFakeTimers();
     try {
@@ -20199,5 +20325,55 @@ describe('push-driven activity wakes over /wake', () => {
         await closed;
       }
     }
+  });
+});
+
+describe('turn_messages retraction over bridge', () => {
+  it('validates turn_messages observations and exposes streaming retractions on incremental /activity', async () => {
+    await pair();
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac99';
+    await request('POST', '/events', {
+      body: {
+        conversationId,
+        events: [
+          { kind: 'turn_start', time: 100, turnId: 'turn-bridge-retract' },
+          { kind: 'assistant_message', time: 101, turnId: 'turn-bridge-retract', messageId: 'msg-kept', docId: 'doc-a', docSeq: 1, text: 'Kept update', state: 'streaming', activeNow: true },
+          { kind: 'assistant_message', time: 102, turnId: 'turn-bridge-retract', messageId: 'msg-dropped', docId: 'doc-a', docSeq: 2, text: 'Aborted draft', state: 'streaming', activeNow: true }
+        ]
+      }
+    });
+    const before = await request('GET', `/activity?conversationId=${conversationId}`);
+    const since = before.body.nextSince as number;
+
+    // Malformed, oversized, stale docSeq, or foreign-document unsettled turn_messages payloads must fail closed without retracting anything.
+    await request('POST', '/events', {
+      body: {
+        conversationId,
+        events: [
+          { kind: 'turn_messages', time: 103, turnId: 'turn-bridge-retract', messageIds: ['msg-kept', ''] },
+          { kind: 'turn_messages', time: 103, turnId: 't'.repeat(101), messageIds: ['msg-kept'] },
+          { kind: 'turn_messages', time: 103, turnId: 'turn-bridge-retract', messageIds: ['msg-kept', 'm'.repeat(201)] },
+          { kind: 'turn_messages', time: 104, turnId: 'turn-bridge-retract', messageIds: Array.from({ length: 401 }, (_, i) => `id-${i}`) },
+          { kind: 'turn_messages', time: 105, turnId: 'turn-bridge-retract', messageIds: ['msg-kept'], docId: 'doc-a', docSeq: 2 },
+          { kind: 'turn_messages', time: 106, turnId: 'turn-bridge-retract', messageIds: ['msg-kept'], docId: 'doc-b', docSeq: 1 }
+        ]
+      }
+    });
+    const afterInvalid = await request('GET', `/activity?conversationId=${conversationId}&since=${since}`);
+    expect(afterInvalid.body.stream).toEqual([]);
+
+    // Valid newer turn_messages retracts the vanished draft and sends the retraction over incremental /activity.
+    await request('POST', '/events', {
+      body: {
+        conversationId,
+        events: [
+          { kind: 'turn_messages', time: 107, turnId: 'turn-bridge-retract', messageIds: ['msg-kept'], docId: 'doc-a', docSeq: 3 }
+        ]
+      }
+    });
+    const delta = await request('GET', `/activity?conversationId=${conversationId}&since=${since}`);
+    expect(delta.body.stream).toEqual([
+      expect.objectContaining({ kind: 'assistant_message', messageId: 'msg-dropped', retracted: true })
+    ]);
   });
 });

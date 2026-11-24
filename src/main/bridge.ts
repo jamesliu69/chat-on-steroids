@@ -39,6 +39,7 @@ let browserWake: ReturnType<typeof attachBrowserWake> | null = null;
 import { browserWindowBounds, currentBrowserWorkArea } from './browser-window-layout.js';
 export { setBrowserWorkArea } from './browser-window-layout.js';
 import { pendingBrowserPreferenceRequest, acknowledgeBrowserPreferences } from './browser-preferences.js';
+import { acceptWebChatTitle, offerWebChatTitleCheck } from './web-chat-title.js';
 import { sessionFinishHeld, releaseSessionFinish, getSessionFinishDraft, sessionFinishWaiting } from './session/finish.js';
 import { observeUsage } from './session/usage.js';
 import { inBrowserDelivery, automaticSendKind, heldBySendCheck, holdInputForSendCheck, pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindBrowserInputProject, failBrowserInput, lostBrowserOpening, completeBrowserDecision, listInputs, fileSilenceInput, fileRecoveryInput, advanceRecoveryInput, hasQueuedAfterTurnInput, inputBeforeGoal, pendingQueuedPickups, queuedInputOfferBlocker, continueAsOrdinaryMessage, recordQueuedPickupAttemptNow, syncQueuedPickupRecoveryNow, deferSilenceInput, revokeSilenceInputs, withdrawOwnContinuesAfterStop, endRecoveryInput, failBranchInput, retryUnclaimedInput, failInputsForDeletedConversation, ownUnsentTexts, ownSentResidue, retireMismatchedRecoveryInput, noteInputHeld } from './session/input.js';
@@ -786,6 +787,15 @@ function chosenBuiltInBrowser(req: http.IncomingMessage): boolean {
 function browserOf(req: http.IncomingMessage): string | null {
   const id = req.headers['x-extension-browser'];
   return typeof id === 'string' && /^[a-z0-9]{16,64}$/.test(id) ? id : null;
+}
+function webTitleBrowser(req: http.IncomingMessage): string | null {
+  const browser = browserOf(req);
+  if (!browser || staleCompanion(req)) return null;
+  const selected = getConfig().ui.chatBrowser;
+  if (selected === 'cos') return chosenBuiltInBrowser(req) ? browser : null;
+  return req.headers['x-extension-host'] === 'browser' &&
+    geckoExtension(req) === (selected === 'firefox') &&
+    externalExtension?.browserId === browser ? browser : null;
 }
 const browserSeenAt = new Map<string, number>();
 /** Until when a browser's extension reloads into a new build; it takes no new message meanwhile. */
@@ -1941,7 +1951,10 @@ function tooLarge(res: http.ServerResponse, origin: string | null): void {
 
 function rateLimited(): boolean {
   const now = Date.now();
-  if (now - requestWindow.start > 60_000) requestWindow = { start: now, count: 0 };
+  // A clock corrected backwards leaves the window starting in the future; it would never close.
+  const behind = requestWindow.start - now;
+  if (behind >= 1000) logInfo(`bridge: the clock moved back ${Math.round(behind / 1000)} s; the request limit starts counting again`);
+  if (now < requestWindow.start || now - requestWindow.start > 60_000) requestWindow = { start: now, count: 0 };
   requestWindow.count += 1;
   return requestWindow.count > RATE_LIMIT;
 }
@@ -1957,6 +1970,8 @@ const OBSERVATION_KINDS = new Set([
   'page_tool',
   // A turn's round outline: presentation stored beside the log (shared/turn-trace.ts).
   'turn_trace',
+  // Complete surviving assistant message ids/provider UUIDs for one turn, used to retract discarded streaming drafts.
+  'turn_messages',
   'turn_start',
   'turn_end',
   'chat_error',
@@ -2223,6 +2238,25 @@ function parseObservations(input: unknown): ChatObservation[] {
       observation.trace = trace;
       // The user message that opened the page turn the outline was read from (#1301).
       if (typeof item['question'] === 'string' && /^[A-Za-z0-9_:.-]{1,200}$/.test(item['question'])) observation.question = item['question'];
+    }
+    if (kind === 'turn_messages') {
+      const rawTurnId = item['turnId'];
+      const rawIds = item['messageIds'];
+      if (typeof rawTurnId !== 'string' || !rawTurnId.length || rawTurnId.length > 100) continue;
+      if (!Array.isArray(rawIds) || rawIds.length > 400) continue;
+      const validIds = rawIds.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 200);
+      if (!validIds) continue;
+      observation.turnId = rawTurnId;
+      observation.messageIds = [...rawIds];
+      if (item['settled'] === true) observation.settled = true;
+    }
+    if ((kind === 'assistant_message' || kind === 'turn_messages') && typeof item['docId'] === 'string' &&
+        /^[a-z0-9_-]{1,80}$/i.test(item['docId'])) {
+      observation.docId = item['docId'];
+    }
+    if ((kind === 'assistant_message' || kind === 'turn_messages') && typeof item['docSeq'] === 'number' &&
+        Number.isSafeInteger(item['docSeq']) && item['docSeq'] >= 0) {
+      observation.docSeq = item['docSeq'];
     }
     if (typeof item['renderedHtml'] === 'string') {
       // Keep the whole compact rendering of a stable final through /events.
@@ -3464,6 +3498,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
     return json(res, ok ? 200 : 409, { ok }, origin);
   }
+  if (route === '/browser/web-chat-title' && req.method === 'POST') {
+    const body = await readBody(req, 2048);
+    const browser = webTitleBrowser(req);
+    const accepted = browser !== null && acceptWebChatTitle(browser, body);
+    return json(res, accepted ? 200 : 409, { ok: accepted }, origin);
+  }
+
   if (route === '/browser/preferences' && req.method === 'POST') {
     const accepted = acknowledgeBrowserPreferences(await readBody(req));
     return json(res, accepted ? 200 : 409, { ok: accepted }, origin);
@@ -3558,8 +3599,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const repairAction = url.searchParams.get('repairAction');
     const action = repairAction === 'reloaded' || repairAction === 'reopened' || repairAction === 'resumed' ||
       repairAction === 'preserved' || repairAction === 'present' ? repairAction : null;
+    const temporaryChat = action === 'preserved' && url.searchParams.get('preservedFor') === 'temporary-chat';
     if (repaired) {
-      await confirmRepair(repaired.slice(0, 64), action);
+      await confirmRepair(repaired.slice(0, 64), action, temporaryChat);
     } else if (repairFailed) {
       await failRepairAttempt(repairFailed.slice(0, 64), action, url.searchParams.get('why'), url.searchParams.get('detail')?.slice(0, 80) ?? null, url.searchParams.get('approval') === '1');
     }
@@ -3588,6 +3630,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const pendingInputs = otherBrowser ? [] : await pendingBrowserInputs();
     const pendingIds = new Set((await pendingBrowserInputs()).map(input => input.id));
     for (const id of openingCustody.keys()) if (!pendingIds.has(id)) openingCustody.delete(id);
+    const titleBrowser = req.method === 'POST' ? webTitleBrowser(req) : null;
+    const webChatTitleCheck = titleBrowser ? offerWebChatTitleCheck(titleBrowser) : undefined;
     return json(
       res,
       200,
@@ -3603,6 +3647,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
           [surface, apps.map(({ appId, linkId, name }) => ({ appId, linkId, name }))])),
         pluginRefreshRequests: otherBrowser ? [] : (await authorizedPluginRefreshPublications(getConfig().ui.autoRefreshPlugins === true)).map(({ surface, schemaId, connectorName }) => ({ surface, schemaId, connectorName })),
         browserPreferenceRequest: pendingBrowserPreferenceRequest(),
+        ...(webChatTitleCheck ? { webChatTitleCheck } : {}),
         projectCreateRequests: otherBrowser ? [] : await pendingProjectCreates(),
         inputOpeningIds: inputRows.filter(row => !['sent', 'failed', 'cancelled'].includes(row.state)).map(row => row.id),
         // The ones being sent right now (handed to a browser), not those that only wait in the queue:
@@ -4567,6 +4612,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
               renderedHtml: event.renderedHtml?.text ?? '',
               state: event.state ?? (event.final ? 'final' : 'streaming'),
               final: event.final,
+              ...(event.retracted === true ? { retracted: true } : {}),
               messageId: event.messageId ?? null,
               providerMessageId: event.providerMessageId ?? null,
               origin: event.origin ?? event.seq
@@ -11959,10 +12005,11 @@ function attributionRepairCurrent(repair: Repair, session: SessionSummary | null
  * this app is no longer waiting on - an older turn's, or one already re-queued - matches
  * nothing and closes nothing, which is the only safe reading of it.
  */
-async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | 'present' | null): Promise<void> {
+async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'resumed' | 'preserved' | 'present' | null, temporaryChat = false): Promise<void> {
   for (const [conversationId, repair] of repairsInFlight) {
     if (repair.state === 'handed' && repair.token === token) {
       if (!compactionRepairCurrent(conversationId, repair)) { repairsInFlight.delete(conversationId); return; }
+      if (temporaryChat) logInfo(`bridge: ${conversationId}: Temporary Chat, not reloaded`);
       if (action === 'present') {
         // The chat had a tab again by the time the browser acted, usually the one a worker wake
         // just opened. Nothing was reloaded, so nothing is waiting to come back (#864).
@@ -12038,7 +12085,7 @@ async function confirmRepair(token: string, action: 'reloaded' | 'reopened' | 'r
       await updateRepairProgress(
         conversationId,
         repair,
-        `${action === 'reopened' ? 'Reopened' : action === 'resumed' ? 'Resumed' : 'Reloaded'} chat to ${repairPurpose(repair).to}.`
+        temporaryChat ? `Kept the recovered chat open instead of reloading while ${repairPurpose(repair).during}.` : `${action === 'reopened' ? 'Reopened' : action === 'resumed' ? 'Resumed' : 'Reloaded'} chat to ${repairPurpose(repair).to}.`
       );
       return;
     }

@@ -119,7 +119,7 @@ import { browserExtensionRequired, type AppState, type Config } from '../shared/
 import { $, ago, clockTime, compactAgeText, compactNumber, disclosureChevron, el, elapsedDurationText, icon, rowTime, run, setIcon, toast } from './dom.js';
 import { APPROVAL_ANSWERED_TEXT, APPROVAL_PROGRESS_PREFIX, APPROVAL_REPAIR_DEFERRED_TEXT, APPROVAL_WAITING_TEXT, type ApprovalCardView } from '../shared/approval-wait.js';
 import { STRICT_REFUSAL_PROGRESS_PREFIX, UNPROVEN_WORKER_NOTICE, UNTRUSTED_NOTICE, UNTRUSTED_WORKER_NOTICE } from '../shared/trust-notices.js';
-import { closeRowMenu, onRowMenuChange, openRowMenu, rowMenuOpenFor, toggleRowMenu, type RowMenuItem, type RowMenuOptions } from './row-menu.js';
+import { closeRowMenu, onRowMenuChange, openRowMenu, rowMenuOpenFor, refreshRowMenu, toggleRowMenu, type RowMenuItem, type RowMenuOptions } from './row-menu.js';
 import { createSearchPopup } from './search-popup.js';
 import { holdToTalkShortcut, holdToTalkSupported, primaryShortcut } from './shortcuts.js';
 import { initSshProjectDialog } from './ssh-project-dialog.js';
@@ -179,6 +179,7 @@ let visible = false;
 let sessions: SessionSummary[] = [];
 /** Last accepted newest-page receipt; its covered range can withdraw a delayed older row. */
 let newestSessionPage: { sessions: SessionSummary[]; nextCursor: { updatedAt: number; id: string } | null } | null = null;
+let webTitleSettingsRevision = 0;
 let pressure = new Map<string, TokenPressure>();
 let sessionTotal = 0;
 let sessionPageCursor: { updatedAt: number; id: string } | null = null;
@@ -281,6 +282,8 @@ async function moveChatToProject(sessionId: string, projectId: string | null, gr
   // Rows the sidebar already shows take the moved chats' new summaries, also from older history.
   const shown = (moved.summaries ?? []).filter(summary => sessions.some(row => row.id === summary.id));
   if (shown.length) { mergeSessionRows(shown); paintSessions(); }
+  if (selectedId !== null && (selectedId === sessionId || shown.some(summary => summary.id === selectedId) ||
+      sessions.find(row => row.id === selectedId)?.origin?.fromSessionId === sessionId)) paintDetail(false);
   if (undo) { toast(t('Move undone')); return; }
   const project = projectId ? projects.find(row => row.id === projectId) : undefined;
   const linked = [moved.from, projectId].some(id => id && projects.find(row => row.id === id)?.chatgpt?.state === 'linked');
@@ -1451,7 +1454,30 @@ function sessionRow(summary: SessionSummary): HTMLElement {
   ui(more, 'title', () => t('More options'));
   ui(more, 'aria-label', () => t('More options'));
   const menu = (at?: { x: number; y: number }) => ({
-    owner, at, label: () => shownSessionTitle(summary), anchor: () => rowMenuButton(owner), items: () => items
+    owner, at, label: () => shownSessionTitle(summary), anchor: () => rowMenuButton(owner),
+    items: () => {
+      const config = deps.state()?.config;
+      if (summary.titleSource !== 'manual' || !summary.conversationId || !config?.sessions.checkWebChatTitles) return items;
+      const browser = config.ui.chatBrowser;
+      const revision = webTitleSettingsRevision;
+      let differs = false;
+      const matchesMenu = () => {
+        const settings = deps.state()?.config;
+        const current = sessions.find(chat => chat.id === summary.id);
+        return revision === webTitleSettingsRevision && settings?.sessions.checkWebChatTitles === true &&
+          settings.ui.chatBrowser === browser && current?.titleSource === 'manual' &&
+          current.title === summary.title && current.conversationId === summary.conversationId;
+      };
+      void api.checkWebChatTitle(summary.id).then(reply => {
+        if (reply?.ok && reply.data === 'different' && rowMenuOpenFor(owner) && matchesMenu()) {
+          differs = true;
+          refreshRowMenu();
+        }
+      }).catch(() => undefined);
+      return items.map(item => item.action === 'rename'
+        ? { ...item, description: () => differs && matchesMenu() ? t('ChatGPT title differs') : '' }
+        : item);
+    }
   });
   more.addEventListener('click', (event) => { event.stopPropagation(); removeSessionTooltip(); toggleRowMenu(menu()); });
   row.addEventListener('contextmenu', (event) => { event.preventDefault(); removeSessionTooltip(); openRowMenu(menu({ x: event.clientX, y: event.clientY })); });
@@ -1912,7 +1938,11 @@ async function loadProjectHistory(id: string): Promise<void> {
       state.cursor = page.nextCursor ?? null;
       const rows = page.sessions.filter(row => {
         const current = sessions.find(entry => entry.id === row.id);
-        if (current && current.updatedAt >= row.updatedAt) return false;
+        if (current && current.updatedAt >= row.updatedAt) {
+          // 同時間戳的歷史列仍可能帶著最新頁重新整理前送達的首次 conversation 綁定；
+          // 僅在現有列尚無綁定時放行，較新的現有狀態（含既有綁定）仍然優先。
+          if (!(current.updatedAt === row.updatedAt && !current.conversationId && row.conversationId)) return false;
+        }
         if (newestSessionPage && newestSessionPage !== newestAtStart &&
             !newestSessionPage.sessions.some(entry => entry.id === row.id)) {
           const oldest = newestSessionPage.sessions.at(-1);
@@ -3201,6 +3231,8 @@ function announceFinishedTurns(delta: readonly SessionEvent[]): void {
   if (before !== text) { region.textContent = text; next(finished - 1); } else say(finished);
 }
 
+const retractedResidentKeys = new Set<string>();
+
 /** Merge one sequence-cursor delta without letting canonical message revisions duplicate rows. */
 function mergeDetailDelta(delta: SessionEvent[]): boolean {
   if (delta.length === 0) return false;
@@ -3213,20 +3245,30 @@ function mergeDetailDelta(delta: SessionEvent[]): boolean {
     if (key) messageRows.set(key, index);
   }
   for (const event of delta) {
+    const retracted = event.kind === 'assistant_message' && event.retracted === true;
     const key = canonicalMessageKey(event);
     const index = key ? messageRows.get(key) : undefined;
-    if (index !== undefined) { merged[index] = event; changed = true; }
-    else {
+    if (index !== undefined) {
+      if (retracted && key) retractedResidentKeys.add(key);
+      else if (!retracted && key) retractedResidentKeys.delete(key);
+      merged[index] = event;
+      changed = true;
+    } else {
+      if (retracted) continue;
       // An old canonical revision is not newly authored history. Its original
       // page still owns it; admitting it here would evict an unrelated live row.
-      if (residenceOf(event) < floor) continue;
-      if (key) messageRows.set(key, merged.length);
+      if (residenceOf(event) < floor && !(key && retractedResidentKeys.has(key))) continue;
+      if (key) {
+        retractedResidentKeys.delete(key);
+        messageRows.set(key, merged.length);
+      }
       merged.push(event);
       changed = true;
     }
   }
   if (!changed) return false;
-  const folded = chronological(foldProgress(merged));
+  const active = merged.filter(event => !(event.kind === 'assistant_message' && event.retracted === true));
+  const folded = chronological(foldProgress(active));
   events = retainTimelinePage(folded, 'newer');
   return true;
 }
@@ -3348,10 +3390,20 @@ function paintGoalProgress(): void {
   }
 }
 const cancelledStarts = new Set<string>();
+function inputBelongsToCurrentSelection(entry: Pick<InputEntry, 'id' | 'sessionId' | 'deliveredSessionId'>): boolean {
+  return selectedId === null
+    ? pendingNewInput?.generation === selectionGeneration && entry.id === pendingNewInput.id
+    : (entry.sessionId ?? entry.deliveredSessionId) === selectedId;
+}
+
+function cancellablePendingInput(entry: InputEntry): boolean {
+  return inputBelongsToCurrentSelection(entry) &&
+    (!queuedFollowup(entry) || entry.state === 'browser') && ['queued', 'browser'].includes(entry.state) &&
+    !anchoredPendingInput(entry);
+}
+
 function pendingComposerInput(): InputEntry | undefined {
-  return [...startingInputs.values(), ...pendingComposerInputs].find(entry => (!queuedFollowup(entry) || entry.state === 'browser') && ['queued', 'browser'].includes(entry.state) &&
-    (selectedId ? (entry.sessionId ?? entry.deliveredSessionId) === selectedId :
-      pendingNewInput?.generation === selectionGeneration && pendingNewInput.id === entry.id));
+  return [...startingInputs.values(), ...pendingComposerInputs].find(cancellablePendingInput);
 }
 let durationTimer: number | undefined;
 /** Whether the selected chat's running turn takes a message now (Send directly). */
@@ -3364,6 +3416,7 @@ let followUpTurn: string | null = null;
 function followUpQueues(): boolean {
   return deps.state()?.config.ui.followUp === 'queue';
 }
+let paintedPendingCancel: { id: string; target: string | null; selection: number } | null = null;
 function paintDeliveryControls(): void {
   paintGoalProgress();
   for (const button of document.querySelectorAll<HTMLButtonElement>('#finishQueue .queue-send-now')) button.hidden = !canSendQueuedNow();
@@ -3412,6 +3465,7 @@ function paintDeliveryControls(): void {
   send.disabled = !!preparedPlan && (preparedPlan.sending || preparedPlan.stages.some(stage => !stage.trim()));
   send.dataset.action = stop ? 'stop' : 'send';
   ui(send, 'aria-label', () => stop ? (controlledStopPending ? t("Stop requested") : t("Stop turn")) : t("Send message"));
+  paintedPendingCancel = stop && !working && !held && pending ? { id: pending.id, target: selectedId, selection: selectionGeneration } : null;
   if (stop && !working && !held && pending) ui(send, 'aria-label', () => t("Cancel delivery"));
   const planAction = selectedId && !chatKnownIdle(selectedId) ? t("Queue plan at Session finish") : t("Start full plan");
   if (preparedPlan && !stop) send.setAttribute('aria-label', planAction);
@@ -3890,6 +3944,7 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
     handoffLoadGeneration++;
     historyBefore = null;
     events = [];
+    retractedResidentKeys.clear();
     traces = {};
     tracesFor = null;
     totalEvents = 0;
@@ -3902,7 +3957,7 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
   const trackLive = !prepend && newerFrom === undefined && historyBefore === null;
   const runDetail = async (): Promise<boolean> => {
     const opening = detailFor !== wanted;
-    if (opening) { historyBefore = null; historyStart = null; roundsEnter = false; }
+    if (opening) { historyBefore = null; historyStart = null; roundsEnter = false; retractedResidentKeys.clear(); }
     // Live deltas must not evict a historical page while the user is reading it.
     const incremental = !prepend && newerFrom === undefined && historyBefore === null && detailFor === wanted && detailCursor !== null;
     const detail = await run(
@@ -3930,7 +3985,8 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
     let deltaChanged = false;
     if (incremental) { deltaChanged = mergeDetailDelta(detail.events); announceFinishedTurns(detail.events); }
     else {
-      const folded = chronological(foldProgress(detail.events));
+      const visible = detail.events.filter(event => !(event.kind === 'assistant_message' && event.retracted === true));
+      const folded = chronological(foldProgress(visible));
       if (newerFrom !== undefined) {
         events = retainTimelinePage(chronological(foldProgress([...events, ...folded])), 'newer');
         // Reaching the live tail restores ordinary delta reads. Paging itself preserves
@@ -3966,6 +4022,7 @@ async function loadDetail(navigate = false, olderBefore?: number, newerFrom?: nu
     if (prepend || newerFrom !== undefined) roundsEnter = false;
     // Only live growth follows to the bottom; an empty or off-window incremental check must not pull a scrolled pane down.
     paintDetail(!prepend && newerFrom === undefined && historyBefore === null && (!incremental || deltaChanged));
+    if (incremental && deltaChanged && detail.events.some(event => event.kind === 'user_message')) void refreshInputQueue();
     if (!prepend && newerFrom === undefined && !(incremental && detail.events.length === TIMELINE_BATCH_SIZE)) {
       detailSatisfiedPushSeq = Math.max(detailSatisfiedPushSeq, capturedPushSeq);
     }
@@ -4854,6 +4911,99 @@ function safeRecordedImage(url: string): string | null {
   } catch { return null; }
 }
 
+const DIL_GRID = '[data-d-component="grid"]';
+const DIL_GRID_ITEM = '[data-d-component="grid-item"]';
+const DIL_BORDERED_BOX = '[data-d-component="box"][data-d-has-border]';
+const DIL_TITLE = '[data-d-component="title"]';
+const DIL_GRID_HEADING = 'h1, h2, h3, h4, h5, h6';
+const DIL_GRID_TEXT_BLOCK = `p, ${DIL_GRID_HEADING}`;
+const DIL_GRID_FIELD = `${DIL_GRID_TEXT_BLOCK}, div, .markdown-dil-title, .markdown-dil-text`;
+const DIL_INLINE_MARKUP = new Set(['BR', 'DEL', 'S', 'EM', 'STRONG', 'MARK', 'KBD', 'SUB', 'SUP']);
+const DIL_METRIC_ICON = '[data-d-component="row"] > :is(svg, span[data-cos-icon]:empty)';
+
+/** A complete row of typed, bordered metric cards with a recorded equal-width layout. */
+function recordedMetricGridColumns(node: Element): number | null {
+  const cells = [...node.children];
+  if (cells.length < 2 || cells.length > 4) return null;
+  const hasLooseText = (element: Element): boolean =>
+    [...element.childNodes].some(child => child.nodeType === 3 && child.textContent?.trim());
+  if (hasLooseText(node)) return null;
+  if (node.querySelector(`${DIL_GRID}, table, pre, code, [data-d-component="image"]`)) return null;
+  for (const cell of cells) {
+    const panel = cell.firstElementChild;
+    if (!cell.matches(DIL_GRID_ITEM) || cell.childElementCount !== 1 || !panel?.matches(DIL_BORDERED_BOX) ||
+        hasLooseText(cell) || panel.querySelector(DIL_BORDERED_BOX) || panel.querySelectorAll(DIL_TITLE).length !== 1 ||
+        !panel.querySelector('[data-d-component="text"]')) return null;
+  }
+  // Compact recordings store the same declaration as data. Only its equal-track count is used.
+  const style = node.getAttribute('style') ?? node.getAttribute('data-cos-style') ?? '';
+  const columns = [...style.matchAll(/(?:^|;)\s*grid-template-columns\s*:\s*([^;]*)/gi)];
+  if (columns.length !== 1) return null;
+  const match = /^repeat\(\s*([2-4])\s*,\s*(?:minmax\(\s*0(?:px)?\s*,\s*1fr\s*\)|1fr)\s*\)$/i.exec(columns[0]![1]!.trim());
+  return Number(match?.[1]) === cells.length ? cells.length : null;
+}
+
+/** Keep case, punctuation and field boundaries when comparing sanitized grid and Markdown. */
+function metricGridText(nodes: Element[]): string {
+  const parts: string[] = [];
+  const walk = (node: Node): void => {
+    if (node.nodeType === 3) { parts.push(node.textContent ?? ''); return; }
+    if (node.nodeType !== 1) return;
+    const element = node as Element;
+    if (element.matches('.markdown-dil-success-icon, .markdown-dil-down-icon')) return;
+    const block = element.matches(`${DIL_GRID_FIELD}, br`);
+    if (block) parts.push('\n');
+    for (const child of element.childNodes) walk(child);
+    if (block) parts.push('\n');
+  };
+  for (const node of nodes) walk(node);
+  return parts.join('').split('\n').map(line => line.replace(/[\t\f\r ]+/g, ' ').trim()).filter(Boolean).join('\n');
+}
+
+function metricInlineMarkup(node: Node): string {
+  if (node.nodeType === 3) return (node.textContent ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+  if (node.nodeType !== 1) return '';
+  const element = node as Element;
+  const inner = [...element.childNodes].map(metricInlineMarkup).join('');
+  return DIL_INLINE_MARKUP.has(element.tagName) ? `<${element.localName}>${inner}</${element.localName}>` : inner;
+}
+
+/** One field's words and inline markup, without the field element itself. */
+function metricFieldMarkup(field: Element): string {
+  return [...field.childNodes].map(metricInlineMarkup).join('').replace(/\s+/g, ' ').trim();
+}
+
+function metricFieldMatches(canonical: Element, recorded: Element): boolean {
+  const heading = canonical.matches(DIL_GRID_HEADING);
+  if (canonical.tagName !== recorded.tagName && (heading || recorded.matches(DIL_GRID_HEADING))) return false;
+  const wanted = metricFieldMarkup(canonical);
+  if (wanted === metricFieldMarkup(recorded)) return true;
+  if (!heading) return false;
+  // Compact recordings can wrap the entire heading in a decorative strong element.
+  let core = recorded;
+  while (core.childElementCount === 1 && core.firstElementChild!.matches('span, strong') &&
+    ![...core.childNodes].some(child => child.nodeType === 3 && child.textContent?.trim())) {
+    core = core.firstElementChild!;
+    if (core.tagName === 'STRONG' && wanted === metricFieldMarkup(core)) return true;
+  }
+  return false;
+}
+
+/** The reply's field boundaries and its emphasis inside each field must survive the replacement. */
+function metricFieldsMatch(canonical: Element[], panel: Element): boolean {
+  const fields = canonical.filter(field => field.textContent?.trim());
+  const recorded = [...panel.querySelectorAll(DIL_GRID_FIELD)]
+    .filter(field => field.textContent?.trim() && !field.querySelector(DIL_GRID_FIELD));
+  // Markup around a whole field (a struck-through heading) is formatting the reply's field lacks.
+  const wrapped = (field: Element): boolean => {
+    for (let at = field.parentElement; at && at !== panel; at = at.parentElement)
+      if (DIL_INLINE_MARKUP.has(at.tagName)) return true;
+    return false;
+  };
+  return recorded.length === fields.length && !recorded.some(wrapped) &&
+    fields.every((field, index) => metricFieldMatches(field, recorded[index]!));
+}
+
 function restoreRecordedDilLayouts(box: HTMLElement, capture?: StoredText): void {
   if (!capture?.text || capture.truncated || capture.text.length > MAX_RENDERED_HTML_CHARS ||
       !capture.text.includes('data-d-component=')) return;
@@ -4872,12 +5022,35 @@ function restoreRecordedDilLayouts(box: HTMLElement, capture?: StoredText): void
         node.querySelector('p')) return 'photo';
     return null;
   };
-  const candidates = [...template.content.querySelectorAll('[data-d-component]')]
-    .map(node => ({ node, kind: candidate(node) })).filter((value): value is { node: Element; kind: 'card' | 'panel' | 'steps' | 'photo' } => !!value.kind)
-    .filter(value => !value.node.parentElement?.closest('[data-d-component="card"]'))
-    .slice(0, 16);
-  for (const { node, kind } of candidates) {
+  const candidates: Array<{ node: Element; kind: NonNullable<ReturnType<typeof candidate>>; columns?: never } |
+    { node: Element; kind: 'grid'; columns: number }> = [];
+  let metricGrid: Element | undefined;
+  for (const node of template.content.querySelectorAll('[data-d-component]')) {
+    if (metricGrid?.contains(node) || node.parentElement?.closest('[data-d-component="card"]')) continue;
+    if (node.matches(DIL_GRID) && !node.parentElement?.closest(`${DIL_GRID}, ${DIL_BORDERED_BOX}`) &&
+        node.querySelector(`:scope > ${DIL_GRID_ITEM} > ${DIL_BORDERED_BOX} ${DIL_TITLE}`)) {
+      // A recognizable metric grid owns its cells even if the complete layout fails validation.
+      // Unrelated DIL grids keep the existing panel, card and workflow behavior.
+      metricGrid = node;
+      const columns = recordedMetricGridColumns(node);
+      if (columns !== null) candidates.push({ node, kind: 'grid', columns });
+    } else if (node.matches(DIL_GRID) && !node.parentElement?.closest(`${DIL_GRID}, ${DIL_BORDERED_BOX}`) &&
+        node.querySelector(`${DIL_GRID} > ${DIL_GRID_ITEM} > ${DIL_BORDERED_BOX} ${DIL_TITLE}`)) {
+      // An outer grid that wraps a metric grid is a nested capture: its cards stay in Markdown
+      // instead of becoming separate panels that leave a short card bare.
+      metricGrid = node;
+    } else {
+      const kind = candidate(node);
+      if (kind) candidates.push({ node, kind });
+    }
+    if (candidates.length === 16) break;
+  }
+  for (const { node, kind, columns } of candidates) {
     const copy = node.cloneNode(true) as Element;
+    if (kind === 'grid') {
+      // A decorative recorded drawing can carry aria-hidden; the typed layout keeps no glyph.
+      for (const symbol of copy.querySelectorAll(`:scope > ${DIL_GRID_ITEM} > ${DIL_BORDERED_BOX} > ${DIL_METRIC_ICON}`)) symbol.remove();
+    }
     if (kind === 'photo') {
       // Search-image overlays include functional controls; inline entity "pressables"
       // also wrap visible words. Keep their inert text, but never their behavior.
@@ -4888,6 +5061,8 @@ function restoreRecordedDilLayouts(box: HTMLElement, capture?: StoredText): void
     if (copy.querySelector('a, button, input, select, textarea, form, iframe, video, canvas, [contenteditable]') ||
         copy.querySelector('[hidden], [aria-hidden="true"]')) continue;
     const images = [...copy.querySelectorAll('img')];
+    // A metric grid draws values as text; any recorded image is not this supported layout.
+    if (kind === 'grid' && images.length) continue;
     if (images.length > 1 || images.some(img =>
       img.getAttribute('data-d-component') !== 'svg' && !img.closest('[data-d-component="image"]'))) continue;
     if (images.some(img => !(img.getAttribute('data-d-component') === 'svg'
@@ -4912,15 +5087,31 @@ function restoreRecordedDilLayouts(box: HTMLElement, capture?: StoredText): void
       }
     }
     if (matches.length !== 1) continue;
+    const { start, end } = matches[0]!;
+    // Matching words alone cannot authorize replacing canonical links, code, tables, or math.
+    const span = kind === 'grid' ? nodes.slice(start, end + 1) : [];
+    if (kind === 'grid' && span.some(node => !node.matches(DIL_GRID_TEXT_BLOCK) ||
+        node.querySelector('a, button, code, img, math, svg'))) continue;
     // The same sanitizer removes every untrusted style, class and event attribute.
     // Only an exact, unique canonical text span authorizes reconstructing a static layout.
     const markup = copy.outerHTML;
     const safe = renderedMessage({ text: markup, chars: markup.length, truncated: false }, '', true);
     const panel = safe.firstElementChild;
     if (!panel || visibleWords(panel).join('\u0000') !== expected.join('\u0000')) continue;
-    panel.classList.add(kind === 'panel' ? 'markdown-dil-panel' : kind === 'steps' ? 'markdown-dil-steps' :
-      kind === 'photo' ? 'markdown-dil-photo-row' : 'markdown-dil-card');
-    const { start, end } = matches[0]!;
+    if (kind === 'grid') {
+      // Every recorded cell, title and bordered box must survive sanitization before one shared
+      // grid may stand in for the canonical span.
+      const cards = [...panel.querySelectorAll(':scope > .markdown-dil-grid-item > .markdown-dil-bordered')];
+      if (!panel.classList.contains('markdown-dil-grid') ||
+          cards.length !== columns ||
+          panel.querySelectorAll('.markdown-dil-title').length !== columns ||
+          metricGridText([panel]) !== metricGridText(span) ||
+          !metricFieldsMatch(span, panel)) continue;
+      panel.classList.add('markdown-dil-grid-standalone', `markdown-dil-grid-columns-${columns}`);
+    } else {
+      panel.classList.add(kind === 'panel' ? 'markdown-dil-panel' : kind === 'steps' ? 'markdown-dil-steps' :
+        kind === 'photo' ? 'markdown-dil-photo-row' : 'markdown-dil-card');
+    }
     nodes[start]!.replaceWith(panel);
     for (let at = start + 1; at <= end; at++) nodes[at]!.remove();
   }
@@ -5713,6 +5904,24 @@ function paintInputReceipt(row: HTMLElement, item: ReturnType<typeof timelineIte
   receipt.parentElement?.classList.toggle('has-input-receipt', !receipt.hidden);
 }
 
+/** Shows when one of your questions steered a running turn so its branch stays legible in history. */
+function paintSteerOrigin(row: HTMLElement, steered: boolean): void {
+  row.classList.toggle('is-steered', steered);
+  const box = row.querySelector<HTMLElement>('.said.is-user');
+  if (!box) return;
+  const existing = box.querySelector<HTMLElement>('.said-origin.is-steer');
+  if (!steered) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const origin = el('span', 'said-origin is-steer');
+  origin.append(icon('i-bolt'), el('span', '', () => t("Steered active turn")));
+  const anchor = box.querySelector('.message-attachments, .user-message-text, .message-edited, .message-reaction, .input-receipt');
+  if (anchor) box.insertBefore(origin, anchor);
+  else box.append(origin);
+}
+
 /** The exact outbox input retains preview bytes until optional history storage succeeds. */
 function retainedInputImages(event: Extract<SessionEvent, { kind: 'user_message' }>, sessionId: string | null): InputImage[] {
   if (!sessionId || !event.inputId) return [];
@@ -5839,6 +6048,7 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
       const width = event.width ?? event.previewWidth ?? 1;
       const height = event.height ?? event.previewHeight ?? 1;
       frame.style.aspectRatio = `${Math.max(1, width)} / ${Math.max(1, height)}`;
+      const id = context?.id ?? selectedId;
       const unavailable = () => {
         frame.classList.toggle('is-unavailable', event.previewStatus !== 'pending');
         frame.replaceChildren(el('p', 'meta', () => {
@@ -5850,12 +6060,11 @@ function eventBody(event: SessionEvent, context?: { id: string; current: () => b
         return t("Image preview unavailable");
         }));
         // Freeing storage helps when global storage is full, a session hit its 192 MB cap, or an image was removed.
-        if (event.previewStatus !== 'pending' && (event.previewError === 'quota' || event.previewError === 'session_quota' || event.previewError === 'removed')) frame.append(imageStorageButton());
+        if (event.previewStatus !== 'pending' && (event.previewError === 'quota' || event.previewError === 'session_quota' || event.previewError === 'removed')) frame.append(imageStorageButton(id ?? undefined));
       };
       if (event.asset) frame.append(el('p', 'meta', () => t("Image preview is loading")));
       else unavailable();
       box.append(frame);
-      const id = context?.id ?? selectedId;
       if (event.asset && id) {
         const generation = selectionGeneration;
         void (async () => {
@@ -6088,7 +6297,7 @@ function eventRow(event: SessionEvent): HTMLElement {
   const row = el('div', `ev ev-${event.kind}`);
   // A note the app filed about its own work (a recovery reload), not ChatGPT's phase caption.
   if (event.kind === 'progress' && event.source === 'app') row.dataset.appNote = '';
-  if (event.kind === 'assistant_message' && !withoutMessageReaction(event.message.text).trim()) row.hidden = true;
+  if (event.kind === 'assistant_message' && (event.retracted === true || !withoutMessageReaction(event.message.text).trim())) row.hidden = true;
   tagImageRow(row, event);
   // When the app saw it, the same clock as the question above it. Only a message the app saw long
   // after it was written (an earlier answer read after a reload) shows when it was written: ChatGPT's
@@ -7024,7 +7233,8 @@ function paintDetail(followBottom = historyBefore === null): void {
   // Completed turns and the answer message that carries their copy/export actions.
   const anchors = answerAnchors(events);
   const looseAnchors = messageAnswerAnchors(events);
-  const workedSeconds = exchangeDurations(events);
+  const steeredAsks = steeredUserMessages(events);
+  const workedSegments = exchangeSegments(events, steeredAsks);
   const workers = sessions.filter(entry => entry.origin?.kind === 'worker' && entry.origin.fromSessionId === selectedId && selectedId !== null);
   const items = timelineItems(shown);
   const latestCompaction = items.filter(item => item.kind === 'compaction').at(-1);
@@ -7057,7 +7267,7 @@ function paintDetail(followBottom = historyBefore === null): void {
     // Its final text is not held. The shown text itself is compared: a revision can rewrite it to the same length.
     const sig = (held ? `${itemSignature({ kind: 'event', event: { ...held, seq: 0, time: 0, renderedHtml: undefined } })}\u0000held${JSON.stringify(held.references ?? [])}\u0000${held.message.text}`
       : itemSignature(item)) + (item.kind === 'event' && item.event.kind === 'chat_error'
-      ? JSON.stringify(chatErrorPresentation(item.event, events)) : '') + (answerTurn || looseAnswer ? '\u0000answer' : '') + (changedFiles ? `\u0000changes:${loadedEdits}` : '') +
+      ? JSON.stringify(chatErrorPresentation(item.event, events)) : '') + (answerTurn || looseAnswer ? '\u0000answer' : '') + (changedFiles ? `\u0000changes:${loadedEdits}:${project?.id ?? ''}` : '') +
       (item.kind === 'event' && stoppedTurnEnd(item.event, events) ? '\u0000stopped' : '') +
       (item.kind === 'compaction' && item !== latestCompaction ? '\u0000superseded' : '') +
       (item.kind === 'event' && editableQuestion(item.event, events) ? `\u0000edit:${laterMessages.get(item.event.seq) ?? 0}` : '');
@@ -7071,6 +7281,7 @@ function paintDetail(followBottom = historyBefore === null): void {
         paintMessageReaction(cached.row.querySelector<HTMLElement>('.said.is-user')!, item.event.reaction);
       }
       paintInputReceipt(cached.row, item);
+      paintSteerOrigin(cached.row, item.kind === 'event' && item.event.kind === 'user_message' && steeredAsks.has(item.event.seq));
       if (item.kind === 'event') rowEvents.set(cached.row, item.event);
       timelineRows.push(cached.row);
       continue;
@@ -7082,8 +7293,18 @@ function paintDetail(followBottom = historyBefore === null): void {
       item.kind === 'event' && item.event.kind === 'assistant_message' ? { text: item.event.message.text, time: item.event.time } : undefined));
     if (changedFiles && answerTurn && selectedId) {
       const sessionId = selectedId;
-      built.querySelector('.said')?.append(renderTurnChanges({ sessionId, turnId: answerTurn, from: turnFrom(events, answerTurn),
-        current: () => selectedId === sessionId, openReview: selectedLocalProject() ? () => void reviewPanel?.show() : null }));
+      const from = turnFrom(events, answerTurn);
+      built.querySelector('.said')?.append(renderTurnChanges({ sessionId, turnId: answerTurn, from,
+        current: () => selectedId === sessionId,
+        openReview: project ? () => void reviewPanel?.show() : null,
+        openCheckpoint: project ? (ownerId, ref) => {
+          if (selectedLocalProject()?.id !== ownerId) {
+            toast(t('This checkpoint is no longer available'));
+            return;
+          }
+          void reviewPanel?.openCheckpoint(ownerId, ref);
+        } : null,
+        restoreTurn: project ? () => run(api.restoreTurnCheckpoint(sessionId, answerTurn, from)) : null }));
     }
     if (item.kind === 'event' && editableQuestion(item.event, events)) {
       built.querySelector('.ev-body')?.append(questionActions(item.event, laterMessages.get(item.event.seq) ?? 0));
@@ -7102,18 +7323,23 @@ function paintDetail(followBottom = historyBefore === null): void {
     row.dataset.workerSessions = workerIds;
     if (item.kind === 'event' && item.event.kind === 'user_message') row.dataset.askedAt = String(item.event.time);
     paintInputReceipt(row, item);
+    paintSteerOrigin(row, item.kind === 'event' && item.event.kind === 'user_message' && steeredAsks.has(item.event.seq));
     if (item.kind === 'event') rowEvents.set(row, item.event);
     rowCache.set(key, { sig, row });
     timelineRows.push(row);
   }
   appendRetiredInputs(Infinity);
   for (const key of rowCache.keys()) if (!keep.has(key)) rowCache.delete(key);
-  placeTurnLines(timelineRows, workedSeconds);
+  placeTurnLines(timelineRows, workedSegments);
   reconcileChildren($('timeline'), groupImageRows(renderRounds(timelineRows, tracesFor === selectedId ? traces : {}, turnWorking,
     turnWorking ? openTurnId(events) : null, selectedId, toolGroups, sayRows, true)));
+  paintedTimelineFor = detailFor;
+  paintedTimelineEvents = shown;
+  paintedDetailEvents = events;
   // Rounds that arrive after this paint enter with a fade; the chat as it opened does not.
   roundsEnter = timelineRows.length > 0;
   paintPendingInputs();
+  paintDeliveryControls();
   $('timelineEmpty').hidden = selectedId !== null || timelineRows.length > 0 || $('inputQueue').childElementCount > 0;
   if (timelineShown() && !holdSentMessage()) restoreViewport();
   paintJumpLatest();
@@ -7827,32 +8053,146 @@ function turnLine(className: string): HTMLElement {
 }
 const workedLines = new Map<string, HTMLElement>();
 
-/**
- * How long each of your messages was worked on, keyed by the message's time: from it to the last
- * end the page reported before your next message (a completed turn end or ChatGPT's final answer,
- * whichever came later). Anchored to your messages rather than ChatGPT's turn ids, which a page
- * can report empty or leave off the rows that did the work.
- */
-function exchangeDurations(list: readonly SessionEvent[]): Map<number, number> {
-  const asks = list.filter(event => event.kind === 'user_message').map(event => event.time).sort((a, b) => a - b);
-  const durations = new Map<number, number>();
-  asks.forEach((asked, index) => {
-    const next = asks[index + 1] ?? Number.POSITIVE_INFINITY;
-    let ended = -1;
-    for (const event of list) {
-      if (event.time < asked || event.time >= next) continue;
-      if ((event.kind === 'turn_end' && event.outcome === 'completed') || (event.kind === 'assistant_message' && event.final)) {
-        ended = Math.max(ended, event.time);
-      }
-    }
-    if (ended >= asked) durations.set(asked, Math.floor((ended - asked) / 1000));
-  });
-  return durations;
+interface ExchangeSegment {
+  seconds: number;
+  steered: boolean;
 }
 
-function workedLine(asked: number, seconds: number): HTMLElement {
+/**
+ * Sequences of `user_message` events that steered a running turn — either backed by a `turn_end`
+ * with `continued: true`, or observed arriving into the currently open turn before its end is logged.
+ */
+function steeredUserMessages(list: readonly SessionEvent[]): Set<number> {
+  const steered = new Set<number>();
+  const turnStartTimes = new Map<string, number>();
+  const turnOriginTimes = new Map<string, number>();
+  const endedTurns = new Set<string>();
+  const nextTurnStarts: number[] = [];
+  let latestClosedEnd = Number.NEGATIVE_INFINITY;
+  for (const event of list) {
+    if (event.turnId && event.kind !== 'turn_end') {
+      const seen = turnOriginTimes.get(event.turnId);
+      if (seen === undefined || event.time < seen) turnOriginTimes.set(event.turnId, event.time);
+    }
+    if (event.kind === 'turn_start') {
+      nextTurnStarts.push(event.time);
+      if (event.turnId) {
+        const prev = turnStartTimes.get(event.turnId);
+        if (prev === undefined || event.time < prev) turnStartTimes.set(event.turnId, event.time);
+      }
+    } else if (event.kind === 'turn_end') {
+      if (event.turnId) endedTurns.add(event.turnId);
+      if (event.continued !== true) latestClosedEnd = Math.max(latestClosedEnd, event.time);
+    }
+  }
+  nextTurnStarts.sort((a, b) => a - b);
+  const asks = list
+    .filter((event): event is Extract<SessionEvent, { kind: 'user_message' }> => event.kind === 'user_message')
+    .sort((a, b) => a.time - b.time || a.seq - b.seq);
+
+  for (const event of list) {
+    if (event.kind !== 'turn_end' || event.continued !== true) continue;
+    const tStart = event.turnId ? (turnStartTimes.get(event.turnId) ?? turnOriginTimes.get(event.turnId)) : undefined;
+    let prevClosed = Number.NEGATIVE_INFINITY;
+    for (const candidate of list) {
+      if (candidate.kind === 'turn_end' && candidate.continued !== true && candidate.time < event.time) {
+        prevClosed = Math.max(prevClosed, candidate.time);
+      }
+    }
+    const nextStart = nextTurnStarts.find(at => at > (tStart ?? event.time) && at >= event.time) ?? event.time;
+    const windowEnd = Math.max(event.time, nextStart);
+    const windowStart = Math.max(tStart ?? Number.NEGATIVE_INFINITY, prevClosed);
+    const candidates = asks.filter((ask, idx) => {
+      if (ask.automatic || ask.time > windowEnd || ask.time < windowStart) return false;
+      if (ask.time === windowStart && idx === 0) return false;
+      if (event.turnId && ask.turnId === event.turnId && idx === 0) return false;
+      if (idx > 0) return true;
+      return tStart !== undefined && list.some(prior =>
+        prior.turnId === event.turnId && prior.time < ask.time &&
+        (prior.kind === 'assistant_message' || prior.kind === 'tool_call' || prior.kind === 'page_tool' || prior.kind === 'progress')
+      );
+    });
+    const match = candidates.at(-1);
+    if (match) steered.add(match.seq);
+  }
+
+  const open = openTurnId(list);
+  if (open && !endedTurns.has(open)) {
+    const openStart = turnStartTimes.get(open);
+    if (openStart !== undefined) {
+      const asksAfterClosed = asks.filter(ask => ask.time > latestClosedEnd);
+      const lastAsk = asksAfterClosed.at(-1);
+      if (lastAsk && asksAfterClosed.length >= 2 && !lastAsk.automatic && lastAsk.turnId !== open && lastAsk.time > openStart) {
+        steered.add(lastAsk.seq);
+      }
+    }
+  }
+  return steered;
+}
+
+/**
+ * How long each of your messages was worked on, keyed by the message's time: from it to the last
+ * end the page reported before your next message (a completed turn end, a continued steer boundary,
+ * or ChatGPT's final answer, whichever came later). Anchored to your messages rather than ChatGPT's
+ * turn ids, which a page can report empty or leave off the rows that did the work.
+ */
+function exchangeSegments(list: readonly SessionEvent[], steeredAsks: ReadonlySet<number>): Map<number, ExchangeSegment> {
+  const asks = list
+    .filter((event): event is Extract<SessionEvent, { kind: 'user_message' }> => event.kind === 'user_message')
+    .sort((a, b) => a.time - b.time || a.seq - b.seq);
+  const turnStartTimes = new Map<string, number>();
+  for (const event of list) {
+    if (!event.turnId || event.kind === 'turn_end') continue;
+    const prev = turnStartTimes.get(event.turnId);
+    if (prev === undefined || (event.kind === 'turn_start' ? event.time <= prev : event.time < prev)) {
+      turnStartTimes.set(event.turnId, event.time);
+    }
+  }
+  const segments = new Map<number, ExchangeSegment>();
+  asks.forEach((ask, index) => {
+    const asked = ask.time;
+    const nextAsk = asks[index + 1];
+    const next = nextAsk?.time ?? Number.POSITIVE_INFINITY;
+    let endedCompletedOrFinal = -1;
+    let endedContinued = -1;
+    for (const event of list) {
+      if (event.kind === 'assistant_message' && event.final) {
+        const at = event.finalObservedAt ?? event.time;
+        if (at >= asked && at < next) endedCompletedOrFinal = Math.max(endedCompletedOrFinal, at);
+        continue;
+      }
+      if (event.kind !== 'turn_end') continue;
+      if (event.continued === true) {
+        const startAt = event.turnId ? turnStartTimes.get(event.turnId) : undefined;
+        const inWindow = event.time >= asked && event.time < next;
+        const rotatedRightAfterNext = !inWindow && event.time >= next && next < Number.POSITIVE_INFINITY &&
+          startAt !== undefined && startAt >= asked && startAt < next;
+        if (inWindow || rotatedRightAfterNext) {
+          endedContinued = Math.max(endedContinued, inWindow ? event.time : next);
+        }
+        continue;
+      }
+      if (event.outcome === 'completed' && event.time >= asked && event.time < next) {
+        endedCompletedOrFinal = Math.max(endedCompletedOrFinal, event.time);
+      }
+    }
+    const ended = Math.max(endedCompletedOrFinal, endedContinued);
+    if (ended >= asked) {
+      segments.set(asked, {
+        seconds: Math.floor((ended - asked) / 1000),
+        steered: endedContinued >= endedCompletedOrFinal && nextAsk !== undefined && !nextAsk.automatic && steeredAsks.has(nextAsk.seq)
+      });
+    }
+  });
+  return segments;
+}
+
+function workedLine(asked: number, seconds: number, steered = false): HTMLElement {
   const line = workedLines.get(String(asked)) ?? turnLine('turn-worked');
-  ui(line.firstElementChild as HTMLElement, 'textContent', () => t("{0} for {1}{2}s", [t("Worked"), clockPrefix(seconds), seconds % 60]));
+  line.classList.toggle('is-steered', steered);
+  ui(line.firstElementChild as HTMLElement, 'textContent', () => steered
+    ? t("Worked for {0}{1}s · steered", [clockPrefix(seconds), seconds % 60])
+    : t("{0} for {1}{2}s", [t("Worked"), clockPrefix(seconds), seconds % 60]));
   workedLines.set(String(asked), line);
   return line;
 }
@@ -7862,7 +8202,7 @@ function workedLine(asked: number, seconds: number): HTMLElement {
  * live caption while the chat works, earlier ones how long they worked. A message still in the
  * outbox (or work with no message of yours on screen) has the live line parked after the outbox.
  */
-function placeTurnLines(rows: HTMLElement[], workedSeconds: ReadonlyMap<number, number>): void {
+function placeTurnLines(rows: HTMLElement[], workedSegments: ReadonlyMap<number, ExchangeSegment>): void {
   const status = deps.state()?.config.ui.developerMode ? null : stateLine();
   const working = status?.working === true;
   turnWorking = working;
@@ -7887,13 +8227,13 @@ function placeTurnLines(rows: HTMLElement[], workedSeconds: ReadonlyMap<number, 
     // An edit's earlier versions fold right under its question (#365); the turn's line follows them.
     const at = rows[index + 1]?.matches('.earlier-version') ? index + 2 : index + 1;
     if (latest && live && (!pending || runningBefore)) { rows.splice(at, 0, turnStatusLine); rows.push(turnNow); continue; }
-    const seconds = workedSeconds.get(asked);
-    if (latest && stopped && seconds === undefined && timelineReachesEnd()) {
+    const segment = workedSegments.get(asked);
+    if (latest && stopped && segment === undefined && timelineReachesEnd()) {
       ui(turnStoppedLine.firstElementChild as HTMLElement, 'textContent', () => stateLine().text);
       rows.splice(at, 0, turnStoppedLine); turnStoppedShown = true; continue;
     }
-    if (seconds === undefined || (latest && live)) continue;
-    rows.splice(at, 0, workedLine(asked, seconds)); used.add(String(asked));
+    if (segment === undefined || (latest && live)) continue;
+    rows.splice(at, 0, workedLine(asked, segment.seconds, segment.steered)); used.add(String(asked));
   }
   for (const key of workedLines.keys()) if (!used.has(key)) workedLines.delete(key);
   // A long turn pushes its question out of the loaded rows: every row left is that turn's work, so its
@@ -8334,6 +8674,7 @@ export function chatSettingsPatch(current: Config): {
       // Both follow the single threshold above rather than being typed separately.
       advisoryTokens: threshold,
       limitTokens: urgentFrom(threshold),
+      checkWebChatTitles: $<HTMLInputElement>('checkWebChatTitles').checked,
       storageLimitGiB: (RECORDING_STORAGE_LIMITS_GIB as readonly number[]).includes(Number($<HTMLSelectElement>('recordingStorageLimit').value))
         ? Number($<HTMLSelectElement>('recordingStorageLimit').value) as RecordingStorageLimitGiB
         : current.sessions.storageLimitGiB ?? DEFAULT_RECORDING_STORAGE_GIB
@@ -8822,6 +9163,7 @@ const CHAT_INPUTS = [
   'handoffPrompt',
   'handoffLength',
   'recordingStorageLimit',
+  'checkWebChatTitles',
   'goalPrompt',
   'goalObjectivePrompt',
   'goalLoopPrompt',
@@ -8917,6 +9259,12 @@ export function chatApply(state: AppState, previous?: Config): void {
     String(config.sessions.storageLimitGiB ?? DEFAULT_RECORDING_STORAGE_GIB),
     previous === undefined ? undefined : String(previous.sessions.storageLimitGiB ?? DEFAULT_RECORDING_STORAGE_GIB)
   );
+  applyChatChecked($<HTMLInputElement>('checkWebChatTitles'), config.sessions.checkWebChatTitles === true, previous?.sessions.checkWebChatTitles);
+  if (previous && (previous.ui.chatBrowser !== config.ui.chatBrowser ||
+      previous.sessions.checkWebChatTitles !== config.sessions.checkWebChatTitles)) {
+    webTitleSettingsRevision++;
+    refreshRowMenu();
+  }
   applyAutoCompactHint(config);
   $<HTMLInputElement>('autoCompactTokens').disabled = !config.compaction.auto;
 
@@ -9241,30 +9589,99 @@ function schedulePageHoldLapse(): void {
   pageHoldLapseTimer = window.setTimeout(() => { pageHoldLapseTimer = undefined; paintPendingInputs(); }, Math.max(0, Math.min(...due) - now) + 50);
 }
 
+let paintedTimelineFor: string | null = null;
+let paintedTimelineEvents: SessionEvent[] = [];
+let paintedDetailEvents: SessionEvent[] = [];
+const pageEchoMatches = new Map<string, { sessionId: string | null; messageId: string }>();
+
+function pageEchoAnchored(entry: InputEntry, all: readonly InputEntry[]): boolean {
+  if (!selectedId || detailFor !== selectedId || paintedTimelineFor !== selectedId || historyBefore !== null ||
+      !inputBelongsToCurrentSelection(entry)) return false;
+  const selectedSession = sessions.find(session => session.id === selectedId);
+  const multiChat = (selectedSession?.chatIds?.length ?? 0) > 1;
+  if (entry.requiresAuthorization && entry.sendAuthorizedAt === undefined) return false;
+  const dispatched = entry.state === 'browser' ||
+    (entry.state === 'queued' && !entry.error && !entry.scheduled && !heldBySendCheck(entry) &&
+      !queuedWaitReason(entry) && !routeHeld(entry) &&
+      (entry.offeredAt !== undefined || entry.sendAuthorizedAt !== undefined));
+  if (!dispatched || queuedFollowup(entry) || entry.messageId) return false;
+  const norm = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const authored = norm(authoredTextOf(entry));
+  const companion = entry.companionInputId ? all.find(other => other.id === entry.companionInputId) : undefined;
+  const combined = companion ? norm(`${authoredTextOf(entry)}\n\nNext queued instruction:\n${companion.text}`) : '';
+  const delivered = entry.deliveryText ? norm(entry.deliveryText) : '';
+  const candidates = [authored, combined, delivered].filter(Boolean);
+  if (!candidates.length) return false;
+  const pendingMedia = (entry.images?.length ?? 0) > 0 || (entry.attachments?.length ?? 0) > 0;
+  const minEchoTime = entry.requiresAuthorization ? entry.sendAuthorizedAt! : entry.createdAt;
+  const settledBefore = entry.sendAuthorizedAt ?? entry.offeredAt ?? entry.createdAt;
+  const echoMatchesEntry = (event: SessionEvent): event is Extract<SessionEvent, { kind: 'user_message' }> => {
+    if (event.kind !== 'user_message' || event.source !== 'extension' || event.inputId || !event.messageId ||
+        event.messageId.startsWith('input:') || event.time < minEchoTime) return false;
+    if (multiChat && (!entry.conversationId || event.conversationId !== entry.conversationId)) return false;
+    if (!multiChat && event.conversationId && entry.conversationId && event.conversationId !== entry.conversationId) return false;
+    if (entry.edit && event.messageId === entry.edit.messageId) return false;
+    if (all.some(other => other.id !== entry.id && other.messageId === event.messageId)) return false;
+    for (const [otherId, cached] of pageEchoMatches) {
+      if (otherId !== entry.id && cached.sessionId === selectedId && cached.messageId === event.messageId) return false;
+    }
+    if (paintedDetailEvents.some(later => positionOf(later) > positionOf(event) && later.kind === 'turn_end' && later.time <= settledBefore)) return false;
+    const shown = norm(event.authoredText ?? userPromptText(event.message.text.trimStart()) ?? event.message.text);
+    const raw = norm(event.message.text);
+    const textMatch = candidates.includes(shown) || candidates.includes(raw);
+    return textMatch && (!pendingMedia || !!event.attachments?.length || !!event.assets?.length);
+  };
+  const priorMatch = pageEchoMatches.get(entry.id);
+  const priorEvent = priorMatch && priorMatch.sessionId === selectedId
+    ? paintedTimelineEvents.find((event): event is Extract<SessionEvent, { kind: 'user_message' }> =>
+        echoMatchesEntry(event) && event.messageId === priorMatch.messageId)
+    : undefined;
+  if (priorEvent) return true;
+  const sameConversationLaterUser = (event: SessionEvent, later: SessionEvent) =>
+    positionOf(later) > positionOf(event) && later.kind === 'user_message' &&
+    !(later.messageId?.startsWith('input:') && later.time < event.time) &&
+    (!entry.conversationId || !later.conversationId || later.conversationId === entry.conversationId);
+  const match = paintedTimelineEvents.find((event): event is Extract<SessionEvent, { kind: 'user_message' }> =>
+    echoMatchesEntry(event) && !paintedDetailEvents.some(later => sameConversationLaterUser(event, later)));
+  if (match?.messageId) {
+    pageEchoMatches.set(entry.id, { sessionId: selectedId, messageId: match.messageId });
+    return true;
+  }
+  pageEchoMatches.delete(entry.id);
+  return false;
+}
+
+function anchoredPendingInput(entry: InputEntry, all: readonly InputEntry[] = pendingComposerInputs): boolean {
+  return detailFor === selectedId && ((paintedTimelineFor === selectedId && paintedTimelineEvents.some(event =>
+    event.kind === 'user_message' && (event.inputId === entry.id ||
+      event.messageId === (entry.messageId ?? `input:${entry.id}`)))) ||
+    pageEchoAnchored(entry, all) ||
+    // History owns committed off-page rows. Keep only receipts newer than our
+    // loaded publication cursor while the corresponding live snapshot arrives.
+    (Boolean(entry.historyAnchored || entry.historyRecorded) &&
+      (historyBefore !== null || (entry.historySeq !== undefined
+        ? (detailCursor ?? 0) > entry.historySeq
+        : events.length > 0))));
+}
+
 function paintPendingInputs(): void {
   schedulePageHoldLapse();
   const all = pendingComposerInputs;
-  const belongsToSelection = (entry: InputEntry): boolean => selectedId === null
-    ? pendingNewInput?.generation === selectionGeneration && entry.id === pendingNewInput.id
-    : (entry.sessionId ?? entry.deliveredSessionId) === selectedId;
+  for (const id of [...pageEchoMatches.keys()]) {
+    const current = all.find(entry => entry.id === id) ?? startingInputs.get(id);
+    if (!current || current.messageId || ['sent', 'cancelled', 'failed'].includes(current.state)) pageEchoMatches.delete(id);
+  }
+  const belongsToSelection = inputBelongsToCurrentSelection;
   // A pre-acceptance or failed-materialization row belongs only to its exact draft.
   // A fresh New Chat never inherits another opening.
   const unbound = (entry: InputEntry) => selectedId === null && pendingNewInput?.id === entry.id && pendingNewInput.generation === selectionGeneration && !entry.deliveredSessionId && entry.purpose !== 'decision' && ['queued', 'browser'].includes(entry.state);
   const notice = (entry: InputEntry) => belongsToSelection(entry) && entry.purpose !== 'decision' && entry.purpose !== 'rotation' &&
     ['failed', 'cancelled'].includes(entry.state) && !!entry.error && !dismissedInputNotices.has(entry.id);
-  const anchored = (entry: InputEntry) => detailFor === selectedId && (events.some(event =>
-    event.kind === 'user_message' && (event.inputId === entry.id ||
-      event.messageId === (entry.messageId ?? `input:${entry.id}`))) ||
-    // History owns committed off-page rows. Keep only receipts newer than our
-    // loaded publication cursor while the corresponding live snapshot arrives.
-    ((entry.historyAnchored || entry.historyRecorded) &&
-      (historyBefore !== null || (entry.historySeq !== undefined
-        ? (detailCursor ?? 0) > entry.historySeq
-        : events.length > 0))));
-  const rows = all.filter((entry) => !dismissedInputNotices.has(entry.id) && !(!notice(entry) && anchored(entry)) && !(queuedFollowup(entry) && ['queued', 'tool', 'browser'].includes(entry.state)) && (belongsToSelection(entry) || unbound(entry) || notice(entry)) &&
+  const anchored = (entry: InputEntry) => anchoredPendingInput(entry, all);
+  const rows = all.filter((entry) => !dismissedInputNotices.has(entry.id) && (belongsToSelection(entry) || unbound(entry) || notice(entry)) && !(!notice(entry) && anchored(entry)) && !(queuedFollowup(entry) && ['queued', 'tool', 'browser'].includes(entry.state)) &&
     (notice(entry) || unbound(entry) || selectedId !== null || projectGroup(entry.projectId) === selectedProjectId) &&
     (notice(entry) || !['sent', 'cancelled'].includes(entry.state) || (entry.state === 'sent' && entry.messageId && !anchored(entry))));
-  for (const entry of startingInputs.values()) if (belongsToSelection(entry) && !all.some(row => row.id === entry.id)) rows.push(entry);
+  for (const entry of startingInputs.values()) if (belongsToSelection(entry) && !anchored(entry) && !all.some(row => row.id === entry.id)) rows.push(entry);
   const host = $('inputQueue');
   // A row whose status changed is rebuilt; a control of it that had keyboard focus keeps it (CodeRabbit on #2054).
   const active = document.activeElement instanceof HTMLElement && host.contains(document.activeElement) ? document.activeElement : null;
@@ -9282,9 +9699,13 @@ function paintPendingInputs(): void {
   reconcileChildren(host, [...next, ...host.querySelectorAll<HTMLElement>(':scope > .queued-input')]);
   if (focused?.id && active && !active.isConnected) {
     const row = [...host.querySelectorAll<HTMLElement>(':scope > .pending-message')].find(candidate => candidate.dataset.inputId === focused.id);
-    const buttons = [...row?.querySelectorAll<HTMLElement>('button') ?? []];
-    // The same control if the rebuilt row still has it, else the row's first one (a failed row shows Retry and Dismiss instead).
-    (buttons.find(button => button.className === focused.cls && button.getAttribute('aria-label') === focused.label) ?? buttons[0])?.focus({ preventScroll: true });
+    if (row) {
+      const buttons = [...row.querySelectorAll<HTMLElement>('button')];
+      // The same control if the rebuilt row still has it, else the row's first one (a failed row shows Retry and Dismiss instead).
+      (buttons.find(button => button.className === focused.cls && button.getAttribute('aria-label') === focused.label) ?? buttons[0])?.focus({ preventScroll: true });
+    } else {
+      $<HTMLTextAreaElement>('chatInput').focus({ preventScroll: true });
+    }
   }
   holdSentMessage();
 }
@@ -9615,9 +10036,11 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
     if (!controlAction) return;
     const target = selectedId, selection = selectionGeneration;
     const sameSelection = () => selectedId === target && selectionGeneration === selection;
-    // The turn the button showed Stop for, before the refresh can change it (CodeRabbit).
+    // The turn or pending delivery the button showed Stop/Cancel for, before the refresh can change it (CodeRabbit).
     const shownTurn = controlledSessionId === target && controlledSelection === selection ? controlledTurnId ?? controlledHeldTurnId : null;
     const shownConversation = shownTurn ? controlledConversationId : null;
+    const shownPendingId = !shownTurn && paintedPendingCancel?.target === target && paintedPendingCancel.selection === selection
+      ? paintedPendingCancel.id : null;
     await refreshSessionControls();
     if (!sameSelection()) return;
     // An actual turn takes precedence over queued follow-ups. Stop never silently
@@ -9633,8 +10056,10 @@ async function sendComposer(delivery?: 'finish' | 'auto' | 'after-turn', plan?: 
       if (target) { await stopShownTurn(target, shownTurn, shownConversation, sameSelection); if (sameSelection()) void refreshSessionControls(); }
       return;
     }
-    const pending = pendingComposerInput();
-    if (pending && ['queued', 'browser'].includes(pending.state)) {
+    const pending = shownPendingId
+      ? [...pendingComposerInputs, ...startingInputs.values()].find(entry => entry.id === shownPendingId)
+      : undefined;
+    if (pending && cancellablePendingInput(pending)) {
       const wasStarting = startingInputs.has(pending.id);
       if (wasStarting) cancelledStarts.add(pending.id);
       const cancelled = await run(api.cancelInput(pending.id));

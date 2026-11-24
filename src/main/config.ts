@@ -111,7 +111,8 @@ const DEFAULT_SESSIONS: SessionSettings = {
   // so a default that did not already satisfy that relation would be a state the UI cannot
   // produce: the red line would move the first time anyone opened the panel and saved.
   limitTokens: Math.round((DEFAULT_CONTEXT_WINDOW * 4) / 3),
-  storageLimitGiB: DEFAULT_RECORDING_STORAGE_GIB
+  storageLimitGiB: DEFAULT_RECORDING_STORAGE_GIB,
+  checkWebChatTitles: false
 };
 
 /**
@@ -503,13 +504,17 @@ const configSchema = z.object({
         .optional()
         .default(DEFAULT_SESSIONS.advisoryTokens),
       limitTokens: z.number().int().min(10_000).max(4_000_000).optional().default(DEFAULT_SESSIONS.limitTokens),
-      storageLimitGiB: recordingStorageLimit.catch(DEFAULT_RECORDING_STORAGE_GIB)
+      storageLimitGiB: recordingStorageLimit.catch(DEFAULT_RECORDING_STORAGE_GIB),
+      checkWebChatTitles: z.boolean().default(false).catch(() => {
+        logWarn('config: repaired invalid Web title check setting (defaulted to off)');
+        return false;
+      })
     })
     // The desktop app always records and keeps history until the user deletes it. The dedicated
     // headless server applies its explicit recording-off choice after parsing.
     .transform((sessions) => ({ ...sessions, record: true, retainDays: 0 }))
     .optional()
-    .default({ ...DEFAULT_SESSIONS, storageLimitGiB: DEFAULT_RECORDING_STORAGE_GIB }),
+    .default({ ...DEFAULT_SESSIONS, storageLimitGiB: DEFAULT_RECORDING_STORAGE_GIB, checkWebChatTitles: false }),
   compaction: z
     .object({
       auto: z.boolean().optional().default(DEFAULT_COMPACTION.auto),
