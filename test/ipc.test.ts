@@ -9,6 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { clickFinishedChatNotification } from '../src/main/finished-notification-click.js';
 
 type Handler = (event: unknown, payload: unknown) => Promise<unknown>;
 const handlers = new Map<string, Handler>();
@@ -66,7 +67,7 @@ const {
   spawn,
   swarmStateForCaller
 } = await import('../src/main/agents.js');
-const { registerIpc, cleanSessionName, personsMessage } = await import('../src/main/ipc.js');
+const { registerIpc, cleanSessionName, personsMessage, openSessionChat } = await import('../src/main/ipc.js');
 const { initSkillsPath, skillsDirectory } = await import('../src/main/skills.js');
 const { openInPreferredBrowser } = await import('../src/main/browser.js');
 const bridgeModule = await import('../src/main/bridge.js');
@@ -782,6 +783,65 @@ it('publishes the exact transcript owners of one recorder burst and an explicit 
   expect(send).toHaveBeenCalledWith('session:changed', { allTranscripts: true });
 });
 
+it('validates session-scoped storage inspection and old-chats / per-chat cleanup modes', async () => {
+  const store = await import('../src/main/session/store.js');
+  const first = await createSession({ title: 'Per-chat cleanup target' });
+  const textAsset = await store.writeAsset(first.id, Buffer.from('x'.repeat(2048)), 'text/plain');
+  await store.appendEvent(first.id, {
+    time: Date.now(), source: 'mcp', kind: 'tool_call', call: {
+      callId: '00000000-0000-4000-8000-000000000219', tool: 'exec_command', requestId: 'req-ipc-storage',
+      conversationId: first.conversationId!, attribution: 'request_id', attributionMethod: 'request_id',
+      args: { text: '{}', chars: 2, truncated: false },
+      result: { text: `x\n…[2047 more characters stored in full as ${textAsset.id}]`, truncated: true, chars: 2048, assetId: textAsset.id },
+      outcome: 'ok', durationMs: 1, summary: { kind: 'run', title: 'Ran npm test', tone: 'neutral' }
+    }
+  });
+  const send = vi.fn();
+  currentWindow = { setBackgroundColor: vi.fn(), setTitleBarOverlay: vi.fn(), isDestroyed: () => false, webContents: { send } };
+
+  const scoped = await handlers.get('sessions:imageStorage')!(null, { id: first.id }) as { ok: boolean; data?: { session?: { sessionId: string; textBytes: number; imageBytes: number } } };
+  expect(scoped.ok).toBe(true);
+  expect(scoped.data?.session).toMatchObject({ sessionId: first.id, textBytes: 2048, imageBytes: 0 });
+
+  expect(await handlers.get('sessions:imageStorage')!(null, { id: '../bad' })).toMatchObject({ ok: false });
+  expect(await handlers.get('sessions:clearImageStorage')!(null, { mode: 'session-texts' })).toMatchObject({ ok: false });
+  expect(await handlers.get('sessions:clearImageStorage')!(null, { mode: 'session-texts', id: '../bad' })).toMatchObject({ ok: false });
+  expect(await handlers.get('sessions:clearImageStorage')!(null, { mode: 'old-chats-gib', id: '../bad' })).toMatchObject({ ok: false });
+  expect(await handlers.get('sessions:clearImageStorage')!(null, { mode: 'old-chats-gib' })).toMatchObject({ ok: true });
+  send.mockClear();
+
+  const cleared = await handlers.get('sessions:clearImageStorage')!(null, { mode: 'session-texts', id: first.id });
+  expect(cleared).toMatchObject({ ok: true, data: { freedBytes: 2048 } });
+  expect(send).toHaveBeenCalledWith('session:changed', { sessionIds: [first.id] });
+
+  // When another chat's assets directory denies metadata after deletion, IPC still returns the completed cleanup and emits session:changed.
+  send.mockClear();
+  const broken = await createSession({ title: 'Broken peer dir' });
+  const textAsset2 = await store.writeAsset(first.id, Buffer.from('y'.repeat(1024)), 'text/plain');
+  await store.writeAsset(broken.id, Buffer.from('z'.repeat(512)), 'text/plain');
+  await store.appendEvent(first.id, {
+    time: Date.now(), source: 'mcp', kind: 'tool_call', call: {
+      callId: '00000000-0000-4000-8000-000000000220', tool: 'exec_command', requestId: 'req-ipc-storage-2',
+      conversationId: first.conversationId!, attribution: 'request_id', attributionMethod: 'request_id',
+      args: { text: '{}', chars: 2, truncated: false },
+      result: { text: `y\n…[1023 more characters stored in full as ${textAsset2.id}]`, truncated: true, chars: 1024, assetId: textAsset2.id },
+      outcome: 'ok', durationMs: 1, summary: { kind: 'run', title: 'Ran npm test', tone: 'neutral' }
+    }
+  });
+  const realOpendir = fs.opendir.bind(fs);
+  const opendirSpy = vi.spyOn(fs, 'opendir').mockImplementation(async (target, ...rest) => {
+    if (String(target).includes(broken.id)) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    return (realOpendir as (...args: unknown[]) => Promise<Awaited<ReturnType<typeof fs.opendir>>>)(target, ...rest);
+  });
+  try {
+    const clearedDegraded = await handlers.get('sessions:clearImageStorage')!(null, { mode: 'session-texts', id: first.id });
+    expect(clearedDegraded).toMatchObject({ ok: true, data: { freedBytes: 1024, removedFiles: 1, usedBytes: null } });
+    expect(send).toHaveBeenCalledWith('session:changed', { sessionIds: [first.id] });
+  } finally {
+    opendirSpy.mockRestore();
+  }
+});
+
 it('publishes the owning session when delivered input history is revised in place', async () => {
   const input = await import('../src/main/session/input.js');
   const store = await import('../src/main/session/store.js');
@@ -1347,6 +1407,54 @@ describe('bounded IPC identities and OS launch results', () => {
       await fs.rename(original, managed);
       await fs.rmdir(replacement);
     }
+  });
+
+  it('toggles only installed managed Skills through the validated IPC interface', async () => {
+    const { initSkillsPath, importSkillFile, listSkills } = await import('../src/main/skills.js');
+    const skillData = path.join(dir, 'enable-skill-test');
+    const source = path.join(skillData, 'review.md');
+    await fs.mkdir(skillData, { recursive: true });
+    await fs.writeFile(source, '# Review\n\nNever delete files.');
+    await initSkillsPath(skillData);
+    await importSkillFile(source);
+    const toggle = (id: unknown, enabled: unknown) =>
+      handlers.get('skills:setEnabled')!(null, { id, enabled }) as Promise<any>;
+    expect(await toggle('review', false)).toMatchObject({
+      ok: true, data: [expect.objectContaining({ id: 'review', enabled: false })]
+    });
+    expect(await listSkills()).toEqual([]);
+    expect((await toggle('../review', true)).ok).toBe(false);
+    expect((await toggle('review', 'yes')).ok).toBe(false);
+    expect((await toggle('missing', false)).ok).toBe(false);
+    expect(await toggle('review', true)).toMatchObject({
+      ok: true, data: [expect.objectContaining({ id: 'review', enabled: true })]
+    });
+    expect(await listSkills()).toHaveLength(1);
+  });
+
+  it('opens only the installed managed Skill folder and propagates Explorer errors', async () => {
+    const { initSkillsPath, importSkillFile } = await import('../src/main/skills.js');
+    const skillData = path.join(dir, 'open-skill-test');
+    const source = path.join(skillData, 'review.md');
+    await fs.mkdir(skillData, { recursive: true });
+    await fs.writeFile(source, '# Review\n\nInstructions.');
+    await initSkillsPath(skillData);
+    await importSkillFile(source);
+    const folder = path.join(skillData, 'skills', 'review');
+    const open = (id: unknown) => handlers.get('skills:openFolder')!(null, { id }) as Promise<any>;
+    expect(await open('review')).toEqual({ ok: true, data: true });
+    expect(shell.openPath).toHaveBeenCalledWith(folder);
+    vi.mocked(shell.openPath).mockClear();
+    const missing = await open('does-not-exist');
+    expect(missing.ok).toBe(false);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    const traversal = await open('../review');
+    expect(traversal.ok).toBe(false);
+    expect(shell.openPath).not.toHaveBeenCalled();
+    vi.mocked(shell.openPath).mockResolvedValueOnce('Access is denied');
+    const denied = await open('review');
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toMatch(/could not open.*access is denied/i);
   });
 
   it('reports shell.openPath failure instead of claiming the extension folder opened', async () => {
@@ -2769,6 +2877,81 @@ describe('session IPC contracts', () => {
       }
     }
   );
+
+  it('opens the exact recorded tab for each of two Linux notification clicks, reusing or opening as needed', async () => {
+    const original = getConfig();
+    const firstId = 'aaaaaaaa-1111-4222-8333-444444444444';
+    const secondId = 'bbbbbbbb-1111-4222-8333-444444444444';
+    const first = await createSession({ title: 'finished first', conversationId: firstId });
+    const second = await createSession({ title: 'finished second', conversationId: secondId });
+    const reveal = vi.spyOn(bridgeModule, 'revealChatInBrowser').mockImplementation(async id => id === secondId);
+    const failures = vi.fn();
+    const makeNotice = (sessionId: string): EventEmitter => {
+      const notice = new EventEmitter();
+      notice.on('click', () => clickFinishedChatNotification('linux', {
+        openAppChat: () => { throw new Error('Linux must select the browser tab, not CoS'); },
+        openBrowserChat: () => openSessionChat(sessionId),
+        onBrowserFailure: failures
+      }));
+      return notice;
+    };
+    try {
+      await saveConfig({ ...original, ui: { ...original.ui, chatBrowser: 'chrome' } });
+      vi.mocked(openInPreferredBrowser).mockClear();
+      const firstNotice = makeNotice(first.id);
+      const secondNotice = makeNotice(second.id);
+
+      // An existing tab for the second chat must not accidentally select the first one.
+      secondNotice.emit('click');
+      await vi.waitFor(() => expect(reveal).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+      expect(reveal).toHaveBeenNthCalledWith(1, secondId);
+      expect(openInPreferredBrowser).not.toHaveBeenCalled();
+
+      // The first chat has no matching tab: open only that recorded conversation's URL.
+      firstNotice.emit('click');
+      await vi.waitFor(() => expect(openInPreferredBrowser).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+      expect(reveal.mock.calls).toEqual([[secondId], [firstId]]);
+      expect(openInPreferredBrowser).toHaveBeenCalledWith(
+        `https://chatgpt.com/c/${firstId}`, { reveal: true }
+      );
+      expect(failures).not.toHaveBeenCalled();
+    } finally {
+      reveal.mockRestore();
+      await saveConfig(original);
+    }
+  });
+
+  it.each([
+    ['missing', null],
+    ['malformed', 'not-a-valid-chat!']
+  ] as const)('refuses a Linux notification click with a %s conversation ID without opening any tab', async (_kind, conversationId) => {
+    const original = getConfig();
+    const session = await createSession({ title: 'unbound notification', conversationId });
+    const reveal = vi.spyOn(bridgeModule, 'revealChatInBrowser').mockResolvedValue(true);
+    const openAppChat = vi.fn();
+    const onBrowserFailure = vi.fn();
+    try {
+      await saveConfig({ ...original, ui: { ...original.ui, chatBrowser: 'chrome' } });
+      vi.mocked(openInPreferredBrowser).mockClear();
+
+      clickFinishedChatNotification('linux', {
+        openAppChat,
+        openBrowserChat: () => openSessionChat(session.id),
+        onBrowserFailure
+      });
+
+      await vi.waitFor(() => expect(onBrowserFailure).toHaveBeenCalledOnce(), { timeout: 10_000 });
+      expect(onBrowserFailure.mock.calls[0]?.[0]).toMatchObject({
+        message: 'This session has no valid ChatGPT conversation'
+      });
+      expect(reveal).not.toHaveBeenCalled();
+      expect(openInPreferredBrowser).not.toHaveBeenCalled();
+      expect(openAppChat).not.toHaveBeenCalled();
+    } finally {
+      reveal.mockRestore();
+      await saveConfig(original);
+    }
+  });
 });
 
 it('follows only the newest chat selection when an earlier lookup finishes last (#1249, #1267)', async () => {
@@ -3280,6 +3463,64 @@ it('projects reloaded unreadable ledger health through state:get and recovers on
   expect(await fs.readFile(path.join(path.dirname(file), backups.at(-1)!), 'utf8')).toBe('{broken');
 });
 
+it('loads the Web title check as opt-in and preserves it when an older settings form saves', async () => {
+  const prior = getConfig();
+  const action = handlers.get('sessions:checkWebTitle')!;
+  try {
+    expect(await action(null, { id: 'unknown-session' })).toEqual({ ok: true, data: 'unavailable' });
+    const baseline = { ...prior, sessions: { ...prior.sessions } };
+    delete baseline.sessions.checkWebChatTitles;
+    expect(await save({ ...prior, sessions: { ...prior.sessions, checkWebChatTitles: true } })).toMatchObject({ ok: true });
+    expect(getConfig().sessions.checkWebChatTitles).toBe(true);
+    expect(await save(baseline, baseline)).toMatchObject({ ok: true });
+    expect(getConfig().sessions.checkWebChatTitles).toBe(true);
+    expect(await save({ ...getConfig(), sessions: { ...getConfig().sessions, checkWebChatTitles: false } })).toMatchObject({ ok: true });
+    expect(getConfig().sessions.checkWebChatTitles).toBe(false);
+    expect(await action(null, { id: 'unknown-session' })).toEqual({ ok: true, data: 'unavailable' });
+  } finally {
+    await saveConfig(prior);
+  }
+});
+
+it('rejects a Web title result when the selected browser changes during the final session read', async () => {
+  const prior = getConfig();
+  const store = await import('../src/main/session/store.js');
+  const webTitle = await import('../src/main/web-chat-title.js');
+  const { getLog } = await import('../src/main/logger.js');
+  const action = handlers.get('sessions:checkWebTitle')!;
+  const session = await createSession({ conversationId: '11111111-1111-4111-8111-111111111111' });
+  await store.renameSession(session.id, 'Manual title', 'manual');
+  const chat = await store.getSession(session.id);
+  const readTitle = vi.spyOn(webTitle, 'readWebChatTitle').mockResolvedValue('Web title');
+  const readSession = vi.spyOn(store, 'getSession');
+  try {
+    await saveConfig({ ...prior, ui: { ...prior.ui, chatBrowser: 'chrome' },
+      sessions: { ...prior.sessions, checkWebChatTitles: false } });
+    expect(await action(null, { id: session.id })).toEqual({ ok: true, data: 'unavailable' });
+    await saveConfig({ ...getConfig(), sessions: { ...getConfig().sessions, checkWebChatTitles: true } });
+    expect(await action(null, { id: 'unknown-session' })).toEqual({ ok: true, data: 'unavailable' });
+    expect(readTitle).not.toHaveBeenCalled();
+    expect(await action(null, { id: session.id })).toEqual({ ok: true, data: 'different' });
+    readSession.mockResolvedValueOnce(chat).mockResolvedValueOnce(null);
+    expect(await action(null, { id: session.id })).toEqual({ ok: true, data: 'unavailable' });
+    readSession.mockResolvedValueOnce(chat).mockImplementationOnce(async () => {
+      await saveConfig({ ...getConfig(), ui: { ...getConfig().ui, chatBrowser: 'edge' } });
+      return chat;
+    });
+    expect(await action(null, { id: session.id })).toEqual({ ok: true, data: 'unavailable' });
+    expect(getLog().map(entry => entry.message)).toEqual(expect.arrayContaining([
+      'web chat title: check skipped (disabled)',
+      'web chat title: check skipped (ineligible session)',
+      'web chat title: comparison discarded (session changed)',
+      'web chat title: comparison discarded (browser changed)'
+    ]));
+  } finally {
+    readSession.mockRestore();
+    readTitle.mockRestore();
+    await saveConfig(prior);
+  }
+});
+
 // #1406: the recording store held a fixed 2 GB. Settings now offers larger sizes, applied at once.
 it('saves the recording storage size and applies it to the store', async () => {
   const store = await import('../src/main/session/store.js');
@@ -3602,6 +3843,69 @@ describe('settings backup over IPC', () => {
     expect(getConfig()).toMatchObject({ readOnly: true, ui: { theme: 'light' } });
     expect(await apply({ token: picked.data.token, includeKeys: false })).toEqual({ ok: false, error: 'Choose the backup file again.' });
   });
+
+  it('refuses a same-field settings change after the import preview', async () => {
+    await saveConfig({ ...getConfig(), commandAllowlist: { enabled: true, mode: 'allow', rules: ['git status'] } });
+    const file = path.join(dir, 'stale-rules.json');
+    await exportTo(file, { includeKeys: false });
+    await saveConfig({ ...getConfig(), commandAllowlist: { enabled: true, mode: 'allow', rules: ['git diff'] } });
+    const picked = await pick(file);
+    expect(picked.data).toMatchObject({ changed: ['commandAllowlist.rules'], wider: ['commandAllowlist'] });
+    await saveConfig({ ...getConfig(), commandAllowlist: { enabled: true, mode: 'allow', rules: ['pwd'] } });
+    expect(await apply({ token: picked.data.token, includeKeys: false }))
+      .toEqual({ ok: false, error: 'Your settings changed after the file was chosen. Choose it again.' });
+    expect(getConfig().commandAllowlist.rules).toEqual(['pwd']);
+  });
+
+  it('checks the import preview inside the settings mutation queue', async () => {
+    const { updateConfig } = await import('../src/main/config.js');
+    await setUp('dark', tunnelA, false);
+    const file = path.join(dir, 'queued-save.json');
+    await exportTo(file, { includeKeys: false });
+    await setUp('light', tunnelA, false);
+    const picked = await pick(file);
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const saving = updateConfig(async config => { enter(); await gate; return { ...config, readOnly: true }; });
+    await entered;
+    const importing = apply({ token: picked.data.token, includeKeys: false });
+    release(); await saving;
+    expect(await importing).toEqual({ ok: false, error: 'Your settings changed after the file was chosen. Choose it again.' });
+    expect(getConfig()).toMatchObject({ readOnly: true, ui: { theme: 'light' } });
+  });
+
+  it('keeps per-computer changes made after choosing a portable settings backup', async () => {
+    await setUp('dark', tunnelA, false);
+    const file = path.join(dir, 'portable-preview.json');
+    await exportTo(file, { includeKeys: false });
+    await setUp('light', tunnelA, false);
+    const picked = await pick(file);
+    await saveConfig({ ...getConfig(), connectorSuffix: 'Other', tunnel: { ...getConfig().tunnel, tunnelId: tunnelB } });
+    expect(await apply({ token: picked.data.token, includeKeys: false })).toMatchObject({ ok: true });
+    expect(getConfig()).toMatchObject({ connectorSuffix: 'Other', tunnel: { tunnelId: tunnelB }, ui: { theme: 'dark' } });
+  });
+
+  it('does not overwrite a newer language choice after the import settings commit', async () => {
+    const { updateConfig } = await import('../src/main/config.js');
+    const connection = await import('../src/main/connection.js');
+    await setUp('dark', tunnelA, false);
+    await saveConfig({ ...getConfig(), ui: { ...getConfig().ui, language: 'de' } });
+    const file = path.join(dir, 'language-commit.json');
+    await exportTo(file, { includeKeys: false });
+    await setUp('light', tunnelA, false);
+    await saveConfig({ ...getConfig(), ui: { ...getConfig().ui, language: 'en' } });
+    const picked = await pick(file);
+    const publish = vi.spyOn(connection, 'applySettings').mockImplementationOnce(async () => {
+      // A window changes language after the import's settings save, while its runtime effects finish.
+      await updateConfig(config => ({ ...config, ui: { ...config.ui, language: 'fr' } }));
+    });
+    try {
+      expect(await apply({ token: picked.data.token, includeKeys: false })).toMatchObject({ ok: true });
+      expect(getConfig().ui.language).toBe('fr');
+    } finally { publish.mockRestore(); }
+  });
+
 });
 
 describe('phone notifications over IPC', () => {
@@ -3973,4 +4277,35 @@ it('keeps an aged attachment when Send takes ownership during project-file stagi
     await writeDurableNow('session-input', []);
     outbox.resetInputForTests();
   }
+});
+
+it('checks a group assignment against the project after a queued chat move completes', async () => {
+  const groups = await import('../src/main/chat-groups.js');
+  const projects = await import('../src/main/projects.js');
+  const store = await import('../src/main/session/store.js');
+  const { validateNewRoot } = await import('../src/main/sandbox.js');
+  groups.resetChatGroupsForTests();
+  const root = await validateNewRoot(await fs.mkdtemp(path.join(dir, 'group-race-')), []);
+  await fs.mkdir(path.join(root, 'first')); await fs.mkdir(path.join(root, 'second'));
+  await saveConfig({ ...getConfig(), roots: [{ name: 'work', path: root }] });
+  const first = await projects.addProject(path.join(root, 'first'));
+  const second = await projects.addProject(path.join(root, 'second'));
+  const chat = await store.createSession({ title: 'Group assignment race' });
+  await projects.assignSessionProject(chat.id, first.id);
+  const { group: oldGroup } = await groups.createChatGroup(first.id, 'Old', () => true);
+  const { group: newGroup } = await groups.createChatGroup(second.id, 'New', () => true);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = store.moveSessionProject;
+  const pause = vi.spyOn(store, 'moveSessionProject').mockImplementation(async (...args) => { enter(); await gate; return original(...args); });
+  const moving = projects.moveChatWithGroup(chat.id, second.id, newGroup.id);
+  let assigning: Promise<any> | undefined;
+  try {
+    await entered;
+    assigning = handlers.get('chatGroups:assign')!(null, { sessionId: chat.id, groupId: oldGroup.id });
+    release(); await moving;
+    expect(await assigning).toEqual({ ok: false, error: "This chat is not in that group's project" });
+    expect((await groups.chatGroupsState()).members[chat.id]).toBe(newGroup.id);
+  } finally { release(); await moving; await assigning; pause.mockRestore(); }
 });

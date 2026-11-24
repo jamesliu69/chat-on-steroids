@@ -14,7 +14,7 @@ import type { ProviderUsage } from '../shared/provider-usage.js';
 import type { InputArgs, InputEntry } from '../main/session/input.js';
 import type { ChatgptProjectChoice, LocalProject, ProjectColor, RelatedFolderView } from '../shared/projects.js';
 import type { ProjectDirectoryListing, ProjectFileMutationResult, ProjectFilePreview, ProjectFileSaveResult, ProjectFilesChanged } from '../shared/project-files.js';
-import type { CheckpointRestoreResult, ProjectGitChanged, ProjectGitDiff, ProjectGitSnapshot } from '../shared/project-git.js';
+import type { CheckpointRestoreResult, ProjectGitChanged, ProjectGitDiff, ProjectGitSnapshot, TurnCheckpointRestoreResult } from '../shared/project-git.js';
 import type { PetLibraryState, PetOverlayControlState, PetRuntimeAsset } from '../shared/pets.js';
 import type { SkillSummary, ManagedSkill, GitHubSkillUpdateCheck, SkillLibrary, SkillsDraftScope } from '../shared/skills.js';
 import type { RunningToolActivity, SessionChange, SessionSearchReply, SessionSearchLocation, SessionBookmark, ChatEdits, ToolEditReview } from '../shared/session.js';
@@ -229,6 +229,8 @@ const api = {
   },
   listSkills: () => call<SkillSummary[]>('skills:list'),
   listManagedSkills: () => call<ManagedSkill[]>('skills:managed'),
+  skillsSetEnabled: (id: string, enabled: boolean) => call<ManagedSkill[]>('skills:setEnabled', { id, enabled }),
+  skillsOpenFolder: (id: string) => call<boolean>('skills:openFolder', { id }),
   listRecommendedSkills: () => call<Array<{ id: string; name: string; description: string; installed: boolean }>>('skills:recommended'),
   installRecommendedSkill: (id: string) => call<ManagedSkill[]>('skills:installRecommended', { id }),
   skillsImport: (kind: 'folder' | 'file') => call<ManagedSkill[] | null>('skills:import', { kind }),
@@ -386,11 +388,14 @@ const api = {
   }),
   restoreCheckpoint: (projectId: string, checkpointId: string, paths: string[] | null, expectedRevision: string) =>
     call<CheckpointRestoreResult>('checkpoints:restore', { projectId, checkpointId, paths, expectedRevision }),
+  restoreTurnCheckpoint: (sessionId: string, turnId: string, from: number) =>
+    call<TurnCheckpointRestoreResult>('checkpoints:restoreTurn', { sessionId, turnId, from }),
   getChatEdits: (id: string, projectId: string) => call<ChatEdits | null>('sessions:chatEdits', { id, projectId }),
   getToolEditReview: (sessionId: string, callId: string, changeIndex: number, projectId?: string) =>
     call<ToolEditReview | null>('sessions:toolEditReview', { sessionId, callId, changeIndex, ...(projectId ? { projectId } : {}) }),
   /** #1827: what one answer changed, per file, read from the turn's first event (`from`, a sequence number) on. */
-  turnChanges: (sessionId: string, turnId: string, from: number) => call<{ changes: TurnFileChange[]; total: number }>('sessions:turnChanges', { sessionId, turnId, from }),
+  turnChanges: (sessionId: string, turnId: string, from: number) =>
+    call<{ changes: TurnFileChange[]; total: number; checkpointRef?: string }>('sessions:turnChanges', { sessionId, turnId, from }),
   turnFileDiff: (sessionId: string, turnId: string, from: number, path: string) => call<{ before: string; after: string } | null>('sessions:turnFileDiff', { sessionId, turnId, from, path }),
   onProjectGitChanged: (listener: (event: ProjectGitChanged) => void): (() => void) => {
     const wrapped = (_event: unknown, change: ProjectGitChanged): void => listener(change);
@@ -398,8 +403,9 @@ const api = {
     return () => ipcRenderer.removeListener('projectGit:changed', wrapped);
   },
   getSessionImage: (id: string, assetId: string) => call<string | null>('sessions:image', { id, assetId }),
-  getImageStorage: () => call<ImageStorageInfo>('sessions:imageStorage'),
-  clearImageStorage: (mode: ImageStorageClearMode) => call<ImageStorageClearResult>('sessions:clearImageStorage', { mode }),
+  getImageStorage: (id?: string) => call<ImageStorageInfo>('sessions:imageStorage', id ? { id } : undefined),
+  clearImageStorage: (mode: ImageStorageClearMode, id?: string) =>
+    call<ImageStorageClearResult>('sessions:clearImageStorage', id ? { mode, id } : { mode }),
     getSession: (id: string, options?: { from?: number; before?: number; after?: number; limit?: number; actions?: boolean }) =>
     call<SessionDetail>('sessions:events', { id, ...options }),
   stopSessionTurn: (id: string, expectedTurnId: string, expectedConversationId?: string | null) =>
@@ -478,6 +484,7 @@ const api = {
     call<SessionBookmark[]>('sessions:bookmark', { id, messageId, excerpt, messageTime, on }),
   findInChat: (id: string, query: string) => call<SessionSearchLocation[]>('sessions:find', { id, query }),
   /** The chat's own name in the app; null clears it and ChatGPT's title shows again. */
+  checkWebChatTitle: (id: string) => call<'match' | 'different' | 'unavailable'>('sessions:checkWebTitle', { id }),
   renameSession: (id: string, title: string | null) => call<boolean>('sessions:rename', { id, title }),
   getHandoff: (id: string, handoffId?: string) => call<Handoff | null>('handoff:get', { id, handoffId }),
 

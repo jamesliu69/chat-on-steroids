@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseGitHubSkillUrl } from '../src/shared/skills.js';
+import { parseGitHubSkillUrl, SKILL_ORIGIN_FILENAME } from '../src/shared/skills.js';
 import { checkGitHubSkillUpdates, importGitHubSkill, linkGitHubSkill, updateGitHubSkill } from '../src/main/skill-github.js';
 import { importSkillPackage, initSkillsPath, linkSkillPackage, listManagedSkills, removeSkill, skillPackageRevision, updateSkillPackage } from '../src/main/skills.js';
 
@@ -523,6 +523,18 @@ it('does not resurrect a skill removed while the GitHub check is in flight', asy
   github.resume();
   await expect(pending).rejects.toThrow('changed while checking for updates');
   expect(await listManagedSkills()).toEqual([]);
+});
+
+it('keeps the installed package when its recorded document checksum disagrees with the Git file list', async () => {
+  const github = githubFixture(); vi.stubGlobal('fetch', github.request);
+  await importGitHubSkill('https://github.com/acme/skills/tree/main/pet');
+  const folder = path.join(userData, 'skills/pet');
+  const metadata = path.join(folder, SKILL_ORIGIN_FILENAME);
+  const origin = JSON.parse(await fs.readFile(metadata, 'utf8'));
+  await fs.writeFile(metadata, JSON.stringify({ ...origin, skillSha256: '0'.repeat(64) }));
+  github.next();
+  await expect(updateGitHubSkill('pet', async () => {})).rejects.toThrow('local edits');
+  expect(await fs.readFile(path.join(folder, 'references/guide.md'), 'utf8')).toBe('First guide');
 });
 
 it('keeps local edits and rejects untrusted origins or unsupported repository links', async () => {

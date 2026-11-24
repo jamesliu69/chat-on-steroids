@@ -276,6 +276,7 @@ export interface SessionSettings {
   record: boolean;
   /** Recording retention in days; 0 means no age expiry. */
   retainDays: number;
+  checkWebChatTitles?: boolean;
   /** Estimated tokens at which the app starts suggesting a compaction. */
   advisoryTokens: number;
   /** Estimated tokens at which that suggestion becomes urgent. */
